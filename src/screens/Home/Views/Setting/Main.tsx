@@ -1,4 +1,5 @@
 import { forwardRef, useImperativeHandle, useMemo, useState } from 'react'
+import { Platform } from 'react-native'
 
 import Basic from './settings/Basic'
 import Player from './settings/Player'
@@ -11,7 +12,7 @@ import Other from './settings/Other'
 import Version from './settings/Version'
 import About from './settings/About'
 
-export const SETTING_SCREENS = [
+const ALL_SETTING_SCREENS = [
   'basic',
   'player',
   'lyric_desktop',
@@ -24,7 +25,12 @@ export const SETTING_SCREENS = [
   'about',
 ] as const
 
-export type SettingScreenIds = typeof SETTING_SCREENS[number]
+export type SettingScreenIds = typeof ALL_SETTING_SCREENS[number]
+
+// 任务 7.1：iOS 无桌面歌词，设置导航整组隐藏
+export const SETTING_SCREENS: SettingScreenIds[] = Platform.OS === 'ios'
+  ? ALL_SETTING_SCREENS.filter(id => id !== 'lyric_desktop')
+  : [ ...ALL_SETTING_SCREENS ]
 
 // interface MainProps {
 //   onUpdateActiveId: (id: string) => void
@@ -67,4 +73,3 @@ const Main = forwardRef<MainType, {}>((props, ref) => {
 
 
 export default Main
-

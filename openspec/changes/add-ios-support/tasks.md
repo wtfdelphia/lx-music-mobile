@@ -49,14 +49,14 @@
 - [ ] 6.5 ChoosePath iOS 化（DocumentPicker），能选文件并导入歌单
 - [ ] 6.6 通知权限 / 屏幕常亮 / 分享 / 设备名 / WiFi IP 逐项手测
 - [ ] 6.7 数据同步与桌面版双向完成一次
-- [ ] 6.8 `tools.ts` 平台分支，`isSupportedAutoTheme` 生效，深色模式跟随
+- [ ] 6.8 `tools.ts` 平台分支，`isSupportedAutoTheme` 生效，深色模式跟随（平台分支已存在：iOS ≥13 判断 + Appearance 监听；深色跟随待真机验证）
 - [ ] 6.9 门槛验证：主流程（搜索→播放→收藏→歌单管理→备份恢复→同步）全通
 
 ## 7. Phase 4：降级与打磨
 
-- [ ] 7.1 桌面歌词整组隐藏 + `lyricDesktop.ios.ts` 桩，无死链无未捕获 reject
+- [ ] 7.1 桌面歌词整组隐藏 + `lyricDesktop.ios.ts` 桩，无死链无未捕获 reject（代码已写：22 导出安全桩 + `SETTING_SCREENS` 按平台过滤导航；设置页遍历待 M 验证）
 - [ ] 7.2 本地音乐降级：扫描不崩，元数据显示文件名
-- [ ] 7.3 应用内更新改为跳转 Release 页
+- [ ] 7.3 应用内更新改为跳转 Release 页（代码已写：`version.ios.js` 版本检查逻辑不变，下载/安装改 `Linking.openURL` Release 页；更新弹窗路径待验证）
 - [ ] 7.4 横屏 / iPad 布局：24 个 Horizontal tsx 不错位
 - [X] 7.5 CI 新增 iOS unsigned build job 并通过（`.github/workflows/ios-verify.yml`，macos-15 / Xcode 16.4；首验 run 32705189097，门禁后归并为设备版构建 + IPA artifact，run 32707901201 双 SDK 均通过）
 - [ ] 7.6 真机测试 ≥2 台（含 iOS 13/14 旧机），连续 30 分钟无崩溃，Instruments 无明显泄漏
