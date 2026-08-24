@@ -1,7 +1,334 @@
 {
-  "$comment": "社区自定义源脚本回归集清单（openspec add-ios-support 任务 2.3 / G1 闸门）。收集要求：≥10 个，覆盖 6 大音源（bd/kg/kw/mg/tx/wy）。脚本文件放本目录，版权与合规责任由收集者确认后再入库。",
+  "$comment": "社区自定义源脚本回归集清单（openspec add-ios-support 任务 2.3 / G1 闸门）。收集要求：≥10 个，覆盖 6 大音源（bd/kg/kw/mg/tx/wy）。脚本文件放 candidates/ 目录，仅收录带明确许可证（MIT / Apache-2.0）的仓库。",
+  "$bdGap": "2026-08 收集结论：社区自定义源生态中未发现任何实现 bd（百度/太合）音源的脚本，该源官方 API 已长期失效；bd 不纳入 G1 判读的必备覆盖，报告须如实记录。",
   "minScripts": 10,
-  "requiredSources": ["bd", "kg", "kw", "mg", "tx", "wy"],
-  "assertions": ["load", "inited", "search", "getMusicUrl"],
-  "scripts": []
+  "requiredSources": [
+    "kg",
+    "kw",
+    "mg",
+    "tx",
+    "wy"
+  ],
+  "assertions": [
+    "load",
+    "inited",
+    "search",
+    "getMusicUrl"
+  ],
+  "scripts": [
+    {
+      "file": "candidates/lyswhut-example.js",
+      "name": "Free listen（官方示例源）",
+      "version": "v1.1.2",
+      "sourceUrl": "https://github.com/lyswhut/lx-music-source",
+      "license": "MIT",
+      "sources": [
+        "kg",
+        "kw",
+        "mg",
+        "tx",
+        "wy"
+      ],
+      "notes": "lx-music 作者提供的示例源，契约基准样本"
+    },
+    {
+      "file": "candidates/zxwy-lx-script.js",
+      "name": "lx-source-script（源加载器）",
+      "version": "latest",
+      "sourceUrl": "https://github.com/ZxwyWebSite/lx-script",
+      "license": "MIT",
+      "sources": [
+        "dynamic"
+      ],
+      "notes": "包装器型脚本，运行时拉取远端源；对 preload 注入面覆盖有独特价值"
+    },
+    {
+      "file": "candidates/gdstudio.js",
+      "name": "统一音乐源（GD音乐台）",
+      "version": "1.0.0",
+      "sourceUrl": "https://github.com/7878gyc/gdstudio-lx-source",
+      "license": "MIT",
+      "sources": [
+        "kw",
+        "wy"
+      ],
+      "notes": ""
+    },
+    {
+      "file": "candidates/a970-nya.js",
+      "name": "示例音源（lx-music-api-server 模板）",
+      "version": "0.0.1",
+      "sourceUrl": "https://github.com/a97083435/lxmusic-source",
+      "license": "Apache-2.0",
+      "sources": [
+        "kg",
+        "kw",
+        "mg",
+        "tx",
+        "wy"
+      ],
+      "notes": "服务端模板脚本，大量社区源的同源变体"
+    },
+    {
+      "file": "candidates/a970-huibq.js",
+      "name": "Huibq_lxmusic源",
+      "version": "v1.2.0",
+      "sourceUrl": "https://github.com/a97083435/lxmusic-source",
+      "license": "Apache-2.0",
+      "sources": [
+        "dynamic"
+      ],
+      "notes": "音源列表由远端接口下发"
+    },
+    {
+      "file": "candidates/a970-monster.js",
+      "name": "monster",
+      "version": "v1.5.5",
+      "sourceUrl": "https://github.com/a97083435/lxmusic-source",
+      "license": "Apache-2.0",
+      "sources": [
+        "dynamic"
+      ],
+      "notes": "webpack 打包产物，考验压缩代码在沙箱中的求值"
+    },
+    {
+      "file": "candidates/a970-zhizun.js",
+      "name": "至尊源",
+      "version": "v0.8.4_beta5",
+      "sourceUrl": "https://github.com/a97083435/lxmusic-source",
+      "license": "Apache-2.0",
+      "sources": [
+        "kg",
+        "kw",
+        "mg",
+        "tx",
+        "wy"
+      ],
+      "notes": ""
+    },
+    {
+      "file": "candidates/a970-肥猫不肥.js",
+      "name": "肥猫不肥",
+      "version": "latest",
+      "sourceUrl": "https://github.com/a97083435/lxmusic-source",
+      "license": "Apache-2.0",
+      "sources": [
+        "kg",
+        "kw",
+        "mg",
+        "tx",
+        "wy"
+      ],
+      "notes": ""
+    },
+    {
+      "file": "candidates/a970-野花音源.js",
+      "name": "野花",
+      "version": "1.0.0",
+      "sourceUrl": "https://github.com/a97083435/lxmusic-source",
+      "license": "Apache-2.0",
+      "sources": [
+        "dynamic"
+      ],
+      "notes": "字符串混淆脚本，考验沙箱对混淆代码的兼容"
+    },
+    {
+      "file": "candidates/a970-野草音源.js",
+      "name": "野草",
+      "version": "1.0.0",
+      "sourceUrl": "https://github.com/a97083435/lxmusic-source",
+      "license": "Apache-2.0",
+      "sources": [
+        "dynamic"
+      ],
+      "notes": "字符串混淆脚本，与野花同源不同混淆器输出"
+    },
+    {
+      "file": "candidates/a970-sixyin-1.2.1.js",
+      "name": "六音音源",
+      "version": "v1.2.1",
+      "sourceUrl": "https://github.com/a97083435/lxmusic-source",
+      "license": "Apache-2.0",
+      "sources": [
+        "kg",
+        "kw",
+        "mg",
+        "tx",
+        "wy"
+      ],
+      "notes": "大体积打包脚本（333KB），考验沙箱求值性能与稳定性"
+    },
+    {
+      "file": "candidates/gy-xinghai-2.3.11.js",
+      "name": "星海音乐源",
+      "version": "v3.2.11",
+      "sourceUrl": "https://github.com/guoyue2010/lxmusic-",
+      "license": "Apache-2.0",
+      "sources": [
+        "kg",
+        "kw",
+        "mg",
+        "tx",
+        "wy"
+      ],
+      "notes": "GDAPI/ChKSz 聚合，社区高频源"
+    },
+    {
+      "file": "candidates/gy-molan-2.0.0.js",
+      "name": "墨澜聚合音源",
+      "version": "2.0.0",
+      "sourceUrl": "https://github.com/guoyue2010/lxmusic-",
+      "license": "Apache-2.0",
+      "sources": [
+        "kg",
+        "kw",
+        "mg",
+        "tx",
+        "wy"
+      ],
+      "notes": ""
+    },
+    {
+      "file": "candidates/gy-nianxin-1.0.2.js",
+      "name": "念心音源",
+      "version": "1.0.2",
+      "sourceUrl": "https://github.com/guoyue2010/lxmusic-",
+      "license": "Apache-2.0",
+      "sources": [
+        "kg",
+        "kw",
+        "mg",
+        "tx",
+        "wy"
+      ],
+      "notes": "含远端自更新检查逻辑"
+    },
+    {
+      "file": "candidates/gy-suyin-v1.js",
+      "name": "溯音音源",
+      "version": "v1",
+      "sourceUrl": "https://github.com/guoyue2010/lxmusic-",
+      "license": "Apache-2.0",
+      "sources": [
+        "kw",
+        "mg",
+        "tx",
+        "wy"
+      ],
+      "notes": ""
+    },
+    {
+      "file": "candidates/gy-wending-1.0.3.js",
+      "name": "稳定版音源",
+      "version": "1.0.3",
+      "sourceUrl": "https://github.com/guoyue2010/lxmusic-",
+      "license": "Apache-2.0",
+      "sources": [
+        "kw",
+        "tx",
+        "wy"
+      ],
+      "notes": "小体量脚本样本"
+    },
+    {
+      "file": "candidates/gy-feichangdao-v5.js",
+      "name": "非常刀",
+      "version": "v5",
+      "sourceUrl": "https://github.com/guoyue2010/lxmusic-",
+      "license": "Apache-2.0",
+      "sources": [
+        "kg",
+        "kw",
+        "mg",
+        "tx",
+        "wy"
+      ],
+      "notes": "多端点 fallback 聚合"
+    },
+    {
+      "file": "candidates/HYWmusic_beta_公益测试 v0.74.0.js",
+      "name": "HYWmusic_beta 公益测试",
+      "version": "v0.74.0",
+      "sourceUrl": "用户提供（实测可用）",
+      "license": "user-provided",
+      "sources": [
+        "kg",
+        "kw",
+        "mg",
+        "tx",
+        "wy"
+      ],
+      "notes": "用户 2026-08 实测可用，优先纳入 G1 核心样本"
+    },
+    {
+      "file": "candidates/lx-玉宁熙-Pro v1.2.2 (1).js",
+      "name": "lx-玉宁熙-Pro",
+      "version": "v1.2.2",
+      "sourceUrl": "用户提供（实测可用）",
+      "license": "user-provided",
+      "sources": [
+        "kg",
+        "kw",
+        "mg",
+        "tx",
+        "wy"
+      ],
+      "notes": "用户 2026-08 实测可用；大体积打包脚本（147KB）"
+    },
+    {
+      "file": "candidates/屿溪-终章  v 0.0.0.js",
+      "name": "屿溪-终章",
+      "version": "0.0.0",
+      "sourceUrl": "用户提供（实测可用）",
+      "license": "user-provided",
+      "sources": [
+        "kg",
+        "kw",
+        "mg",
+        "tx",
+        "wy"
+      ],
+      "notes": "用户 2026-08 实测可用；大体积脚本（128KB）"
+    },
+    {
+      "file": "candidates/长青SVIP音源(二改修复版) v1.2.0.js",
+      "name": "长青SVIP音源（二改修复版）",
+      "version": "v1.2.0",
+      "sourceUrl": "用户提供（实测可用）",
+      "license": "user-provided",
+      "sources": [
+        "kg",
+        "kw",
+        "tx",
+        "wy"
+      ],
+      "notes": "用户 2026-08 实测可用"
+    },
+    {
+      "file": "candidates/独家音源-v5.js",
+      "name": "独家音源",
+      "version": "v5",
+      "sourceUrl": "用户提供（实测可用）",
+      "license": "user-provided",
+      "sources": [
+        "dynamic"
+      ],
+      "notes": "用户 2026-08 实测可用"
+    },
+    {
+      "file": "candidates/K×H测试 v1.7.17.js",
+      "name": "K×H测试",
+      "version": "v1.7.17",
+      "sourceUrl": "用户提供（实测可用）",
+      "license": "user-provided",
+      "sources": [
+        "kg",
+        "kw",
+        "mg",
+        "tx",
+        "wy"
+      ],
+      "notes": "用户 2026-08 实测可用"
+    }
+  ]
 }

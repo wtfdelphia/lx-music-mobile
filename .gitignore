@@ -73,3 +73,6 @@ rust/**/target
 
 # rust staticlib 构建产物（由 rust/build-ios-libs.sh 生成）
 ios/rust-libs/
+
+# 回归集脚本的原始压缩包（入库的是解压后的 .js）
+test/scripts-regression/candidates/*.zip
