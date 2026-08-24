@@ -42,7 +42,7 @@
 
 ## 6. Phase 3：功能补齐
 
-- [ ] 6.1 gzip 走 libz `windowBits=31`，`.lxmc` 与 Android 双向导入成功
+- [ ] 6.1 gzip 走 libz `windowBits=31`，`.lxmc` 与 Android 双向导入成功（代码已写：`GzipModule.{h,m}` 契约自 fork Java 源码提取——`gzipString` 输出恒 base64、`unGzipString` 输入恒 base64；`.lxmc` 双向实测待 M）
 - [ ] 6.2 `toast.ios.tsx`，各处 toast 正常显示
 - [ ] 6.3 深链（AppDelegate + Info.plist），`lxmusic://` 触发对应行为
 - [ ] 6.4 `CFBundleDocumentTypes`，从"文件"App 打开 `.lxmc` 触发导入

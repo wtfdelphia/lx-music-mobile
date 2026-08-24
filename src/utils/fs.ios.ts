@@ -2,6 +2,9 @@
 // 基于 react-native-fs；stat/readDir 合成 name/path/mimeType/canRead 字段。
 // gzip 四方法与 DocumentPicker 选择器为占位实现，分别由任务 6.1 / 6.5 接入。
 import RNFS from 'react-native-fs'
+import { NativeModules } from 'react-native'
+
+const { GzipModule } = NativeModules
 
 export type Encoding = 'base64' | 'utf8'
 export type HashAlgorithm = 'md5' | 'sha1' | 'sha256' | 'sha384' | 'sha512'
@@ -106,14 +109,12 @@ export const moveFile = async(fromPath: string, toPath: string) => {
   await RNFS.moveFile(fromPath, toPath)
 }
 
-// gzip 族：iOS 原生实现待任务 6.1（libz，windowBits=31，与 Android 互通后启用）
-const gzipNotImplemented = (method: string): never => {
-  throw new Error(`${method} is not implemented on iOS yet (task 6.1)`)
-}
-export const gzipFile = async(_fromPath: string, _toPath: string) => gzipNotImplemented('gzipFile')
-export const unGzipFile = async(_fromPath: string, _toPath: string) => gzipNotImplemented('unGzipFile')
-export const gzipString = async(_data: string, _encoding?: Encoding) => gzipNotImplemented('gzipString')
-export const unGzipString = async(_data: string, _encoding?: Encoding) => gzipNotImplemented('unGzipString')
+// gzip 族：GzipModule（libz，windowBits=31），契约对齐
+// react-native-file-system fork 的 Java 实现（任务 6.1）
+export const gzipFile = async(fromPath: string, toPath: string) => GzipModule.gzipFile(fromPath, toPath)
+export const unGzipFile = async(fromPath: string, toPath: string) => GzipModule.unGzipFile(fromPath, toPath)
+export const gzipString = async(data: string, encoding?: Encoding) => GzipModule.gzipString(data, encoding ?? 'utf8')
+export const unGzipString = async(data: string, encoding?: Encoding) => GzipModule.unGzipString(data, encoding ?? 'utf8')
 
 export const existsFile = async(path: string) => RNFS.exists(path)
 

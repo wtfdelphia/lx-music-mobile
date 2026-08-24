@@ -20,6 +20,7 @@
 		E105A00300000000000000A1 /* UserApiModule.m in Sources */ = {isa = PBXBuildFile; fileRef = E105A00300000000000000B2 /* UserApiModule.m */; };
 		E105A00300000000000000A2 /* user-api-preload.js in Resources */ = {isa = PBXBuildFile; fileRef = E105A00300000000000000B3 /* user-api-preload.js */; };
 		E105A00400000000000000A1 /* CacheModule.m in Sources */ = {isa = PBXBuildFile; fileRef = E105A00400000000000000B2 /* CacheModule.m */; };
+		E105A00500000000000000A1 /* GzipModule.m in Sources */ = {isa = PBXBuildFile; fileRef = E105A00500000000000000B2 /* GzipModule.m */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -52,6 +53,8 @@
 		E105A00300000000000000B3 /* user-api-preload.js */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.javascript; name = "user-api-preload.js"; path = "LxMusicMobile/Script/user-api-preload.js"; sourceTree = "<group>"; };
 		E105A00400000000000000B1 /* CacheModule.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = CacheModule.h; path = LxMusicMobile/Modules/CacheModule.h; sourceTree = "<group>"; };
 		E105A00400000000000000B2 /* CacheModule.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = CacheModule.m; path = LxMusicMobile/Modules/CacheModule.m; sourceTree = "<group>"; };
+		E105A00500000000000000B1 /* GzipModule.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = GzipModule.h; path = LxMusicMobile/Modules/GzipModule.h; sourceTree = "<group>"; };
+		E105A00500000000000000B2 /* GzipModule.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = GzipModule.m; path = LxMusicMobile/Modules/GzipModule.m; sourceTree = "<group>"; };
 		19F6CBCC0A4E27FBF8BF4A61 /* libPods-LxMusicMobile-LxMusicMobileTests.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-LxMusicMobile-LxMusicMobileTests.a"; sourceTree = BUILT_PRODUCTS_DIR; };
 		3B4392A12AC88292D35C810B /* Pods-LxMusicMobile.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-LxMusicMobile.debug.xcconfig"; path = "Target Support Files/Pods-LxMusicMobile/Pods-LxMusicMobile.debug.xcconfig"; sourceTree = "<group>"; };
 		5709B34CF0A7D63546082F79 /* Pods-LxMusicMobile.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-LxMusicMobile.release.xcconfig"; path = "Target Support Files/Pods-LxMusicMobile/Pods-LxMusicMobile.release.xcconfig"; sourceTree = "<group>"; };
@@ -116,6 +119,8 @@
 				E105A00300000000000000B2 /* UserApiModule.m */,
 				E105A00400000000000000B1 /* CacheModule.h */,
 				E105A00400000000000000B2 /* CacheModule.m */,
+				E105A00500000000000000B1 /* GzipModule.h */,
+				E105A00500000000000000B2 /* GzipModule.m */,
 				E105A00300000000000000B3 /* user-api-preload.js */,
 				E105A00100000000000000B3 /* icomoon.ttf */,
 			);
@@ -426,6 +431,7 @@
 				E105A00200000000000000A1 /* CryptoModule.m in Sources */,
 				E105A00300000000000000A1 /* UserApiModule.m in Sources */,
 				E105A00400000000000000A1 /* CacheModule.m in Sources */,
+				E105A00500000000000000A1 /* GzipModule.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -514,6 +520,7 @@
 					"-ObjC",
 					"-lc++",
 					"-llxcore_crypto",
+					"-lz",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = "org.reactjs.native.example.$(PRODUCT_NAME:rfc1034identifier)";
 				PRODUCT_NAME = LxMusicMobile;
@@ -545,6 +552,7 @@
 					"-ObjC",
 					"-lc++",
 					"-llxcore_crypto",
+					"-lz",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = "org.reactjs.native.example.$(PRODUCT_NAME:rfc1034identifier)";
 				PRODUCT_NAME = LxMusicMobile;
