@@ -70,3 +70,6 @@ test/golden/lib/
 
 # rust
 rust/**/target
+
+# rust staticlib 构建产物（由 rust/build-ios-libs.sh 生成）
+ios/rust-libs/

@@ -15,10 +15,10 @@
 
 ## 3. Phase 1：加密核心（Rust V1）
 
-- [ ] 3.1 `rust/lxcore` 工作区 + iOS staticlib 链接 + CI 编译步骤；`cargo build --target aarch64-apple-ios` 通过，哑函数经桥调通（不过则启用 design.md D2 退路）（iOS target 交叉编译已在 GH Actions macos-15 / Xcode 16.4 通过，见 `evidence/ci-verify.md`；经桥调通待交互式环境）
+- [ ] 3.1 `rust/lxcore` 工作区 + iOS staticlib 链接 + CI 编译步骤；`cargo build --target aarch64-apple-ios` 通过，哑函数经桥调通（不过则启用 design.md D2 退路）（交叉编译已过；`rust/build-ios-libs.sh` + `ios/rust-libs` 链接配置已写入，链接验证待本轮 CI；经桥调通待交互式环境）
 - [x] 3.2 `lxcore-crypto` 实现 9 个方法，逐条对齐 design.md 契约表
 - [x] 3.3 黄金基准成为 `cargo test` 用例，100% 字节级通过
-- [ ] 3.4 iOS `CryptoModule` 薄封装（含 4 个 `RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD`），经桥复跑黄金基准逐条一致
+- [ ] 3.4 iOS `CryptoModule` 薄封装（含 4 个 `RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD`），经桥复跑黄金基准逐条一致（代码已写：`ios/LxMusicMobile/Modules/CryptoModule.{h,m}` 经 C ABI 调 `lx_*`；编译验证走 CI，逐条一致待桥复跑）
 
 ## 4. Phase 1：沙箱（JSC）与 G1 闸门
 

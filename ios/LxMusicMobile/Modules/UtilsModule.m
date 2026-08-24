@@ -85,11 +85,11 @@ RCT_EXPORT_MODULE()
 
 #pragma mark - 导出方法
 
-RCT_EXPORT_METHOD(addListener:(NSString *)eventName)
-RCT_EXPORT_METHOD(removeListeners:(NSInteger)count)
+RCT_EXPORT_METHOD(addListener:(NSString *)eventName) {}
+RCT_EXPORT_METHOD(removeListeners:(NSInteger)count) {}
 
 // iOS 不允许应用主动退出，桩化为空实现
-RCT_EXPORT_METHOD(exitApp)
+RCT_EXPORT_METHOD(exitApp) {}
 
 RCT_EXPORT_METHOD(getSupportedAbis:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
@@ -208,10 +208,8 @@ RCT_EXPORT_METHOD(getWindowSize:(RCTPromiseResolveBlock)resolve
   resolve([self currentWindowSize]);
 }
 
-RCT_EXPORT_METHOD(listenWindowSizeChanged)
-{
-  // 观察者已在 init 注册，此处保留空实现以对齐 JS 调用面
-}
+// 观察者已在 init 注册，此处保留空实现以对齐 JS 调用面
+RCT_EXPORT_METHOD(listenWindowSizeChanged) {}
 
 // iOS 无 Doze 机制，语义上恒为"已忽略电池优化"
 RCT_EXPORT_METHOD(isIgnoringBatteryOptimization:(RCTPromiseResolveBlock)resolve
