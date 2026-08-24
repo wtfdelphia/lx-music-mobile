@@ -189,7 +189,7 @@ RCT_EXPORT_METHOD(removeListeners:(NSInteger)count) {}
   ctx[@"__lx_native_call__set_timeout"] = ^(JSValue *fnId, JSValue *delay) {
     UserApiModule *self_ = weakSelf;
     if (self_ == nil) return;
-    NSTimeInterval ms = [delay toNumber];
+    NSTimeInterval ms = [delay toNumber].doubleValue;
     if (ms < 0) ms = 0;
     NSUInteger gen = self_->_generation;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(ms * NSEC_PER_MSEC)), self_->_jsQueue, ^{
@@ -205,11 +205,11 @@ RCT_EXPORT_METHOD(removeListeners:(NSInteger)count) {}
     [self_ emitLog:type text:text];
   };
   static NSString *const consoleShim =
-    "(function(){"
-    "var fmt=function(a){try{return typeof a==='object'?JSON.stringify(a):String(a);}catch(e){return String(a);}};"
-    "var mk=function(t){return function(){var p=[];for(var i=0;i<arguments.length;i++)p.push(fmt(arguments[i]));__lx_native_log__(t,p.join(' '));};};"
-    "globalThis.console={log:mk('log'),info:mk('info'),warn:mk('warn'),error:mk('error'),debug:mk('log')};"
-    "})();";
+    @"(function(){"
+    @"var fmt=function(a){try{return typeof a==='object'?JSON.stringify(a):String(a);}catch(e){return String(a);}};"
+    @"var mk=function(t){return function(){var p=[];for(var i=0;i<arguments.length;i++)p.push(fmt(arguments[i]));__lx_native_log__(t,p.join(' '));};};"
+    @"globalThis.console={log:mk('log'),info:mk('info'),warn:mk('warn'),error:mk('error'),debug:mk('log')};"
+    @"})();";
   [ctx evaluateScript:consoleShim];
 }
 
