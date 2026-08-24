@@ -85,8 +85,6 @@ RCT_EXPORT_MODULE()
 
 #pragma mark - 导出方法
 
-- (void)addListener:(NSString *)eventName {}
-- (void)removeListeners:(NSInteger)count {}
 RCT_EXPORT_METHOD(addListener:(NSString *)eventName)
 RCT_EXPORT_METHOD(removeListeners:(NSInteger)count)
 
