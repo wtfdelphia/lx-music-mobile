@@ -17,7 +17,7 @@
 |---|---|---|
 | ECB 隐式填充误实现（错了不报错） | 任务 3.2 | 黄金基准含非对齐明文用例；`cargo test` 门禁 |
 | RSA SPKI/PKCS#8 ↔ PKCS#1 转换 | 任务 3.2 | `spki`/`pkcs8` crate；跨端密钥往返场景 |
-| 本工作区是 Linux，无 Xcode/模拟器 | Phase 0/1.4 起 | 环境矩阵见 §5；macOS 门槛在具备环境后执行 |
+| 本工作区是 Linux，无 Xcode/模拟器 | Phase 0/1.4 起 | CI 级验证走 GH Actions macos-15（已首次通过，见 `evidence/ci-verify.md`）；交互式任务待本机macOS（macOS 15 / Intel） |
 | 黄金基准缺 Android 真机 | 任务 2.2 | JDK 8 引导路径 + 真机替换要求（见停止条件） |
 | rquickjs 分叉差异（二期风险） | 不在本变更 | G1 只测 JSC；分叉实测属二期前置 |
 | 工作区含无关改动（`.claude/skills` 修改、`.agents/` 未跟踪） | 提交时 | 本变更只提交 `openspec/` 与实现代码，其余不动 |
@@ -56,7 +56,7 @@
 | 2.1 测试框架 | 选型（vitest 优先，纯逻辑无需 RN 运行时）+ `test` script | `npm test` 可执行 | L |
 | 2.2 黄金基准 | 首选 Android 真机跑取证脚本；无真机时用 JDK 8 复刻 `AES.java`/`RSA.java` 路径引导，产出 `test/crypto-golden-vectors.json` | JSON 覆盖两种 mode + 非对齐 + 空/短 IV + RSA 双 padding | D→L |
 | 2.3 脚本回归集 | 收集 ≥10 个社区脚本 + 加载/搜索/取链接断言 | 一键可跑 | L |
-| 3.1 Rust 工作区 | `rust/lxcore` + staticlib；iOS 链接在 macOS 验证 | `cargo build` 过；哑函数经桥调通 | L+M |
+| 3.1 Rust 工作区 | `rust/lxcore` + staticlib；iOS target 编译已在 GH Actions macos-15 通过 | `cargo build` 过；哑函数经桥调通 | L+M（编译部分已 GH 验证） |
 | 3.2-3.3 加密核心 | 按 design.md 契约表 8 条实现；黄金基准入 `cargo test` | `cargo test` 100% 字节级 | L |
 | 3.4 iOS 薄封装 | 4 个同步宏 + `requiresMainQueueSetup=NO` | 经桥复跑基准一致 | M |
 | 4.1-4.3 JSC 沙箱 | JSContext + console → 7 注入 → 反向通道 + 定时器 | 逐函数对照 + `inited` 事件 | M |
@@ -64,7 +64,7 @@
 | 4.5 G1 | 回归集全量跑 | 报告落盘，按 D6 判读 | M |
 | 5.1-5.7 播放 | track-player → `iosCategory` → 锁屏 → 缓存降级 → CacheModule | 后台/锁屏实测；不兼容则 1 天切上游 4.x | M |
 | 6.1-6.9 功能 | gzip(`windowBits=31`) → toast → 深链 → 文档类型 → ChoosePath → 杂项 → 同步 → tools 分支 | 主流程全通；`.lxmc` 双向 | M（6.7 需双端） |
-| 7.1-7.7 打磨 | 降级桩 → 布局 → CI job → 真机 → Android 构建回归 | 30 分钟无崩溃；CI 绿；Android release 构建过 | M+L（7.5 CI 编写在 L） |
+| 7.1-7.7 打磨 | 降级桩 → 布局 → CI job → 真机 → Android 构建回归 | 30 分钟无崩溃；CI 绿；Android release 构建过 | M+L（7.5 已完成：GH Actions unsigned build 过） |
 
 **何时停止（阶段级）**：每组门槛任务（1.6 / G1 / 5.7 / 6.9 / 7.6）未过不进下一组；3.1 当天不过即走 D2 退路并回改 design。
 
@@ -75,7 +75,7 @@
 - 模拟器：启动无红屏 / 搜索有结果 / 后台出声 / 锁屏可控（M 环境）
 - 跨端：`.lxmc` 与同步报文双向互通；Android 侧解出 iOS 生成的 RSA 公钥
 - G1 回归集报告（落盘 `evidence/g1-report.md`）
-- CI：iOS unsigned build job 通过一次真实触发
+- CI：iOS unsigned build job 通过一次真实触发 ✅（run 32705189097，2026-08-24）
 - `openspec validate add-ios-support`（归档前）
 
 ## 7. README / AGENTS / spec 同步判断

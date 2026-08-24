@@ -15,7 +15,7 @@
 
 ## 3. Phase 1：加密核心（Rust V1）
 
-- [ ] 3.1 `rust/lxcore` 工作区 + iOS staticlib 链接 + CI 编译步骤；`cargo build --target aarch64-apple-ios` 通过，哑函数经桥调通（不过则启用 design.md D2 退路）（工作区与宿主机构建、`.github/workflows/rust.yml` 已就绪；iOS target 链接待 macOS 环境）
+- [ ] 3.1 `rust/lxcore` 工作区 + iOS staticlib 链接 + CI 编译步骤；`cargo build --target aarch64-apple-ios` 通过，哑函数经桥调通（不过则启用 design.md D2 退路）（iOS target 交叉编译已在 GH Actions macos-15 / Xcode 16.4 通过，见 `evidence/ci-verify.md`；经桥调通待交互式环境）
 - [x] 3.2 `lxcore-crypto` 实现 9 个方法，逐条对齐 design.md 契约表
 - [x] 3.3 黄金基准成为 `cargo test` 用例，100% 字节级通过
 - [ ] 3.4 iOS `CryptoModule` 薄封装（含 4 个 `RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD`），经桥复跑黄金基准逐条一致
@@ -56,6 +56,6 @@
 - [ ] 7.2 本地音乐降级：扫描不崩，元数据显示文件名
 - [ ] 7.3 应用内更新改为跳转 Release 页
 - [ ] 7.4 横屏 / iPad 布局：24 个 Horizontal tsx 不错位
-- [ ] 7.5 CI 新增 iOS unsigned build job 并通过
+- [x] 7.5 CI 新增 iOS unsigned build job 并通过（`.github/workflows/ios-verify.yml`，macos-15 / Xcode 16.4，run 32705189097）
 - [ ] 7.6 真机测试 ≥2 台（含 iOS 13/14 旧机），连续 30 分钟无崩溃，Instruments 无明显泄漏
 - [ ] 7.7 `assets/script/user-api-preload.js` 移动后，Android release 构建回归一次
