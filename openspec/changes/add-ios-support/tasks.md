@@ -1,9 +1,9 @@
-* [ ] 
+* [ ]
 
 ## 1. Phase 0：能跑起来
 
 - [ ] 1.1 `pod install` 通过（关 Flipper），`ios/Pods` 生成无 error
-- [ ] 1.2 修 Bundle ID / 版本号 / Display Name / arm64，Xcode build 成功
+- [ ] 1.2 修 Bundle ID / 版本号 / Display Name / arm64，Xcode build 成功（配置已改：Bundle ID `cn.toside.music.mobile`、MARKETING_VERSION 1.8.1、CURRENT_PROJECT_VERSION 73、显示名「洛雪音乐助手」、UIRequiredDeviceCapabilities arm64；待 CI 构建验证）
 - [ ] 1.3 UtilsModule iOS 骨架（`exitApp` 桩 + `getWindowSize`），`src/app.ts` 求值不再抛 TypeError（代码已写并经 CI 编译验证：`ios/LxMusicMobile/Modules/UtilsModule.{h,m}` 全 JS 面对齐；运行时待模拟器）
 - [ ] 1.4 `fs.ios.ts` 适配层（除 gzip 外全部方法），27 个导出无 undefined，`stat`/`readDir` 合成 `mimeType`/`name`/`canRead`（代码已写并经 Metro 打包验证：RNFS 适配 27 导出；gzip 占位待 6.1、`selectFile` 占位待 6.5；运行时待模拟器）
 - [ ] 1.5 字体入 bundle + `UIAppFonts`，首页图标无豆腐块（已挂载并经 CI 构建验证：`ios/LxMusicMobile/Fonts/icomoon.ttf` + `UIAppFonts`；图标渲染待模拟器）
@@ -13,7 +13,7 @@
 
 - [X] 2.1 给项目装测试框架（当前无任何测试载体），`npm test` 可执行
 - [X] 2.2 Android 真机跑取证脚本，产出加密黄金基准 JSON（两种 AES mode + 非对齐明文 + 空 IV + 短 IV + RSA 双 padding 往返）（当前为 JDK 8 引导基准 `test/golden/gen.sh`，真机基准替换见桥计划停止条件 3）
-- [ ] 2.3 收集社区脚本回归集（≥10 个，覆盖 6 大音源），写成可一键跑的加载→inited→搜索→取链接断言（骨架已建 `test/scripts-regression/`，脚本收集待执行环境）
+- [ ] 2.3 收集社区脚本回归集（≥10 个，覆盖 6 大音源），写成可一键跑的加载→inited→搜索→取链接断言（已收集 23 个脚本入 `test/scripts-regression/candidates/`，含用户提供实测可用 6 个；bd 音源社区无实现，生态空缺已记录于 manifest；一键运行入口待沙箱环境接入）
 
 ## 3. Phase 1：加密核心（Rust V1）
 
@@ -43,10 +43,10 @@
 ## 6. Phase 3：功能补齐
 
 - [ ] 6.1 gzip 走 libz `windowBits=31`，`.lxmc` 与 Android 双向导入成功（代码已写：`GzipModule.{h,m}` 契约自 fork Java 源码提取——`gzipString` 输出恒 base64、`unGzipString` 输入恒 base64；`.lxmc` 双向实测待 M）
-- [ ] 6.2 `toast.ios.tsx`，各处 toast 正常显示
-- [ ] 6.3 深链（AppDelegate + Info.plist），`lxmusic://` 触发对应行为
-- [ ] 6.4 `CFBundleDocumentTypes`，从"文件"App 打开 `.lxmc` 触发导入
-- [ ] 6.5 ChoosePath iOS 化（DocumentPicker），能选文件并导入歌单
+- [ ] 6.2 `toast.ios.tsx`，各处 toast 正常显示（代码已写：`src/utils/toast.ios.tsx` 经 RNN overlay 显示 + Toast 组件注册，`tools.ts` 改按平台引入；运行时待验证）
+- [ ] 6.3 深链（AppDelegate + Info.plist），`lxmusic://` 触发对应行为（代码已写：`CFBundleURLTypes` lxmusic scheme + AppDelegate `RCTLinkingManager` openURL/continueUserActivity；运行时待验证）
+- [ ] 6.4 `CFBundleDocumentTypes`，从"文件"App 打开 `.lxmc` 触发导入（代码已写：lxmc/js/audio 三类 DocumentTypes + lxmc UTI 导出声明 + iTunes 文件共享 + ATS 放行 http；运行时待验证）
+- [ ] 6.5 ChoosePath iOS 化（DocumentPicker），能选文件并导入歌单（代码已写：UtilsModule `selectFile` UIDocumentPicker 拷贝进沙箱、`fs.ios.ts` 接入、存储权限恒真、Header 隐藏存储卷切换、FileType 补 isFile/lastModified；运行时待验证）
 - [ ] 6.6 通知权限 / 屏幕常亮 / 分享 / 设备名 / WiFi IP 逐项手测
 - [ ] 6.7 数据同步与桌面版双向完成一次
 - [ ] 6.8 `tools.ts` 平台分支，`isSupportedAutoTheme` 生效，深色模式跟随（平台分支已存在：iOS ≥13 判断 + Appearance 监听；深色跟随待真机验证）
@@ -55,7 +55,7 @@
 ## 7. Phase 4：降级与打磨
 
 - [ ] 7.1 桌面歌词整组隐藏 + `lyricDesktop.ios.ts` 桩，无死链无未捕获 reject（代码已写：22 导出安全桩 + `SETTING_SCREENS` 按平台过滤导航；设置页遍历待 M 验证）
-- [ ] 7.2 本地音乐降级：扫描不崩，元数据显示文件名
+- [ ] 7.2 本地音乐降级：扫描不崩，元数据显示文件名（代码已写：`localMediaMetadata.ios.ts` 读取降级为文件名元数据、写入显式 reject、封面歌词返回空；运行时待验证）
 - [ ] 7.3 应用内更新改为跳转 Release 页（代码已写：`version.ios.js` 版本检查逻辑不变，下载/安装改 `Linking.openURL` Release 页；更新弹窗路径待验证）
 - [ ] 7.4 横屏 / iPad 布局：24 个 Horizontal tsx 不错位
 - [X] 7.5 CI 新增 iOS unsigned build job 并通过（`.github/workflows/ios-verify.yml`，macos-15 / Xcode 16.4；首验 run 32705189097，门禁后归并为设备版构建 + IPA artifact，run 32707901201 双 SDK 均通过）
