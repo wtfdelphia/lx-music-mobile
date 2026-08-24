@@ -2,7 +2,7 @@ import TrackPlayer, { Capability, Event, RepeatMode, State } from 'react-native-
 import BackgroundTimer from 'react-native-background-timer'
 import { playMusic as handlePlayMusic } from './playList'
 import { existsFile, moveFile, privateStorageDirectoryPath, temporaryDirectoryPath } from '@/utils/fs'
-import { toast } from '@/utils/tools'
+import { isAndroid, toast } from '@/utils/tools'
 // import { PlayerMusicInfo } from '@/store/modules/player/playInfo'
 
 
@@ -175,9 +175,13 @@ export const updateNowPlayingTitles = async(duration: number, title: string, art
 
 export const resetPlay = async() => Promise.all([setPause(), setCurrentTime(0)])
 
-export const isCached = async(url: string) => TrackPlayer.isCached(url)
-export const getCacheSize = async() => TrackPlayer.getCacheSize()
-export const clearCache = async() => TrackPlayer.clearCache()
+// 任务 5.5：fork 的缓存三方法仅 Android 侧实现，iOS 降级为安全值
+export const isCached = async(url: string) => isAndroid ? TrackPlayer.isCached(url) : false
+export const getCacheSize = async() => isAndroid ? TrackPlayer.getCacheSize() : 0
+export const clearCache = async() => {
+  if (!isAndroid) return
+  return TrackPlayer.clearCache()
+}
 export const migratePlayerCache = async() => {
   const newCachePath = privateStorageDirectoryPath + '/TrackPlayer'
   if (await existsFile(newCachePath)) return

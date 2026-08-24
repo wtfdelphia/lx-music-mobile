@@ -1,3 +1,5 @@
+* [ ] 
+
 ## 1. Phase 0：能跑起来
 
 - [ ] 1.1 `pod install` 通过（关 Flipper），`ios/Pods` 生成无 error
@@ -9,15 +11,15 @@
 
 ## 2. Phase 1.0：验证基础设施
 
-- [x] 2.1 给项目装测试框架（当前无任何测试载体），`npm test` 可执行
-- [x] 2.2 Android 真机跑取证脚本，产出加密黄金基准 JSON（两种 AES mode + 非对齐明文 + 空 IV + 短 IV + RSA 双 padding 往返）（当前为 JDK 8 引导基准 `test/golden/gen.sh`，真机基准替换见桥计划停止条件 3）
+- [X] 2.1 给项目装测试框架（当前无任何测试载体），`npm test` 可执行
+- [X] 2.2 Android 真机跑取证脚本，产出加密黄金基准 JSON（两种 AES mode + 非对齐明文 + 空 IV + 短 IV + RSA 双 padding 往返）（当前为 JDK 8 引导基准 `test/golden/gen.sh`，真机基准替换见桥计划停止条件 3）
 - [ ] 2.3 收集社区脚本回归集（≥10 个，覆盖 6 大音源），写成可一键跑的加载→inited→搜索→取链接断言（骨架已建 `test/scripts-regression/`，脚本收集待执行环境）
 
 ## 3. Phase 1：加密核心（Rust V1）
 
 - [ ] 3.1 `rust/lxcore` 工作区 + iOS staticlib 链接 + CI 编译步骤；`cargo build --target aarch64-apple-ios` 通过，哑函数经桥调通（不过则启用 design.md D2 退路）（交叉编译 + 链接均经 CI 通过，run 32714184216；经桥调通待交互式环境）
-- [x] 3.2 `lxcore-crypto` 实现 9 个方法，逐条对齐 design.md 契约表
-- [x] 3.3 黄金基准成为 `cargo test` 用例，100% 字节级通过
+- [X] 3.2 `lxcore-crypto` 实现 9 个方法，逐条对齐 design.md 契约表
+- [X] 3.3 黄金基准成为 `cargo test` 用例，100% 字节级通过
 - [ ] 3.4 iOS `CryptoModule` 薄封装（含 4 个 `RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD`），经桥复跑黄金基准逐条一致（代码已写并经 CI 编译+链接验证：`CryptoModule.{h,m}` 经 C ABI 调 `lx_*`；逐条一致待桥复跑）
 
 ## 4. Phase 1：沙箱（JSC）与 G1 闸门
@@ -31,11 +33,11 @@
 ## 5. Phase 2：播放
 
 - [ ] 5.1 track-player iOS 侧 build 通过，`setupPlayer` 不 reject
-- [ ] 5.2 加 `iosCategory: 'playback'`，切后台仍出声
+- [ ] 5.2 加 `iosCategory: 'playback'`，切后台仍出声（配置已写：setupPlayer + `UIBackgroundModes: audio`；后台出声待实测）
 - [ ] 5.3 锁屏控制：歌名/封面显示，播放/暂停/上下曲可用
 - [ ] 5.4 `updateNowPlayingTitles`，锁屏标题随歌词变化
-- [ ] 5.5 缓存三方法降级（0/false），`preloadNextMusic` 不崩
-- [ ] 5.6 CacheModule：设置页缓存大小显示与清理有效
+- [ ] 5.5 缓存三方法降级（0/false），`preloadNextMusic` 不崩（降级代码已写：`isCached`/`getCacheSize`/`clearCache` 按 `isAndroid` 分支；运行时待验证）
+- [ ] 5.6 CacheModule：设置页缓存大小显示与清理有效（代码已写：`CacheModule.{h,m}` 真实统计/清理 Caches，字符串字节数对齐 Android；设置页验证待 M）
 - [ ] 5.7 门槛验证：完整听完一首在线歌，锁屏不中断可控
 
 ## 6. Phase 3：功能补齐
@@ -56,6 +58,6 @@
 - [ ] 7.2 本地音乐降级：扫描不崩，元数据显示文件名
 - [ ] 7.3 应用内更新改为跳转 Release 页
 - [ ] 7.4 横屏 / iPad 布局：24 个 Horizontal tsx 不错位
-- [x] 7.5 CI 新增 iOS unsigned build job 并通过（`.github/workflows/ios-verify.yml`，macos-15 / Xcode 16.4；首验 run 32705189097，门禁后归并为设备版构建 + IPA artifact，run 32707901201 双 SDK 均通过）
+- [X] 7.5 CI 新增 iOS unsigned build job 并通过（`.github/workflows/ios-verify.yml`，macos-15 / Xcode 16.4；首验 run 32705189097，门禁后归并为设备版构建 + IPA artifact，run 32707901201 双 SDK 均通过）
 - [ ] 7.6 真机测试 ≥2 台（含 iOS 13/14 旧机），连续 30 分钟无崩溃，Instruments 无明显泄漏
 - [ ] 7.7 `assets/script/user-api-preload.js` 移动后，Android release 构建回归一次

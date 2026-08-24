@@ -34,6 +34,7 @@ const initial = async({ volume, playRate, cacheSize, isHandleAudioFocus, isEnabl
     handleAudioFocus: isHandleAudioFocus,
     audioOffload: isEnableAudioOffload,
     autoUpdateMetadata: false,
+    iosCategory: 'playback',
   })
   global.lx.playerStatus.isInitialized = true
   global.lx.playerStatus.isIniting = false
