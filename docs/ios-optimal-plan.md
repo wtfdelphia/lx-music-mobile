@@ -209,6 +209,42 @@ G1 数据 = Phase 1.0 收集的回归集在 iOS JSC 上的通过率。判读：
 3. 备选：付费账号自签（100 台/产品家族/年，手工分发 `.ipa`）。
 4. **禁止**：TestFlight 外部测试/公开链接（指南 2.2，Beta 同受约束）；App Store 上架（5.2.2/5.2.3 第三方媒体下载授权不可能取得，另有 2.5.2/4.7 风险）。
 
+### 6.1 CI 分发流水线（2026-08-24 增补）
+
+主推路线的自动化形态：开发者在 Windows / Linux 上 `git push`，macOS
+构建环境完全由 GitHub Actions 提供，用户侧以免费 Apple ID 重签侧载，
+全程不依赖 App Store 与付费开发者账号。
+
+```
+Windows / Linux ──git push──► GitHub ──► GitHub Actions
+                                              │
+                                    macOS Runner（macos-15 / Xcode 16）
+                                    Node.js + Rust + CocoaPods + Xcode
+                                              │
+                                              ▼
+                                    LxMusicMobile.ipa（未签名）
+                                              │
+                                              ▼
+                                    GitHub Actions Artifact（30 天）
+                                              │
+                                              ▼
+                          Windows 下载 ──► AltStore / SideStore ──► iPhone
+```
+
+对应关系与现状：
+
+| 流水线段 | 对应任务/决策 | 状态 |
+|---|---|---|
+| push → Actions 触发 | `.github/workflows/ios-verify.yml`（push dev-ios/master + PR） | ✅ 已通 |
+| macOS Runner 四件套 | Node v18 / Rust stable / CocoaPods 1.17 / Xcode 16.4 | ✅ 已验证 |
+| → `.app`（模拟器） | 任务 7.5 / R8 硬门槛 | ✅ 已通（run 32705189097） |
+| → IPA（设备 unsigned）+ Artifact | `ios-ipa` job（`-sdk iphoneos` + Payload 打包 + 上传） | 已实现，随本节提交验证 |
+| → 重签侧载 | §6 主推"用户自编译/自签"的免账号降级形态；合规责任在用户侧 | 文档已入 README |
+| Rust 进 App | 任务 3.1 桥调通 / 3.4 薄封装 | 进行中（CI 现为独立编译验证） |
+
+固有约束（写进 README 提示用户）：免费 Apple ID 签名 7 天过期、
+最多 3 个活跃应用、需电脑端定期刷新。
+
 ---
 
 ## 7. 改动文件清单

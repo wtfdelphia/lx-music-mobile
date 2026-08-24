@@ -25,7 +25,7 @@
 
 - Android 5 及以上
 
-***注：目前没有计划支持 iOS 和 HarmonyOS NEXT**。*<br>
+***注：HarmonyOS NEXT 暂无支持计划；iOS 适配在本仓库 `dev-ios` 分支进行中，见下文「iOS 适配状态」**。*<br>
 *桌面版项目地址：<https://github.com/lyswhut/lx-music-desktop>*<br>
 *LX Music 项目发展调整与新项目计划：https://github.com/lyswhut/lx-music-desktop/issues/1912*
 
@@ -42,6 +42,49 @@
 ### 数据同步服务
 
 从 v1.0.0 起，我们发布了一个独立的[数据同步服务](https://github.com/lyswhut/lx-music-sync-server#readme)。如果你有服务器，可以将其部署到服务器上作为私人多端同步服务使用，详情看该项目说明。
+
+### iOS 适配状态（dev-ios）
+
+iOS 适配开发中（方案见 `docs/ios-optimal-plan.md`），不上架 App Store。
+构建验证由 GitHub Actions macOS Runner 全自动完成，开发机无需 macOS：
+
+```
+Windows / Linux
+     │ git push
+     ▼
+GitHub ──► GitHub Actions
+                 │
+                 └── macOS Runner（macos-15 / Xcode 16）
+                         ├── Node.js（JS 依赖与 bundle）
+                         ├── Rust（加密核心交叉编译）
+                         ├── CocoaPods（pod install）
+                         └── Xcode（unsigned 构建）
+                               │
+                               ▼
+                         LxMusicMobile.ipa（未签名）
+                               │
+                               ▼
+                     GitHub Actions Artifact
+                               │
+                               ▼
+                   Windows / Linux 下载 IPA
+                               │
+                               ▼
+                  AltStore / SideStore 重签侧载
+                               │
+                               ▼
+                            iPhone
+```
+
+说明：
+
+- CI 产物为**未签名设备包**（`ios-verify` 工作流 Artifact，保留 30 天），
+  下载后用个人免费 Apple ID 经 AltStore / SideStore 重签安装；
+- 免费账号签名有效期 7 天、同时最多 3 个应用，需用电脑端
+  AltServer / SideServer 定期刷新；
+- 当前进度：模拟器与设备 unsigned 构建已在 CI 通过；
+  加密核心（Rust）独立编译验证已过，接入 App 与运行时功能开发中，
+  详见 `openspec/changes/add-ios-support/`。
 
 ## 贡献代码
 
