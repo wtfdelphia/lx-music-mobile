@@ -1,0 +1,81 @@
+name: iOS Verify
+
+on:
+  push:
+    branches:
+      - master
+      - dev-ios
+    paths:
+      - 'ios/**'
+      - 'rust/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/ios-verify.yml'
+  pull_request:
+    paths:
+      - 'ios/**'
+      - 'rust/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/ios-verify.yml'
+
+jobs:
+  rust-ios-target:
+    name: Rust iOS target 交叉编译
+    runs-on: macos-15
+    steps:
+      - name: Check out git repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - name: 构建 staticlib（aarch64-apple-ios）
+        working-directory: rust/lxcore
+        run: cargo build --locked --release --target aarch64-apple-ios
+
+      - name: macOS 宿主黄金基准
+        working-directory: rust/lxcore
+        run: cargo test --locked
+
+  ios-unsigned-build:
+    name: iOS unsigned build
+    runs-on: macos-15
+    steps:
+      - name: Check out git repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: 安装 JS 依赖
+        run: npm ci
+
+      - name: pod install（关 Flipper）
+        working-directory: ios
+        env:
+          NO_FLIPPER: '1'
+        run: pod install
+
+      - name: 打印工具链版本
+        run: |
+          xcodebuild -version
+          pod --version
+
+      - name: unsigned 构建（模拟器）
+        working-directory: ios
+        run: >
+          xcodebuild
+          -workspace LxMusicMobile.xcworkspace
+          -scheme LxMusicMobile
+          -configuration Release
+          -sdk iphonesimulator
+          -derivedDataPath build
+          CODE_SIGNING_ALLOWED=NO
+          COMPILER_INDEX_STORE_ENABLE=NO
+          build
