@@ -2,9 +2,9 @@
 
 - [ ] 1.1 `pod install` 通过（关 Flipper），`ios/Pods` 生成无 error
 - [ ] 1.2 修 Bundle ID / 版本号 / Display Name / arm64，Xcode build 成功
-- [ ] 1.3 UtilsModule iOS 骨架（`exitApp` 桩 + `getWindowSize`），`src/app.ts` 求值不再抛 TypeError
-- [ ] 1.4 `fs.ios.ts` 适配层（除 gzip 外全部方法），27 个导出无 undefined，`stat`/`readDir` 合成 `mimeType`/`name`/`canRead`
-- [ ] 1.5 字体入 bundle + `UIAppFonts`，首页图标无豆腐块
+- [ ] 1.3 UtilsModule iOS 骨架（`exitApp` 桩 + `getWindowSize`），`src/app.ts` 求值不再抛 TypeError（代码已写：`ios/LxMusicMobile/Modules/UtilsModule.{h,m}` 全 JS 面对齐 + pbxproj 挂载；编译级验证走 CI，运行时待模拟器）
+- [ ] 1.4 `fs.ios.ts` 适配层（除 gzip 外全部方法），27 个导出无 undefined，`stat`/`readDir` 合成 `mimeType`/`name`/`canRead`（代码已写：RNFS 适配 27 导出；gzip 占位待 6.1、`selectFile` 占位待 6.5；运行时验证待模拟器）
+- [ ] 1.5 字体入 bundle + `UIAppFonts`，首页图标无豆腐块（已拷贝 `ios/LxMusicMobile/Fonts/icomoon.ttf` + `UIAppFonts` + pbxproj Resources 挂载；待模拟器验证）
 - [ ] 1.6 门槛验证：模拟器启动到首页，四个 Tab 可切换，无红屏
 
 ## 2. Phase 1.0：验证基础设施
