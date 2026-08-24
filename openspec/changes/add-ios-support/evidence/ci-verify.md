@@ -34,3 +34,16 @@
 - 结论：用户侧流水线（push → macOS Runner → IPA → Artifact → 重签侧载）
   全链路验证成立。设备版构建快于模拟器版且与分发物一致，随后将
   双 job 归并为单 job（门禁 = 产物），消除重复的 npm ci / pod install。
+
+## 第三轮：原生模块面批量落地（2026-08-24）
+
+- 运行：[actions/runs/32716727526](https://github.com/wtfdelphia/lx-music-mobile/actions/runs/32716727526)
+  与 [actions/runs/32717009005](https://github.com/wtfdelphia/lx-music-mobile/actions/runs/32717009005)，均 ✅
+- 编译级验证通过的模块面：UtilsModule、CryptoModule（Rust staticlib
+  链接）、UserApiModule（JSC 沙箱）、CacheModule、GzipModule（libz
+  windowBits=31），以及 fs.ios.ts / lyricDesktop.ios.ts / version.ios.js /
+  播放器配置（iosCategory + UIBackgroundModes）。
+- 期间修复：`RCT_EXPORT_METHOD` 宏只生成声明、方法体须自带 `{}`；
+  `JSValue.toNumber` 返回 `NSNumber*`；ObjC 字符串字面量 `@` 前缀。
+- 结论：Linux 编写 + GH Actions 编译验证的循环成立；剩余验证均为
+  运行时级（模拟器/真机），归本机 macOS 环境。
