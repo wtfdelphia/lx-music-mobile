@@ -3,6 +3,7 @@ import { exitApp as utilExitApp } from '@/utils/nativeModules/utils'
 import { destroy as destroyPlayer } from '@/plugins/player/utils'
 import { initSetting as initAppSetting } from '@/config/setting'
 import { setLanguage as applyLanguage } from '@/lang/i18n'
+import { Platform } from 'react-native'
 
 import settingActions from '@/store/setting/action'
 import settingState from '@/store/setting/state'
@@ -94,12 +95,15 @@ export const showPactModal = () => {
 }
 
 export const checkStoragePermissions = async() => {
+  // iOS 沙箱内无需存储权限（plan §6.2：checkManagedFolderPermission 恒返回 true）
+  if (Platform.OS !== 'android') return true
   const selectedManagedFolder = await getSelectedManagedFolder()
   if (selectedManagedFolder) return (await getPersistedUriList()).some(uri => selectedManagedFolder.startsWith(uri))
   return false
 }
 
 export const requestStoragePermission = async() => {
+  if (Platform.OS !== 'android') return true
   const isGranted = await checkStoragePermissions()
   if (isGranted) return isGranted
 

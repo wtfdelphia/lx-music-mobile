@@ -1,4 +1,4 @@
-import { Platform, ToastAndroid, BackHandler, Linking, Dimensions, Alert, Appearance, PermissionsAndroid, AppState, StyleSheet, type ScaledSize } from 'react-native'
+import { Platform, BackHandler, Linking, Dimensions, Alert, Appearance, PermissionsAndroid, AppState, StyleSheet, type ScaledSize } from 'react-native'
 // import ExtraDimensions from 'react-native-extra-dimensions-android'
 import Clipboard from '@react-native-clipboard/clipboard'
 import { storageDataPrefix } from '@/config/constant'
@@ -11,6 +11,8 @@ import { scaleSizeH, scaleSizeW, setSpText } from './pixelRatio'
 import { toOldMusicInfo } from './index'
 import { stringMd5 } from 'react-native-quick-md5'
 import { windowSizeTools } from '@/utils/windowSizeTools'
+// toast 按平台实现：Android 走 ToastAndroid（./toast.ts），iOS 走 RNN overlay（./toast.ios.tsx）
+import { toast } from './toast'
 
 
 // https://stackoverflow.com/a/47349998
@@ -56,9 +58,11 @@ export const TEMP_FILE_PATH = temporaryDirectoryPath + '/tempFile'
 //   // return windowSize
 // }
 
-export const checkStoragePermissions = async() => PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE)
+// iOS 无运行时存储权限概念（沙箱内直接可读写），恒为已授权
+export const checkStoragePermissions = async() => isAndroid ? PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE) : true
 
 export const requestStoragePermission = async() => {
+  if (!isAndroid) return true
   const isGranted = await checkStoragePermissions()
   if (isGranted) return isGranted
 
@@ -98,42 +102,7 @@ export const requestStoragePermission = async() => {
 }
 
 
-/**
- * 显示toast
- * @param message 消息
- * @param duration 时长
- * @param position 位置
- */
-export const toast = (message: string, duration: 'long' | 'short' = 'short', position: 'top' | 'center' | 'bottom' = 'bottom') => {
-  let _duration
-  switch (duration) {
-    case 'long':
-      _duration = ToastAndroid.LONG
-      break
-    case 'short':
-    default:
-      _duration = ToastAndroid.SHORT
-      break
-  }
-  let _position
-  let offset: number
-  switch (position) {
-    case 'top':
-      _position = ToastAndroid.TOP
-      offset = 120
-      break
-    case 'center':
-      _position = ToastAndroid.CENTER
-      offset = 0
-      break
-    case 'bottom':
-    default:
-      _position = ToastAndroid.BOTTOM
-      offset = 120
-      break
-  }
-  ToastAndroid.showWithGravityAndOffset(message, _duration, _position, 0, offset)
-}
+export { toast }
 
 export const openUrl = async(url: string): Promise<void> => Linking.canOpenURL(url).then(async() => Linking.openURL(url))
 

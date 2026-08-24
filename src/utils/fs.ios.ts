@@ -1,10 +1,10 @@
 // iOS 文件适配层：等价实现 fs.ts 的 27 个导出（任务 1.4 / design D4）。
 // 基于 react-native-fs；stat/readDir 合成 name/path/mimeType/canRead 字段。
-// gzip 四方法与 DocumentPicker 选择器为占位实现，分别由任务 6.1 / 6.5 接入。
+// gzip 四方法走 GzipModule（任务 6.1）；文件选择走 UtilsModule.selectFile（任务 6.5）。
 import RNFS from 'react-native-fs'
 import { NativeModules } from 'react-native'
 
-const { GzipModule } = NativeModules
+const { GzipModule, UtilsModule } = NativeModules
 
 export type Encoding = 'base64' | 'utf8'
 export type HashAlgorithm = 'md5' | 'sha1' | 'sha256' | 'sha384' | 'sha512'
@@ -12,10 +12,12 @@ export type HashAlgorithm = 'md5' | 'sha1' | 'sha256' | 'sha384' | 'sha512'
 export interface FileType {
   name: string
   path: string
-  mimeType: string
-  canRead: boolean
-  size: number
   isDirectory: boolean
+  isFile: boolean
+  lastModified: number
+  canRead: boolean
+  mimeType: string
+  size: number
 }
 
 export interface OpenDocumentOptions {
@@ -61,8 +63,12 @@ export const getExternalStoragePaths = async(_is_removable?: boolean): Promise<s
 export const selectManagedFolder = async(_isPersist: boolean = false): Promise<string> => {
   throw new Error('selectManagedFolder is not supported on iOS')
 }
-export const selectFile = async(_options: OpenDocumentOptions): Promise<{ data: string }> => {
-  throw new Error('selectFile is not implemented on iOS yet (task 6.5: DocumentPicker)')
+// 经 UIDocumentPickerViewController 选择并拷贝进沙箱；取消时 resolve null（与 Android 一致）
+export const selectFile = async(options: OpenDocumentOptions): Promise<{ data: string } | null> => {
+  return UtilsModule.selectFile({
+    extTypes: options.extTypes ?? null,
+    toPath: options.toPath ?? null,
+  }) as Promise<{ data: string } | null>
 }
 export const removeManagedFolder = async(_path: string): Promise<void> => {}
 export const getManagedFolders = async(): Promise<string[]> => []
@@ -72,11 +78,13 @@ export const readDir = async(path: string): Promise<FileType[]> => {
   const items = await RNFS.readDir(path)
   return items.map((item) => ({
     name: item.name,
-    path: item.uri,
+    path: item.path,
     size: item.size,
     isDirectory: item.isDirectory(),
-    mimeType: item.isFile() ? getMimeType(item.name) : '',
+    isFile: item.isFile(),
+    lastModified: item.mtime ? item.mtime.getTime() : 0,
     canRead: true,
+    mimeType: item.isFile() ? getMimeType(item.name) : '',
   }))
 }
 
@@ -90,14 +98,16 @@ export const mkdir = async(path: string) => {
 
 export const stat = async(path: string): Promise<FileType> => {
   const info = await RNFS.stat(path)
-  const name = path.split('/').pop() ?? path
+  const name = info.name ?? path.split('/').pop() ?? path
   return {
     name,
-    path: info.uri,
+    path: info.path,
     size: info.size,
     isDirectory: info.isDirectory(),
-    mimeType: info.isFile() ? getMimeType(name) : '',
+    isFile: info.isFile(),
+    lastModified: info.mtime ?? 0,
     canRead: true,
+    mimeType: info.isFile() ? getMimeType(name) : '',
   }
 }
 

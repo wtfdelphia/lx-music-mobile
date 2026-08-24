@@ -1,4 +1,4 @@
-import TrackPlayer from 'react-native-track-player'
+import TrackPlayer, { IOSCategory } from 'react-native-track-player'
 import { updateOptions, setVolume, setPlaybackRate, migratePlayerCache } from './utils'
 
 // const listenEvent = () => {
@@ -34,7 +34,7 @@ const initial = async({ volume, playRate, cacheSize, isHandleAudioFocus, isEnabl
     handleAudioFocus: isHandleAudioFocus,
     audioOffload: isEnableAudioOffload,
     autoUpdateMetadata: false,
-    iosCategory: 'playback',
+    iosCategory: IOSCategory.Playback,
   })
   global.lx.playerStatus.isInitialized = true
   global.lx.playerStatus.isIniting = false

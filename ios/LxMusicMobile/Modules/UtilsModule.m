@@ -1,9 +1,15 @@
 #import "UtilsModule.h"
 #import <UIKit/UIKit.h>
 #import <UserNotifications/UserNotifications.h>
+#import <MobileCoreServices/MobileCoreServices.h>
 #import <ifaddrs.h>
 #import <arpa/inet.h>
 #import <net/if.h>
+
+@interface UtilsModule () <UIDocumentPickerDelegate>
+@property (nonatomic, copy, nullable) RCTPromiseResolveBlock selectFileResolve;
+@property (nonatomic, copy, nullable) NSString *selectFileToPath;
+@end
 
 @implementation UtilsModule {
   BOOL _hasListeners;
@@ -222,6 +228,142 @@ RCT_EXPORT_METHOD(requestIgnoreBatteryOptimization:(RCTPromiseResolveBlock)resol
                   rejecter:(RCTPromiseRejectBlock)reject)
 {
   resolve(@(YES));
+}
+
+#pragma mark - 文件选择（任务 6.5，替代 Android SAF openDocument）
+
+// 扩展名 → UTI；未知扩展名（如 .lxmc）会得到 dyn.* 动态 UTI，过滤性差，退回 public.data
+- (NSString *)utiForExtension:(NSString *)ext
+{
+  NSString *uti = nil;
+  CFStringRef created = UTTypeCreatePreferredIdentifierForTag(kUTTagClassFilenameExtension, (__bridge CFStringRef)[ext lowercaseString], NULL);
+  if (created != NULL) {
+    uti = (__bridge_transfer NSString *)created;
+  }
+  if (uti == nil || [uti hasPrefix:@"dyn."]) uti = (__bridge NSString *)kUTTypeData;
+  return uti;
+}
+
+- (NSString *)mimeForExtension:(NSString *)ext
+{
+  NSString *uti = [self utiForExtension:ext];
+  NSString *mime = nil;
+  CFStringRef created = UTTypeCopyPreferredTagWithClass((__bridge CFStringRef)uti, kUTTagClassMIMEType);
+  if (created != NULL) {
+    mime = (__bridge_transfer NSString *)created;
+  }
+  return mime != nil ? mime : @"application/octet-stream";
+}
+
+// 与 Android 契约对齐：取消时 resolve(null)；给定 toPath 时拷贝到 toPath/原文件名，
+// 返回 { data: 目标路径, ...文件信息 }
+RCT_EXPORT_METHOD(selectFile:(NSDictionary *)options
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSArray *extTypes = nil;
+  NSString *toPath = nil;
+  if ([options isKindOfClass:[NSDictionary class]]) {
+    if ([options[@"extTypes"] isKindOfClass:[NSArray class]]) extTypes = options[@"extTypes"];
+    if ([options[@"toPath"] isKindOfClass:[NSString class]]) toPath = options[@"toPath"];
+  }
+
+  NSMutableArray<NSString *> *documentTypes = [NSMutableArray array];
+  for (id ext in extTypes) {
+    if ([ext isKindOfClass:[NSString class]] && [ext length] > 0) {
+      NSString *uti = [self utiForExtension:ext];
+      if (![documentTypes containsObject:uti]) [documentTypes addObject:uti];
+    }
+  }
+  if (documentTypes.count == 0) [documentTypes addObject:(__bridge NSString *)kUTTypeItem];
+
+  dispatch_async(dispatch_get_main_queue(), ^{
+    UIViewController *root = [UIApplication sharedApplication].delegate.window.rootViewController;
+    while (root.presentedViewController != nil) root = root.presentedViewController;
+    if (root == nil) {
+      reject(@"no_root_vc", @"No view controller to present document picker", nil);
+      return;
+    }
+    if (self.selectFileResolve != nil) {
+      // 上一个选择器仍在显示，按取消处理
+      self.selectFileResolve([NSNull null]);
+    }
+    self.selectFileResolve = resolve;
+    self.selectFileToPath = toPath;
+    UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initWithDocumentTypes:documentTypes inMode:UIDocumentPickerModeImport];
+    picker.delegate = self;
+    [root presentViewController:picker animated:YES completion:nil];
+  });
+}
+
+- (void)clearSelectFileState
+{
+  self.selectFileResolve = nil;
+  self.selectFileToPath = nil;
+}
+
+- (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls
+{
+  RCTPromiseResolveBlock resolve = self.selectFileResolve;
+  NSString *toPath = self.selectFileToPath;
+  [self clearSelectFileState];
+  if (resolve == nil) return;
+
+  NSURL *url = urls.firstObject;
+  if (url == nil) {
+    resolve([NSNull null]);
+    return;
+  }
+
+  BOOL scoped = [url startAccessingSecurityScopedResource];
+  NSString *name = url.lastPathComponent.length > 0 ? url.lastPathComponent : @"file";
+
+  if (toPath == nil) {
+    NSData *data = [NSData dataWithContentsOfURL:url];
+    if (scoped) [url stopAccessingSecurityScopedResource];
+    if (data == nil) {
+      resolve([NSNull null]);
+      return;
+    }
+    NSString *content = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    resolve(@{ @"data": content != nil ? content : @"" });
+    return;
+  }
+
+  NSString *destPath = [toPath stringByAppendingPathComponent:name];
+  NSURL *destURL = [NSURL fileURLWithPath:destPath];
+  NSString *ext = name.pathExtension;
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSError *error = nil;
+    [fm createDirectoryAtPath:toPath withIntermediateDirectories:YES attributes:nil error:&error];
+    [fm removeItemAtPath:destPath error:nil];
+    BOOL copied = [fm copyItemAtURL:url toURL:destURL error:&error];
+    if (scoped) [url stopAccessingSecurityScopedResource];
+    if (!copied) {
+      resolve([NSNull null]);
+      return;
+    }
+    NSDictionary *attrs = [fm attributesOfItemAtPath:destPath error:nil];
+    resolve(@{
+      @"data": destPath,
+      @"name": name,
+      @"path": destPath,
+      @"isDirectory": @(NO),
+      @"isFile": @(YES),
+      @"mimeType": [self mimeForExtension:ext],
+      @"size": attrs[NSFileSize] != nil ? attrs[NSFileSize] : @0,
+      @"lastModified": attrs[NSFileModificationDate] != nil ? @([attrs[NSFileModificationDate] timeIntervalSince1970] * 1000) : @0,
+      @"canRead": @(YES),
+    });
+  });
+}
+
+- (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)controller
+{
+  RCTPromiseResolveBlock resolve = self.selectFileResolve;
+  [self clearSelectFileState];
+  if (resolve != nil) resolve([NSNull null]);
 }
 
 @end

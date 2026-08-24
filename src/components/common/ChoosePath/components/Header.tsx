@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useRef } from 'react'
 import { View, TouchableOpacity } from 'react-native'
 import Text from '@/components/common/Text'
 import { Icon } from '@/components/common/Icon'
-import { createStyle } from '@/utils/tools'
+import { createStyle, isAndroid } from '@/utils/tools'
 import { getExternalStoragePaths, stat } from '@/utils/fs'
 import { useTheme } from '@/store/theme/hook'
 import { scaleSizeH } from '@/utils/pixelRatio'
@@ -30,6 +30,8 @@ export default memo(({
   const statusBarHeight = useStatusbarHeight()
 
   const checkExternalStoragePath = useCallback(() => {
+    // iOS 单一沙箱，无多存储卷切换（plan §6.2）
+    if (!isAndroid) return
     storagePathsRef.current = []
     void getExternalStoragePaths().then(async(storagePaths) => {
       for (const path of storagePaths) {
@@ -57,6 +59,15 @@ export default memo(({
     newFolderTypeRef.current?.show(path)
   }
 
+  // iOS 单一沙箱，无存储卷切换入口（plan §6.2）
+  const storageSwitchBtn = isAndroid
+    ? (
+      <TouchableOpacity style={styles.actionBtn} onPress={openStorage}>
+        <Icon name="sd-card" color={theme['c-primary-font']} size={22} />
+      </TouchableOpacity>
+      )
+    : null
+
   return (
     <>
       <View style={{
@@ -70,9 +81,7 @@ export default memo(({
           <Text style={styles.subTitle} color={theme['c-primary-font']} size={13} numberOfLines={1}>{path}</Text>
         </View>
         <View style={styles.actions}>
-          <TouchableOpacity style={styles.actionBtn} onPress={openStorage}>
-            <Icon name="sd-card" color={theme['c-primary-font']} size={22} />
-          </TouchableOpacity>
+          {storageSwitchBtn}
           <TouchableOpacity style={styles.actionBtn} onPress={handleShowNewFolderModal}>
             <Icon name="add_folder" color={theme['c-primary-font']} size={22} />
           </TouchableOpacity>
@@ -81,7 +90,7 @@ export default memo(({
           </TouchableOpacity>
         </View>
       </View>
-      <OpenStorageModal ref={openDirModalTypeRef} onOpenDir={onOpenDir} />
+      {isAndroid ? <OpenStorageModal ref={openDirModalTypeRef} onOpenDir={onOpenDir} /> : null}
       <NewFolderModal ref={newFolderTypeRef} onRefreshDir={onRefreshDir} />
     </>
   )
@@ -139,4 +148,3 @@ const styles = createStyle({
     paddingBottom: 2,
   },
 })
-
