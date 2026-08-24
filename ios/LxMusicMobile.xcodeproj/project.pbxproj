@@ -17,6 +17,8 @@
 		E105A00100000000000000A1 /* UtilsModule.m in Sources */ = {isa = PBXBuildFile; fileRef = E105A00100000000000000B2 /* UtilsModule.m */; };
 		E105A00100000000000000A2 /* icomoon.ttf in Resources */ = {isa = PBXBuildFile; fileRef = E105A00100000000000000B3 /* icomoon.ttf */; };
 		E105A00200000000000000A1 /* CryptoModule.m in Sources */ = {isa = PBXBuildFile; fileRef = E105A00200000000000000B2 /* CryptoModule.m */; };
+		E105A00300000000000000A1 /* UserApiModule.m in Sources */ = {isa = PBXBuildFile; fileRef = E105A00300000000000000B2 /* UserApiModule.m */; };
+		E105A00300000000000000A2 /* user-api-preload.js in Resources */ = {isa = PBXBuildFile; fileRef = E105A00300000000000000B3 /* user-api-preload.js */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -44,6 +46,9 @@
 		E105A00100000000000000B3 /* icomoon.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; name = icomoon.ttf; path = LxMusicMobile/Fonts/icomoon.ttf; sourceTree = "<group>"; };
 		E105A00200000000000000B1 /* CryptoModule.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = CryptoModule.h; path = LxMusicMobile/Modules/CryptoModule.h; sourceTree = "<group>"; };
 		E105A00200000000000000B2 /* CryptoModule.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = CryptoModule.m; path = LxMusicMobile/Modules/CryptoModule.m; sourceTree = "<group>"; };
+		E105A00300000000000000B1 /* UserApiModule.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = UserApiModule.h; path = LxMusicMobile/Modules/UserApiModule.h; sourceTree = "<group>"; };
+		E105A00300000000000000B2 /* UserApiModule.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = UserApiModule.m; path = LxMusicMobile/Modules/UserApiModule.m; sourceTree = "<group>"; };
+		E105A00300000000000000B3 /* user-api-preload.js */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.javascript; name = "user-api-preload.js"; path = "LxMusicMobile/Script/user-api-preload.js"; sourceTree = "<group>"; };
 		19F6CBCC0A4E27FBF8BF4A61 /* libPods-LxMusicMobile-LxMusicMobileTests.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-LxMusicMobile-LxMusicMobileTests.a"; sourceTree = BUILT_PRODUCTS_DIR; };
 		3B4392A12AC88292D35C810B /* Pods-LxMusicMobile.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-LxMusicMobile.debug.xcconfig"; path = "Target Support Files/Pods-LxMusicMobile/Pods-LxMusicMobile.debug.xcconfig"; sourceTree = "<group>"; };
 		5709B34CF0A7D63546082F79 /* Pods-LxMusicMobile.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-LxMusicMobile.release.xcconfig"; path = "Target Support Files/Pods-LxMusicMobile/Pods-LxMusicMobile.release.xcconfig"; sourceTree = "<group>"; };
@@ -104,6 +109,9 @@
 				E105A00100000000000000B2 /* UtilsModule.m */,
 				E105A00200000000000000B1 /* CryptoModule.h */,
 				E105A00200000000000000B2 /* CryptoModule.m */,
+				E105A00300000000000000B1 /* UserApiModule.h */,
+				E105A00300000000000000B2 /* UserApiModule.m */,
+				E105A00300000000000000B3 /* user-api-preload.js */,
 				E105A00100000000000000B3 /* icomoon.ttf */,
 			);
 			name = LxMusicMobile;
@@ -257,6 +265,7 @@
 				81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */,
 				13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */,
 				E105A00100000000000000A2 /* icomoon.ttf in Resources */,
+				E105A00300000000000000A2 /* user-api-preload.js in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -410,6 +419,7 @@
 				13B07FC11A68108700A75B9A /* main.m in Sources */,
 				E105A00100000000000000A1 /* UtilsModule.m in Sources */,
 				E105A00200000000000000A1 /* CryptoModule.m in Sources */,
+				E105A00300000000000000A1 /* UserApiModule.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
