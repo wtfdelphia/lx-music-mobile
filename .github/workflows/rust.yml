@@ -1,0 +1,33 @@
+name: Rust
+
+on:
+  push:
+    branches:
+      - master
+      - dev-ios
+    paths:
+      - 'rust/**'
+      - 'test/crypto-golden-vectors.json'
+      - 'test/golden/**'
+      - '.github/workflows/rust.yml'
+  pull_request:
+    paths:
+      - 'rust/**'
+      - 'test/crypto-golden-vectors.json'
+      - 'test/golden/**'
+      - '.github/workflows/rust.yml'
+
+jobs:
+  lxcore-crypto:
+    name: lxcore-crypto 黄金基准回归
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out git repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo test（黄金基准，字节级）
+        working-directory: rust/lxcore
+        run: cargo test --locked

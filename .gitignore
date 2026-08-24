@@ -66,3 +66,7 @@ buck-out/
 
 # testing
 /coverage
+test/golden/lib/
+
+# rust
+rust/**/target

@@ -1,0 +1,7 @@
+{
+  "$comment": "社区自定义源脚本回归集清单（openspec add-ios-support 任务 2.3 / G1 闸门）。收集要求：≥10 个，覆盖 6 大音源（bd/kg/kw/mg/tx/wy）。脚本文件放本目录，版权与合规责任由收集者确认后再入库。",
+  "minScripts": 10,
+  "requiredSources": ["bd", "kg", "kw", "mg", "tx", "wy"],
+  "assertions": ["load", "inited", "search", "getMusicUrl"],
+  "scripts": []
+}
