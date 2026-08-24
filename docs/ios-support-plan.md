@@ -3,7 +3,9 @@
 > 输入依据：[docs/ios-analysis.md](./ios-analysis.md)（iOS 现状与困难点）、[docs/flutter-comparison.md](./flutter-comparison.md)（Flutter 重写版对比）
 > 代码取证：codegraph v1.5.0 影响面分析 + 全量精读原生模块与桥接层
 > 取证基线：`master` @ `05c322a`（v1.8.1），RN 0.73.11 / 老架构 / Hermes
-> 撰写日期：2026-08-21
+> 撰写日期：2026-08-21（2026-08-24 按审核结论修订统计口径与行号引用）
+> 组合路线分析（iOS 适配 × Rust 重构）：[docs/ios-rust-hybrid-analysis.md](./ios-rust-hybrid-analysis.md)
+> **最终决策与执行文档**：[docs/ios-optimal-plan.md](./ios-optimal-plan.md)（综合三份分析的最优方案；执行以该文档为准）
 
 ---
 
@@ -13,8 +15,8 @@
 
 三条支撑理由：
 
-1. **业务代码 100% 可复用**。`src/` 共 61,667 行，其中真正含 Android 假设的只有 `src/utils/fs.ts`、`src/utils/tools.ts`、`src/utils/nativeModules/*` 和 `ChoosePath` 组件族，合计不到 1,500 行。Flutter 重写等于丢弃全部 61,667 行。
-2. **沙箱移植不是重写运行时，是重写 220 行胶水**。`user-api-preload.js`（594 行）对引擎的全部依赖只有 7 项：`Proxy` ×1、`Object.getOwnPropertyDescriptors` ×2、`Promise` ×6、`Uint8Array`/`ArrayBuffer` ×9、`Map` ×2、`Set` ×1，外加一处已被注释掉的 `TextDecoder`。**不使用** `Reflect`、`BigInt`、`WeakRef`、`WeakMap`、`Symbol`、`async/await`、`??`、`?.`。iOS 13.4 的 JavaScriptCore 全部原生支持。
+1. **业务代码 100% 可复用**。`src/` 共 61,667 行，其中真正含 Android 假设的只有 `src/utils/fs.ts`（89 行）、`src/utils/tools.ts`（575 行）、`src/utils/nativeModules/*`（612 行）和 `ChoosePath` 组件族（1,033 行），合计约 2,300 行（占 src/ 约 3.7%）。Flutter 重写等于丢弃全部 61,667 行。
+2. **沙箱移植不是重写运行时，是重写 220 行胶水**。`user-api-preload.js`（594 行）对引擎的全部依赖只有 7 项（去注释实测口径）：`Proxy` ×1、`Object.getOwnPropertyDescriptors` ×2、`Promise` ×4、`Uint8Array` ×6、`ArrayBuffer` ×2、`Map` ×2、`Set` ×1，外加一处已被注释掉的 `TextDecoder`。**不使用** `Reflect`、`BigInt`、`WeakRef`、`WeakMap`、`Symbol`、`async/await`、`??`、`?.`。iOS 13.4 的 JavaScriptCore 全部原生支持。
 3. **硬阻塞只有 2 项**，都在 fork 依赖层，且都有明确的绕行方案（§4.2、§4.3）。
 
 **明确不做项**：桌面歌词悬浮窗、APK 内更新、App Store 正式上架（理由见 §7、§8）。
@@ -116,14 +118,14 @@ RCTBridge *bridge = [[RCTBridge alloc] initWithDelegate:self launchOptions:launc
 | tools.ts:29 | `Platform.constants.Release` | iOS 上是 `osVersion`，需分支 |
 | tools.ts:244-331 | 通知权限 / 电池优化白名单 | 通知走 iOS 原生；电池优化 iOS 无此概念 |
 | tools.ts:364-373 | `isSupportedAutoTheme` | **已有 iOS 分支**（`osVerNum >= 13`），逻辑正确；真正要改的是它依赖的 `osVer`（见上一行） |
-| `ChoosePath/*`（4 文件） | SAF（`AndroidScoped.*`）、`Dirs.SDCardDir` | iOS 无 SAF，需换 UIDocumentPicker（§6.2） |
+| `ChoosePath/*`（族共 8 文件，4 个需改，见 §6.2） | SAF（`AndroidScoped.*`）、`Dirs.SDCardDir` | iOS 无 SAF，需换 UIDocumentPicker（§6.2） |
 | version.js:77,122 | `getSupportedAbis` / `installApk` | iOS 不允许，功能整体关闭（§7） |
 
 **两处不带 `Platform.OS` 的 Android-only API（原分析遗漏）**：
 
 | 位置 | 问题 | iOS 处置 |
 |---|---|---|
-| `components/common/StatusBar.tsx:10`、`SizeView.tsx:12`、`utils/windowSizeTools.ts:51` | `StatusBar.currentHeight` 是 **Android-only**，iOS 上是 `undefined`，被 `?? 0` **静默吞成 0** | 不崩，但状态栏/刘海高度丢失，全局布局上移。需改用 `react-native-safe-area-context` 的 `useSafeAreaInsets()`，或从原生取 `windowScene.statusBarManager.statusBarFrame` |
+| `components/common/StatusBar.tsx:10`、`components/SizeView.tsx:12`、`utils/windowSizeTools.ts:51` | `StatusBar.currentHeight` 是 **Android-only**，iOS 上是 `undefined`，被 `?? 0` **静默吞成 0** | 不崩，但状态栏/刘海高度丢失，全局布局上移。需改用 `react-native-safe-area-context` 的 `useSafeAreaInsets()`，或从原生取 `windowScene.statusBarManager.statusBarFrame` |
 | `utils/hooks/useBackHandler.ts`（整个 hook） | 建立在 Android 硬件返回键（`BackHandler`）之上，iOS 无此概念 | 桩化为空 hook；返回手势由 RNN 原生处理。需检查各调用方在 hook 失效后交互是否仍闭合 |
 
 `StatusBar.currentHeight` 这条尤其要注意：它**不报错**，症状是全局布局错位，容易被误判成样式问题而查错方向。
@@ -195,7 +197,7 @@ return "".equals(iv) ? encrypt(data, key, mode) : encrypt(data, key, iv, mode);
 
 > 🔴 **`ECB_128_NoPadding` 这个枚举名是骗人的，照名字实现必错。**
 >
-> 它的值是字符串 `'AES'`（`crypto.ts:35`），而 JCE 对不含 mode/padding 的算法名会**自动补全默认值**，`Cipher.getInstance("AES")` 实际等于 `AES/ECB/PKCS5Padding`，**不是 NoPadding**。本地 JDK 实测（16 字节明文）：
+> 它的值是字符串 `'AES'`（`crypto.ts:24`），而 JCE 对不含 mode/padding 的算法名会**自动补全默认值**，`Cipher.getInstance("AES")` 实际等于 `AES/ECB/PKCS5Padding`，**不是 NoPadding**。本地 JDK 实测（16 字节明文）：
 >
 > ```
 > getInstance("AES")       → 密文 32 字节  GPCa95xrIOxDlsMsDpByNezQXWhiZr5Twm3A6OhiJfg=
@@ -297,13 +299,15 @@ RSA 密钥格式（`RSA.java:60-96`）：
 |---|---|---|
 | `Proxy` | 1（封禁 Function 构造器） | ✅ |
 | `Object.getOwnPropertyDescriptors` | 2（freezeObjectProperty） | ✅ |
-| `Promise` | 6 | ✅ |
-| `Uint8Array` / `ArrayBuffer` | 9 | ✅ |
+| `Promise` | 4 | ✅ |
+| `Uint8Array` / `ArrayBuffer` | 6 / 2 | ✅ |
 | `Map` / `Set` | 2 / 1 | ✅ |
 | `TextDecoder` | 0（`preload:410` 已注释） | ❌ **不存在**，但当前无需 polyfill（见下） |
 | `Reflect`/`BigInt`/`WeakRef`/`WeakMap`/`Symbol`/`async` | 0 | — |
 
 `Proxy`、`getOwnPropertyDescriptors`（Safari 10）、`Promise`、`Map`、`Set`（Safari 8）、`Uint8Array`/`ArrayBuffer`（iOS 4.2）全部远早于 iOS 13.4 对应的 Safari 13.1，判定成立。
+
+> 口径说明：上表用量为**去注释统计**（与 [rust-rewrite-analysis.md](./rust-rewrite-analysis.md) §4.3 一致）。若连同注释计数，`Promise` 为 6、`Uint8Array`/`ArrayBuffer` 为 9 —— 早期版本曾引用该口径，已统一。
 
 > ⚠️ **`TextDecoder` 在裸 JSC 里是彻底不存在的**，不是"版本不够"。它实现在 WebCore（`Source/WebCore/dom/TextDecoder.idl`），不属于 JavaScriptCore runtime；独立 `JSContext` 拿不到它，RN 0.73.11 的 `InitializeCore.js` 也不 polyfill。查兼容性时看到的"Safari 10.1 支持"是浏览器环境数据，**不适用于本场景**。
 >
@@ -688,7 +692,7 @@ exitApp → () => {}
 
 ```ts
 // components/common/StatusBar.tsx:10
-// components/common/SizeView.tsx:12
+// components/SizeView.tsx:12
 // utils/windowSizeTools.ts:51
 StatusBar.currentHeight ?? 0     // iOS 上 currentHeight 是 undefined → 恒取 0
 ```
@@ -703,7 +707,7 @@ StatusBar.currentHeight ?? 0     // iOS 上 currentHeight 是 undefined → 恒�
 
 但要逐个检查调用方：**原本靠拦截返回键才能关闭的 UI（Modal、抽屉、多级选择器），在 iOS 上会失去关闭路径**。若某处只有返回键一条出路，需补一个可见的关闭按钮。这是功能性缺口，不只是桩化。
 
-### 6.2 ChoosePath 组件族（4 个文件）
+### 6.2 ChoosePath 组件族（族共 8 个文件，需改 4 个）
 
 这是改动最集中的 UI 部分，因为它整个建立在 Android SAF 之上：
 
@@ -867,7 +871,7 @@ App 的核心功能是从网易云/QQ音乐/酷狗/酷我等第三方获取并�
 
 ## 9. CI 改造
 
-`.github/workflows/release.yml` 当前只有 Android job（ubuntu-latest + `gradlew assembleRelease` + 5 ABI），`.github/actions/setup` 只装 Node + Java 17。
+`.github/workflows/release.yml` 当前只有 Android 构建 job（ubuntu-latest + `gradlew assembleRelease` + 5 ABI）与跟随其后的 Release 发布 job，`.github/actions/setup` 只装 Node + Java 17。
 
 新增 iOS job：
 
@@ -1058,12 +1062,12 @@ ios/LxMusicMobile.xcodeproj/project.pbxproj  §5.3（Bundle ID / 版本 / arm64 
 src/utils/fs.ts → 拆为 fs.android.ts + 共享类型（含自声明 FileType）
 src/utils/tools.ts                    §6.1（osVer 平台分支 + toast 抽出 + 2 处桩化）
 src/components/common/StatusBar.tsx   §6.1b（currentHeight 是 Android-only）
-src/components/common/SizeView.tsx    §6.1b（同上）
+src/components/SizeView.tsx            §6.1b（同上）
 src/utils/windowSizeTools.ts:51       §6.1b（同上，非组件，需走原生取值）
 src/plugins/player/index.ts:29-40     §6.4（加 iosCategory）
 src/plugins/sync/client/utils.ts:74,82  §4.2.2（gzipString 走 pako）
 src/utils/localMediaMetadata.ts       §6.5（降级分支）
-src/components/common/ChoosePath/*    §6.2（4 个文件）
+src/components/common/ChoosePath/*    §6.2（族共 8 个文件，需改 4 个）
 src/core/common.ts:98,106             §6.2（SAF 相关恒真）
 tsconfig.json                         §4.2.3（moduleSuffixes，若采用平台后缀方案）
 android/app/build.gradle              §5.3 注（assets 路径映射，唯一 Android 改动）
@@ -1128,9 +1132,6 @@ Flutter 版的价值在于它证明了"iOS 上用 JSC 跑自定义源是可行�
 | `src/plugins/player/index.ts` | — | §4.3, §6.4 |
 | `ios/LxMusicMobile/AppDelegate.mm` | — | §5.4 |
 | `android/app/src/main/AndroidManifest.xml` | 34-91 | §5.1 |
-
-
-
 
 
 
