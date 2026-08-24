@@ -8,6 +8,8 @@ on:
     paths:
       - 'ios/**'
       - 'rust/**'
+      - 'src/**'
+      - 'test/**'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/ios-verify.yml'
@@ -15,11 +17,39 @@ on:
     paths:
       - 'ios/**'
       - 'rust/**'
+      - 'src/**'
+      - 'test/**'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/ios-verify.yml'
 
 jobs:
+  js-verify:
+    name: JS 门禁（单测 + Metro 双端打包）
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out git repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: 安装 JS 依赖
+        run: npm ci
+
+      - name: 单元测试（黄金基准文件完整性）
+        run: npm test
+
+      - name: Metro 打包（iOS / Android）
+        run: |
+          npx react-native bundle --platform ios --dev false --entry-file index.js \
+            --bundle-output /tmp/index.ios.bundle --assets-dest /tmp/lxm-assets-ios
+          npx react-native bundle --platform android --dev false --entry-file index.js \
+            --bundle-output /tmp/index.android.bundle --assets-dest /tmp/lxm-assets-android
+
   rust-ios-target:
     name: Rust iOS target 交叉编译
     runs-on: macos-15
@@ -30,11 +60,15 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-ios
+          targets: aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios
 
       - name: 构建 staticlib（aarch64-apple-ios）
         working-directory: rust/lxcore
         run: cargo build --locked --release --target aarch64-apple-ios
+
+      - name: 构建 staticlib（模拟器切片）
+        working-directory: rust/lxcore
+        run: cargo build --locked --release --target aarch64-apple-ios-sim --target x86_64-apple-ios
 
       - name: macOS 宿主黄金基准
         working-directory: rust/lxcore
@@ -65,7 +99,7 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-ios
+          targets: aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios
 
       - name: 构建 lxcore staticlib（iOS）
         run: bash rust/build-ios-libs.sh
@@ -100,4 +134,74 @@ jobs:
         with:
           name: LxMusicMobile-unsigned-ipa
           path: ios/build/Build/Products/Release-iphoneos/LxMusicMobile-unsigned.ipa
+          retention-days: 30
+
+  ios-simulator-smoke:
+    name: iOS 模拟器冒烟（启动到首页）
+    runs-on: macos-15
+    steps:
+      - name: Check out git repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: 安装 JS 依赖
+        run: npm ci
+
+      - name: pod install（关 Flipper）
+        working-directory: ios
+        env:
+          NO_FLIPPER: '1'
+        run: pod install
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios
+
+      - name: 构建 lxcore staticlib（iOS）
+        run: bash rust/build-ios-libs.sh
+
+      - name: Release 构建（模拟器）
+        working-directory: ios
+        run: >
+          xcodebuild
+          -workspace LxMusicMobile.xcworkspace
+          -scheme LxMusicMobile
+          -configuration Release
+          -sdk iphonesimulator
+          -destination 'generic/platform=iOS Simulator'
+          -derivedDataPath build
+          CODE_SIGNING_ALLOWED=NO
+          COMPILER_INDEX_STORE_ENABLE=NO
+          build
+
+      - name: 启动模拟器并运行 App
+        working-directory: ios/build/Build/Products/Release-iphonesimulator
+        run: |
+          UDID=$(xcrun simctl list devices available | grep -E 'iPhone' | head -1 | grep -oE '\([0-9A-F-]{36}\)' | tr -d '()')
+          echo "Simulator: $UDID"
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl install "$UDID" LxMusicMobile.app
+          xcrun simctl launch --console-pty "$UDID" cn.toside.music.mobile > console.log 2>&1 &
+          LAUNCH_PID=$!
+          sleep 90
+          kill "$LAUNCH_PID" 2>/dev/null || true
+          xcrun simctl io "$UDID" screenshot screenshot.png || true
+          echo '--- console tail ---'
+          tail -n 60 console.log
+
+      - name: 上传冒烟证据
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-simulator-smoke
+          path: |
+            ios/build/Build/Products/Release-iphonesimulator/console.log
+            ios/build/Build/Products/Release-iphonesimulator/screenshot.png
           retention-days: 30
