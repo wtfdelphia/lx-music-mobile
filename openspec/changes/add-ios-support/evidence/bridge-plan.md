@@ -64,7 +64,7 @@
 | 4.5 G1 | 回归集全量跑 | 报告落盘，按 D6 判读 | M |
 | 5.1-5.7 播放 | track-player → `iosCategory` → 锁屏 → 缓存降级 → CacheModule | 后台/锁屏实测；不兼容则 1 天切上游 4.x | M |
 | 6.1-6.9 功能 | gzip(`windowBits=31`) → toast → 深链 → 文档类型 → ChoosePath → 杂项 → 同步 → tools 分支 | 主流程全通；`.lxmc` 双向 | M（6.7 需双端） |
-| 7.1-7.7 打磨 | 降级桩 → 布局 → CI job → 真机 → Android 构建回归 | 30 分钟无崩溃；CI 绿；Android release 构建过 | M+L（7.5 已完成：GH Actions unsigned build 过） |
+| 7.1-7.7 打磨 | 降级桩 → 布局 → CI job → 真机 → Android 构建回归 | 30 分钟无崩溃；CI 绿；Android release 构建过 | M+L（7.5 已完成：设备版 unsigned 构建 + IPA artifact，门禁与产物同一 job） |
 
 **何时停止（阶段级）**：每组门槛任务（1.6 / G1 / 5.7 / 6.9 / 7.6）未过不进下一组；3.1 当天不过即走 D2 退路并回改 design。
 

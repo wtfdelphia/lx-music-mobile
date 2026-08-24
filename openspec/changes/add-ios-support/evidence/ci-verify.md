@@ -21,3 +21,16 @@
   待本机macOS（macOS 15 / Intel）环境。
 - 首次 `npm ci` 失败源于 vitest 引入时 lockfile 未同步，已由 `1dbb577`
   以 `--package-lock-only` 修复。
+
+## 第二轮：设备版 IPA 流水线（2026-08-24）
+
+- 运行：[actions/runs/32707901201](https://github.com/wtfdelphia/lx-music-mobile/actions/runs/32707901201)
+  （`dev-ios` @ `0b54897`）
+- 结果：
+  - Rust iOS target 交叉编译 ✅（38s）
+  - iOS unsigned build（模拟器）✅ 18m41s
+  - iOS unsigned IPA（设备）✅ 12m31s，Artifact
+    `LxMusicMobile-unsigned-ipa`（11,079,292 bytes，保留 30 天）
+- 结论：用户侧流水线（push → macOS Runner → IPA → Artifact → 重签侧载）
+  全链路验证成立。设备版构建快于模拟器版且与分发物一致，随后将
+  双 job 归并为单 job（门禁 = 产物），消除重复的 npm ci / pod install。

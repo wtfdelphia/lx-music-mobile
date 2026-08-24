@@ -237,10 +237,15 @@ Windows / Linux ──git push──► GitHub ──► GitHub Actions
 |---|---|---|
 | push → Actions 触发 | `.github/workflows/ios-verify.yml`（push dev-ios/master + PR） | ✅ 已通 |
 | macOS Runner 四件套 | Node v18 / Rust stable / CocoaPods 1.17 / Xcode 16.4 | ✅ 已验证 |
-| → `.app`（模拟器） | 任务 7.5 / R8 硬门槛 | ✅ 已通（run 32705189097） |
-| → IPA（设备 unsigned）+ Artifact | `ios-ipa` job（`-sdk iphoneos` + Payload 打包 + 上传） | 已实现，随本节提交验证 |
+| → `.app`（模拟器） | 任务 7.5 / R8 硬门槛（首验形态） | ✅ 已通（run 32705189097） |
+| → IPA（设备 unsigned）+ Artifact | `-sdk iphoneos` + Payload 打包 + 上传（保留 30 天） | ✅ 已通（run 32707901201，11 MB） |
 | → 重签侧载 | §6 主推"用户自编译/自签"的免账号降级形态；合规责任在用户侧 | 文档已入 README |
 | Rust 进 App | 任务 3.1 桥调通 / 3.4 薄封装 | 进行中（CI 现为独立编译验证） |
+
+结构备注：首版曾拆"模拟器门槛 + 设备 IPA"两个并行 job，前置
+（npm ci / pod install）重复。设备切片与分发物一致、编译级信号
+覆盖重合，已归并为单 job（门禁 = 产物），模拟器运行时验证归
+macOS交互式阶段。
 
 固有约束（写进 README 提示用户）：免费 Apple ID 签名 7 天过期、
 最多 3 个活跃应用、需电脑端定期刷新。

@@ -82,7 +82,7 @@ GitHub ──► GitHub Actions
   下载后用个人免费 Apple ID 经 AltStore / SideStore 重签安装；
 - 免费账号签名有效期 7 天、同时最多 3 个应用，需用电脑端
   AltServer / SideServer 定期刷新；
-- 当前进度：模拟器与设备 unsigned 构建已在 CI 通过；
+- 当前进度：设备版未签名 IPA 已由 CI 产出（见上方 Artifact 链接），
   加密核心（Rust）独立编译验证已过，接入 App 与运行时功能开发中，
   详见 `openspec/changes/add-ios-support/`。
 

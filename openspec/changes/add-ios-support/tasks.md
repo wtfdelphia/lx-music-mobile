@@ -56,6 +56,6 @@
 - [ ] 7.2 本地音乐降级：扫描不崩，元数据显示文件名
 - [ ] 7.3 应用内更新改为跳转 Release 页
 - [ ] 7.4 横屏 / iPad 布局：24 个 Horizontal tsx 不错位
-- [x] 7.5 CI 新增 iOS unsigned build job 并通过（`.github/workflows/ios-verify.yml`，macos-15 / Xcode 16.4，run 32705189097）
+- [x] 7.5 CI 新增 iOS unsigned build job 并通过（`.github/workflows/ios-verify.yml`，macos-15 / Xcode 16.4；首验 run 32705189097，门禁后归并为设备版构建 + IPA artifact，run 32707901201 双 SDK 均通过）
 - [ ] 7.6 真机测试 ≥2 台（含 iOS 13/14 旧机），连续 30 分钟无崩溃，Instruments 无明显泄漏
 - [ ] 7.7 `assets/script/user-api-preload.js` 移动后，Android release 构建回归一次
