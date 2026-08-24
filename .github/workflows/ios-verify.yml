@@ -40,8 +40,8 @@ jobs:
         working-directory: rust/lxcore
         run: cargo test --locked
 
-  ios-unsigned-build:
-    name: iOS unsigned build
+  ios-build:
+    name: iOS unsigned 构建（设备 / IPA）
     runs-on: macos-15
     steps:
       - name: Check out git repository
@@ -66,41 +66,6 @@ jobs:
         run: |
           xcodebuild -version
           pod --version
-
-      - name: unsigned 构建（模拟器）
-        working-directory: ios
-        run: >
-          xcodebuild
-          -workspace LxMusicMobile.xcworkspace
-          -scheme LxMusicMobile
-          -configuration Release
-          -sdk iphonesimulator
-          -derivedDataPath build
-          CODE_SIGNING_ALLOWED=NO
-          COMPILER_INDEX_STORE_ENABLE=NO
-          build
-
-  ios-ipa:
-    name: iOS unsigned IPA（设备）
-    runs-on: macos-15
-    steps:
-      - name: Check out git repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-
-      - name: 安装 JS 依赖
-        run: npm ci
-
-      - name: pod install（关 Flipper）
-        working-directory: ios
-        env:
-          NO_FLIPPER: '1'
-        run: pod install
 
       - name: unsigned 构建（设备）
         working-directory: ios
