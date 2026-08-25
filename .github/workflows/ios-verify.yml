@@ -14,6 +14,8 @@ on:
       - 'package-lock.json'
       - '.nvmrc'
       - 'index.js'
+      - 'android/**'
+      - 'assets/**'
       - '.github/workflows/ios-verify.yml'
   pull_request:
     paths:
@@ -25,6 +27,8 @@ on:
       - 'package-lock.json'
       - '.nvmrc'
       - 'index.js'
+      - 'android/**'
+      - 'assets/**'
       - '.github/workflows/ios-verify.yml'
 
 jobs:
@@ -200,6 +204,24 @@ jobs:
           echo '--- console tail ---'
           tail -n 60 console.log
 
+      - name: 深链探针（lxmusic:// 到达验证）
+        run: |
+          UDID=$(xcrun simctl list devices booted | grep -oE '\([0-9A-F-]{36}\)' | head -1 | tr -d '()')
+          echo "Deep link probe on $UDID"
+          xcrun simctl openurl "$UDID" "lxmusic://player/pause" || echo "OPENURL_FAILED"
+          sleep 10
+          cd ios/build/Build/Products/Release-iphonesimulator
+          xcrun simctl io "$UDID" screenshot deeplink.png || true
+          xcrun simctl spawn "$UDID" launchctl list | grep cn.toside.music.mobile || echo "APP_NOT_RUNNING_AFTER_DEEPLINK"
+
+      - name: 采集统一日志（含 JS console / preload 痕迹）
+        run: |
+          UDID=$(xcrun simctl list devices booted | grep -oE '\([0-9A-F-]{36}\)' | head -1 | tr -d '()')
+          cd ios/build/Build/Products/Release-iphonesimulator
+          xcrun simctl spawn "$UDID" log show --last 5m --predicate 'process == "LxMusicMobile"' --style compact > unified.log 2>&1 || true
+          echo '--- unified log 关键行 ---'
+          grep -E 'starting app|Preload|console\.|lx_|deep|link' unified.log | tail -n 80 || true
+
       - name: 上传冒烟证据
         if: always()
         uses: actions/upload-artifact@v4
@@ -208,4 +230,58 @@ jobs:
           path: |
             ios/build/Build/Products/Release-iphonesimulator/console.log
             ios/build/Build/Products/Release-iphonesimulator/screenshot.png
+            ios/build/Build/Products/Release-iphonesimulator/deeplink.png
+            ios/build/Build/Products/Release-iphonesimulator/unified.log
           retention-days: 30
+
+  android-regression:
+    name: Android release 回归（preload 入包校验）
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out git repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: 安装 JS 依赖
+        run: npm ci
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+          cache-dependency-path: |
+            android/*.gradle
+            android/app/*.gradle
+            android/gradle/wrapper/gradle-wrapper.properties
+
+      - name: 生成一次性签名
+        working-directory: android/app
+        run: >
+          keytool -genkeypair -v -storetype PKCS12
+          -keystore ci-release.keystore -storepass cipass -keypass cipass
+          -alias ci -keyalg RSA -keysize 2048 -validity 10
+          -dname "CN=CI Regression, OU=CI, O=CI, L=CI, S=CI, C=CN"
+
+      - name: Gradle assembleRelease
+        working-directory: android
+        run: >
+          ./gradlew assembleRelease --no-daemon
+          -PMYAPP_UPLOAD_STORE_FILE=ci-release.keystore
+          -PMYAPP_UPLOAD_STORE_PASSWORD=cipass
+          -PMYAPP_UPLOAD_KEY_ALIAS=ci
+          -PMYAPP_UPLOAD_KEY_PASSWORD=cipass
+
+      - name: 校验 preload 入包
+        working-directory: android
+        run: |
+          APK=$(find app/build/outputs/apk/release -name '*universal*release.apk' | head -1)
+          if [ -z "$APK" ]; then APK=$(find app/build/outputs/apk/release -name '*.apk' | head -1); fi
+          echo "APK: $APK"
+          unzip -l "$APK" | grep 'assets/script/user-api-preload.js' || { echo "PRELOAD_NOT_IN_APK"; exit 1; }
