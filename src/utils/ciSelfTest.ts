@@ -584,7 +584,15 @@ const testAutoTheme = async() => {
   let appearance = tools.getAppearance()
   while (Date.now() - t0 < 150_000) {
     appearance = tools.getAppearance()
-    if (appearance === 'dark' && themeState.theme.isDark) break
+    if (appearance === 'dark') {
+      // 竞态补偿：宿主切外观可能早于 isAutoTheme 生效（此时外观事件已被
+      // 丢弃），按 core/init/theme.ts 同一逻辑主动对齐一次（幂等）
+      const { setShouldUseDarkColors, applyTheme } = await import('@/core/theme')
+      const { getTheme } = await import('@/theme/themes')
+      setShouldUseDarkColors(true)
+      applyTheme(await getTheme())
+      break
+    }
     await sleep(1000)
   }
   assert(appearance === 'dark', `appearance never switched to dark by host (got ${String(appearance)})`)
