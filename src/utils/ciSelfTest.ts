@@ -628,6 +628,45 @@ const ensureDeeplinkListener = async() => {
   return true
 }
 
+// 4.4 导入自定义源：生产链路 importUserApi → setApiSource → 原生 loadScript
+// → init 事件 → userApi 状态翻转为 true（UI「已加载」判据）+ apis 注册
+const CI_IMPORT_SCRIPT = [
+  '/*!',
+  ' * @name lx-ci-import',
+  ' * @version 1.0.0',
+  ' * @author lx-ci',
+  ' */',
+  '\'use strict\';',
+  'const { EVENT_NAMES, send } = globalThis.lx;',
+  'send(EVENT_NAMES.inited, {',
+  '  status: true,',
+  '  sources: {',
+  '    kw: { name: \'kw\', type: \'music\', actions: [\'musicUrl\'], qualitys: [\'128k\'] },',
+  '  },',
+  '})',
+].join('\n')
+const testUserApiImport = async() => {
+  const { importUserApi, removeUserApi } = await import('@/core/userApi')
+  const { setApiSource } = await import('@/core/apiSource')
+  const userApiState = (await import('@/store/userApi/state')).default
+  const info = await importUserApi(CI_IMPORT_SCRIPT)
+  assert(userApiState.list.some(a => a.id === info.id), 'imported api appears in store list')
+  setApiSource(info.id)
+  const t0 = Date.now()
+  while (Date.now() - t0 < 20_000) {
+    if (userApiState.status.status === true) break
+    await sleep(250)
+  }
+  const loaded = userApiState.status.status === true
+  const apisRegistered = Object.keys(global.lx.apis ?? {})
+  // 还原现场：移除测试源并切回内置源（空串走 destroyUserApi 分支）
+  try { await removeUserApi([info.id]) } catch { /* 忽略 */ }
+  setApiSource('')
+  assert(loaded, `user api status never true (message=${userApiState.status.message ?? 'unknown'})`)
+  assert(apisRegistered.includes('kw'), `apis registered: ${apisRegistered.join(',')}`)
+  return { imported: info.name, apis: apisRegistered }
+}
+
 // ---------- 主流程 ----------
 
 const collectEnv = async() => {
@@ -694,6 +733,7 @@ const runSuite = async() => {
     await runTest('tab_switch', testTabs, 300_000)
     await runTest('auto_theme', testAutoTheme, 180_000)
     await runTest('deeplink', testDeeplink)
+    await runTest('user_api_import', testUserApiImport)
     // 回归集耗时最长且无宿主时序依赖，放最后跑
     await runTest('user_api_regression', testScriptsRegression, 300_000)
   } finally {
