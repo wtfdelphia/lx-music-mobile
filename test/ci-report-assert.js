@@ -53,7 +53,8 @@ for (let i = 0; i < hashes.length; i++) {
     if (hashes[i].h === hashes[j].h) failures.push(`tab 截图相同（未重新渲染？）: ${hashes[i].p} == ${hashes[j].p}`)
   }
 }
-if (hashes.length >= 4) console.log('  [PASS] tab_screenshots_differ')
+const tabPairsFailed = hashes.length >= 2 && hashes.some((a, i) => hashes.slice(i + 1).some(b => a.h === b.h))
+if (hashes.length >= 4 && !tabPairsFailed) console.log('  [PASS] tab_screenshots_differ')
 
 console.log('env: isAgreePact=%s langId=%s bootLogTail=%j',
   report.env && report.env.isAgreePact,

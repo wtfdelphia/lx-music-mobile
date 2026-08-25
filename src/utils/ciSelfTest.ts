@@ -25,6 +25,8 @@ const tmpDir = () => RNFS.TemporaryDirectoryPath
 const markerPath = () => `${tmpDir()}/.lx-ci-selftest`
 const reportPath = () => `${tmpDir()}/lx-ci-report.json`
 const probeSentMarker = () => `${tmpDir()}/.lx-ci-probe-sent`
+// AppDelegate 在标记门控下把收到的 openURL 逐条落盘（原生投递取证）
+const nativeOpenUrlLog = () => `${tmpDir()}/lx-ci-openurl.log`
 
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
 
@@ -117,10 +119,10 @@ const prewriteStorage = async() => {
 
 // ---------- 测试用例 ----------
 
-const runTest = async(id: string, fn: () => Promise<unknown>) => {
+const runTest = async(id: string, fn: () => Promise<unknown>, timeoutMs = 120_000) => {
   const t0 = Date.now()
   try {
-    const detail = await withTimeout(fn(), 120_000, id)
+    const detail = await withTimeout(fn(), timeoutMs, id)
     state.results.push({ id, ok: true, ms: Date.now() - t0, detail })
   } catch (err) {
     state.results.push({ id, ok: false, ms: Date.now() - t0, detail: errText(err) })
@@ -420,12 +422,17 @@ const testTabs = async() => {
     assert(commonState.navActiveId === id, `navActiveId == ${id}`)
     const marker = `${tmpDir()}/lx-ci-tab-${id}`
     await RNFS.writeFile(marker, String(Date.now()), 'utf8')
-    // 等待宿主截图完成（宿主截图后删除标记）；宿主缺席时最多等 20s
+    // 等待宿主截图完成（宿主截图后删除标记）。宿主在首页取证（约 25s）
+    // 结束后才进入本阶段，首个标记等待可能远超早期 20s 上限——那会让
+    // 应用抢跑一个 Tab、宿主截图整体错位一拍（run 32828495250 实证）。
+    // 放宽到 90s；宿主缺席时由 runTest 的 300s 总超时兜底判失败。
     const t0 = Date.now()
-    while (Date.now() - t0 < 20_000) {
-      if (!(await RNFS.exists(marker))) break
+    let consumed = false
+    while (Date.now() - t0 < 90_000) {
+      if (!(await RNFS.exists(marker))) { consumed = true; break }
       await sleep(500)
     }
+    assert(consumed, `host consumed tab marker ${id}`)
     switched.push(id)
   }
   await RNFS.writeFile(`${tmpDir()}/lx-ci-tabs-done`, String(Date.now()), 'utf8')
@@ -445,14 +452,25 @@ const testDeeplink = async() => {
   await sleep(8000) // 等待 JS 侧处理完成
   const deeplinkLines = state.consoleRing.filter(l => l.includes('deeplink'))
   const fileAlert = state.alerts.find(a => a.message.includes('lx-ci-probe'))
+  // 原生侧投递取证：区分「系统未送达 App」与「送达但 JS 事件未触发」
+  let nativeUrls: string[] = []
+  try {
+    if (await RNFS.exists(nativeOpenUrlLog())) {
+      nativeUrls = (await RNFS.readFile(nativeOpenUrlLog(), 'utf8')).split('\n').filter(Boolean)
+    }
+  } catch { /* 读取失败不阻断断言 */ }
   assert(state.linkingListeners.includes('url'), 'deeplink url listener registered')
-  assert(deeplinkLines.some(l => l.includes('lxmusic://player/pause')), 'lxmusic probe reached JS listener')
-  assert(deeplinkLines.some(l => l.includes('lx-ci-probe.lxmc')), 'file probe reached JS listener')
+  // 失败时把原生投递取证带进错误文本，宿主日志即可区分投递层/事件层
+  const diag = `nativeOpenUrls=${JSON.stringify(nativeUrls)} deeplinkLines=${JSON.stringify(deeplinkLines.slice(-5))}`
+  assert(deeplinkLines.some(l => l.includes('lxmusic://player/pause')), `lxmusic probe reached JS listener | ${diag}`)
+  assert(deeplinkLines.some(l => l.includes('lx-ci-probe.lxmc')), `file probe reached JS listener | ${diag}`)
+  assert(fileAlert != null, `file probe triggered import confirm dialog | ${diag}`)
   return {
     probeSeen,
     registeredByTest: state.deeplinkRegisteredByTest,
     linkingListeners: state.linkingListeners,
     deeplinkLines: deeplinkLines.slice(-10),
+    nativeOpenUrls: nativeUrls,
     fileImportDialogSeen: fileAlert != null,
     fileAlertDialog: fileAlert ?? null,
     recentAlerts: state.alerts.slice(-5),
@@ -529,7 +547,7 @@ const runSuite = async() => {
     await runTest('user_api_sandbox', testUserApi)
     await runTest('player_setup', testPlayerSetup)
     await runTest('player_cache_degrade', testPlayerCacheDegrade)
-    await runTest('tab_switch', testTabs)
+    await runTest('tab_switch', testTabs, 300_000)
     await runTest('deeplink', testDeeplink)
   } finally {
     try { await writeReport() } catch { /* 报告写失败不崩应用 */ }

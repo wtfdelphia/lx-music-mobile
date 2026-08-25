@@ -4,6 +4,32 @@
 #import <React/RCTBundleURLProvider.h>
 #import <React/RCTLinkingManager.h>
 
+// CI 取证：沙箱标记存在时，把系统投递的每个 URL 追加到
+// <tmp>/lx-ci-openurl.log，供宿主区分「系统未送达」与「JS 未触发」
+// （run 32828495250：file:// 到达 JS 而 lxmusic:// 无声）。
+// 无标记文件时零开销，正式包行为不变。
+static void LXCIRecordOpenURL(NSURL *url) {
+  NSString *tmp = NSTemporaryDirectory();
+  NSString *marker = [tmp stringByAppendingPathComponent:@".lx-ci-selftest"];
+  if (![[NSFileManager defaultManager] fileExistsAtPath:marker]) return;
+  NSString *logPath = [tmp stringByAppendingPathComponent:@"lx-ci-openurl.log"];
+  NSString *line = [NSString stringWithFormat:@"%.0f %@\n",
+                    [[NSDate date] timeIntervalSince1970] * 1000.0,
+                    url.absoluteString ?: @"<nil>"];
+  NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
+  NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:logPath];
+  if (handle) {
+    @try {
+      [handle seekToEndOfFile];
+      [handle writeData:data];
+    } @finally {
+      [handle closeFile];
+    }
+  } else {
+    [data writeToFile:logPath atomically:YES];
+  }
+}
+
 @implementation AppDelegate
 
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions
@@ -25,11 +51,13 @@
 
 - (BOOL)application:(UIApplication *)app openURL:(NSURL *)url
             options:(NSDictionary<UIApplicationOpenURLOptionsKey,id> *)options {
+  LXCIRecordOpenURL(url);
   return [RCTLinkingManager application:app openURL:url options:options];
 }
 
 - (BOOL)application:(UIApplication *)application continueUserActivity:(NSUserActivity *)userActivity
  restorationHandler:(void (^)(NSArray<id<UIUserActivityRestoring>> *))restorationHandler {
+  LXCIRecordOpenURL(userActivity.webpageURL);
   return [RCTLinkingManager application:application continueUserActivity:userActivity
                     restorationHandler:restorationHandler];
 }
