@@ -105,7 +105,9 @@ const installOverlayWatcher = () => {
 }
 
 // 预置存储，让 CI 冷启动跳过首启对话框（谨防被骗提示 / 用户协议），
-// 使 initDeeplink 正常注册、首页无遮挡。必须在 core/init 读取存储前完成。
+// 使 initDeeplink 走自然注册路径。仅在标记文件存在时执行（正式设备
+// 不会到达）；写入须抢在 core/init 读存储之前，若竞态失败由
+// testDeeplink 显式调用 initDeeplink 兜底。
 const prewriteStorage = async() => {
   await AsyncStorage.setItem(storageDataPrefix.cheatTip, JSON.stringify(true))
   const setting = { ...DEFAULT_SETTING, 'common.isAgreePact': true }
@@ -183,41 +185,57 @@ const testFsRoundtrip = async() => {
   return { md5 }
 }
 
-// 3.1 桥 + 3.4 CryptoModule：复跑黄金基准
+// 3.1 桥 + 3.4 CryptoModule：复跑黄金基准。
+// 契约（对齐 Android / rust lxcore-crypto）：encrypt 入出参均 base64；
+// decrypt 入参 base64、出参 UTF-8 明文（Java `new String(bytes, UTF_8)`）。
+const b64ToUtf8 = (b64: string) => Buffer.from(b64, 'base64').toString('utf8')
 const testCryptoGolden = async() => {
   const crypto = await import('@/utils/nativeModules/crypto')
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const vectors = require('../../test/crypto-golden-vectors.json') as {
-    aes: Array<{ name: string, mode: string, dataB64: string, keyB64: string, ivB64: string, expectCipherB64: string }>,
+    aes: Array<{ name: string, mode: string, dataB64: string, keyB64: string, ivB64: string, expectCipherB64: string, expectPlainUtf8: string }>,
     rsa: { publicKeyB64: string, privateKeyB64: string, cases: Array<{ name: string, padding: string, dataB64: string, cipherB64: string, plainB64: string }> },
   }
   const aesSummary: Array<{ name: string, syncOk: boolean }> = []
   for (const c of vectors.aes) {
     const mode = c.mode as 'AES/CBC/PKCS7Padding' | 'AES'
     const cipher = await crypto.aesEncrypt(c.dataB64, c.keyB64, c.ivB64, mode)
-    assert(cipher === c.expectCipherB64, `aes encrypt ${c.name}`)
+    assert(cipher === c.expectCipherB64, `aes encrypt ${c.name}: got ${cipher}`)
     const plain = await crypto.aesDecrypt(c.expectCipherB64, c.keyB64, c.ivB64, mode)
-    assert(plain === c.dataB64, `aes decrypt ${c.name}`)
+    assert(plain === c.expectPlainUtf8, `aes decrypt ${c.name}: got ${plain}`)
     const syncCipher = crypto.aesEncryptSync(c.dataB64, c.keyB64, c.ivB64, mode)
     const syncPlain = crypto.aesDecryptSync(c.expectCipherB64, c.keyB64, c.ivB64, mode)
-    assert(syncCipher === c.expectCipherB64 && syncPlain === c.dataB64, `aes sync ${c.name}`)
+    assert(syncCipher === c.expectCipherB64, `aes sync encrypt ${c.name}: got ${syncCipher}`)
+    assert(syncPlain === c.expectPlainUtf8, `aes sync decrypt ${c.name}: got ${syncPlain}`)
     aesSummary.push({ name: c.name, syncOk: true })
   }
-  const rsaSummary: Array<{ name: string, roundtrip: boolean, decryptGolden: boolean }> = []
+  const rsaSummary: Array<{ name: string, checks: string[] }> = []
   for (const c of vectors.rsa.cases) {
     const padding = c.padding as typeof crypto.RSA_PADDING.OAEPWithSHA1AndMGF1Padding
-    const decrypted = await crypto.rsaDecrypt(c.cipherB64, vectors.rsa.privateKeyB64, padding)
-    assert(decrypted === c.plainB64, `rsa decrypt golden ${c.name}`)
-    const enc = await crypto.rsaEncrypt(c.dataB64, vectors.rsa.publicKeyB64, padding)
-    const back = await crypto.rsaDecrypt(enc, vectors.rsa.privateKeyB64, padding)
-    assert(back === c.plainB64, `rsa roundtrip ${c.name}`)
-    rsaSummary.push({ name: c.name, roundtrip: true, decryptGolden: true })
+    const checks: string[] = []
+    if (c.padding === 'RSA/ECB/NoPadding') {
+      // NoPadding 为确定性裸模幂：密文可逐字节对照黄金值；
+      // 解密返回整模长块（含前导零），UTF-8 面不宜断言，跳过
+      const enc = await crypto.rsaEncrypt(c.dataB64, vectors.rsa.publicKeyB64, padding)
+      assert(enc === c.cipherB64, `rsa nopad encrypt ${c.name}: got ${String(enc).slice(0, 40)}...`)
+      checks.push('encrypt-deterministic')
+    } else {
+      const expectedPlain = b64ToUtf8(c.plainB64)
+      const decrypted = await crypto.rsaDecrypt(c.cipherB64, vectors.rsa.privateKeyB64, padding)
+      assert(decrypted === expectedPlain, `rsa decrypt golden ${c.name}: got ${String(decrypted).slice(0, 40)}`)
+      checks.push('decrypt-golden')
+      const enc = await crypto.rsaEncrypt(c.dataB64, vectors.rsa.publicKeyB64, padding)
+      const back = await crypto.rsaDecrypt(enc, vectors.rsa.privateKeyB64, padding)
+      assert(back === b64ToUtf8(c.dataB64), `rsa roundtrip ${c.name}: got ${String(back).slice(0, 40)}`)
+      checks.push('roundtrip')
+    }
+    rsaSummary.push({ name: c.name, checks })
   }
   const gen = await crypto.generateRsaKey()
   assert(gen.publicKey.includes('BEGIN PUBLIC KEY'), 'generateRsaKey public')
   const genEnc = await crypto.rsaEncrypt('aGVsbG8=', gen.publicKey, crypto.RSA_PADDING.OAEPWithSHA1AndMGF1Padding)
   const genDec = await crypto.rsaDecrypt(genEnc, gen.privateKey, crypto.RSA_PADDING.OAEPWithSHA1AndMGF1Padding)
-  assert(genDec === 'aGVsbG8=', 'generated key roundtrip')
+  assert(genDec === 'hello', `generated key roundtrip: got ${String(genDec).slice(0, 40)}`)
   return { aes: aesSummary.length, rsa: rsaSummary }
 }
 
@@ -414,6 +432,14 @@ const testTabs = async() => {
 
 // 6.3/6.4 深链：等待宿主探针标记，校验监听注册与处理痕迹
 const testDeeplink = async() => {
+  // 预置设置若被首启竞态覆盖，handlePushedHomeScreen 不会注册监听；
+  // 此时由自测显式调用 initDeeplink 补注册（被测代码本身）
+  let registeredByTest = false
+  if (!state.linkingListeners.includes('url')) {
+    const { initDeeplink } = await import('@/core/init/deeplink')
+    await initDeeplink()
+    registeredByTest = true
+  }
   const t0 = Date.now()
   let probeSeen = false
   while (Date.now() - t0 < 120_000) {
@@ -429,6 +455,7 @@ const testDeeplink = async() => {
   assert(deeplinkLines.some(l => l.includes('lx-ci-probe.lxmc')), 'file probe reached JS listener')
   return {
     probeSeen,
+    registeredByTest,
     linkingListeners: state.linkingListeners,
     deeplinkLines: deeplinkLines.slice(-10),
     fileImportDialogSeen: fileAlert != null,
@@ -460,6 +487,7 @@ const collectEnv = async() => {
     isAgreePact: settingValue?.['common.isAgreePact'] ?? null,
     langId: settingValue?.['common.langId'] ?? null,
     playerStatus: global.lx?.playerStatus ?? null,
+    linkingListeners: state.linkingListeners,
   }
 }
 

@@ -91,8 +91,8 @@ RCT_EXPORT_MODULE()
 
 #pragma mark - 导出方法
 
-RCT_EXPORT_METHOD(addListener:(NSString *)eventName) {}
-RCT_EXPORT_METHOD(removeListeners:(NSInteger)count) {}
+// 不覆写 addListener/removeListeners：RN 0.73 RCTEventEmitter 基类
+// 负责监听计数与 startObserving 触发，空覆写会吞掉全部事件。
 
 // iOS 不允许应用主动退出，桩化为空实现
 RCT_EXPORT_METHOD(exitApp) {}

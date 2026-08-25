@@ -62,8 +62,9 @@ RCT_EXPORT_MODULE()
   _hasListeners = NO;
 }
 
-RCT_EXPORT_METHOD(addListener:(NSString *)eventName) {}
-RCT_EXPORT_METHOD(removeListeners:(NSInteger)count) {}
+// 注意：不要覆写 addListener/removeListeners——RN 0.73 的
+// RCTEventEmitter 基类实现负责监听计数并触发 startObserving，
+// 空覆写会让 _hasListeners 恒为 NO、事件被静默丢弃（CI 自测实证）。
 
 #pragma mark - 事件
 
