@@ -652,8 +652,10 @@ const testUserApiImport = async() => {
   const { importUserApi, removeUserApi } = await import('@/core/userApi')
   const { setApiSource } = await import('@/core/apiSource')
   const { state: userApiState } = await import('@/store/userApi/state')
-  const info = await importUserApi(CI_IMPORT_SCRIPT)
-  assert(userApiState.list.some(a => a.id === info.id), 'imported api appears in store list')
+  await importUserApi(CI_IMPORT_SCRIPT)
+  // importUserApi 无返回值，从 store 列表按名称定位刚导入的源
+  const info = userApiState.list.find(a => a.name === 'lx-ci-import')
+  assert(info != null, 'imported api appears in store list')
   setApiSource(info.id)
   const t0 = Date.now()
   while (Date.now() - t0 < 20_000) {
@@ -663,7 +665,8 @@ const testUserApiImport = async() => {
   const loaded = userApiState.status.status === true
   const apisRegistered = Object.keys(global.lx.apis ?? {})
   // 还原现场：移除测试源并切回内置源（空串走 destroyUserApi 分支）
-  try { await removeUserApi([info.id]) } catch { /* 忽略 */ }
+  const importedId = info.id
+  try { await removeUserApi([importedId]) } catch { /* 忽略 */ }
   setApiSource('')
   assert(loaded, `user api status never true (message=${userApiState.status.message ?? 'unknown'})`)
   assert(apisRegistered.includes('kw'), `apis registered: ${apisRegistered.join(',')}`)
