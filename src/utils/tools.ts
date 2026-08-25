@@ -11,7 +11,9 @@ import { scaleSizeH, scaleSizeW, setSpText } from './pixelRatio'
 import { toOldMusicInfo } from './index'
 import { stringMd5 } from 'react-native-quick-md5'
 import { windowSizeTools } from '@/utils/windowSizeTools'
-// toast 按平台实现：Android 走 ToastAndroid（./toast.ts），iOS 走 RNN overlay（./toast.ios.tsx）
+// toast 按平台实现：Android 走 ToastAndroid（./toast.android.ts），iOS 走 RNN overlay（./toast.ios.tsx）。
+// 注意：基名必须一致且基名文件不能同时存在（否则无平台后缀的 .ts
+// 会在 Metro 解析中先命中，遮蔽 .ios 变体——CI 自测实证）
 import { toast } from './toast'
 
 
@@ -333,10 +335,10 @@ export const onAppearanceChange = (callback: (colorScheme: Parameters<Parameters
 let isSupportedAutoTheme: boolean | null = null
 export const getIsSupportedAutoTheme = () => {
   if (isSupportedAutoTheme == null) {
-    const osVerNum = parseInt(osVer)
-    isSupportedAutoTheme = isAndroid
-      ? osVerNum >= 5
-      : osVerNum >= 13
+    // Platform.constants.Release 为 Android 独有（iOS 上 undefined，
+    // parseInt 得 NaN 会让本函数在 iOS 恒为 false）；
+    // iOS 用 Platform.Version（形如 "18.5"，parseInt 取主版本）
+    isSupportedAutoTheme = isAndroid ? parseInt(osVer) >= 5 : parseInt(String(Platform.Version), 10) >= 13
   }
   return isSupportedAutoTheme
 }

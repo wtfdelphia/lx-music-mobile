@@ -516,7 +516,8 @@ const testScriptsRegression = async() => {
       continue
     }
     const script = await RNFS.readFile(scriptPath, 'utf8')
-    let initEvent: { status?: boolean, sources?: Record<string, unknown> } | null = null
+    // init 负载结构：{ status, info: { sources } }（与生产 handleStateChange 一致）
+    let initEvent: { status?: boolean, info?: { sources?: Record<string, unknown> } } | null = null
     const off = userApi.onScriptAction((event) => {
       if (event.action === 'init') initEvent = event.data as typeof initEvent
     })
@@ -536,8 +537,10 @@ const testScriptsRegression = async() => {
         await sleep(250)
       }
       const inited = initEvent?.status === true
-      const sources = initEvent?.sources ? Object.keys(initEvent.sources).length : 0
-      results.push({ script: entry.file, expectInited: entry.expectInited, ok: inited, inited, sources, ms: Date.now() - t0 })
+      const sources = initEvent?.info?.sources ? Object.keys(initEvent.info.sources).length : 0
+      // 硬断言脚本还须声明至少 1 个音源（空 sources 的 init 无业务价值）
+      const ok = entry.expectInited ? (inited && sources > 0) : inited
+      results.push({ script: entry.file, expectInited: entry.expectInited, ok, inited, sources, ms: Date.now() - t0 })
     } catch (err) {
       results.push({ script: entry.file, expectInited: entry.expectInited, ok: false, inited: false, sources: 0, ms: Date.now() - t0, error: errText(err) })
     } finally {
@@ -648,7 +651,7 @@ const CI_IMPORT_SCRIPT = [
 const testUserApiImport = async() => {
   const { importUserApi, removeUserApi } = await import('@/core/userApi')
   const { setApiSource } = await import('@/core/apiSource')
-  const userApiState = (await import('@/store/userApi/state')).default
+  const { state: userApiState } = await import('@/store/userApi/state')
   const info = await importUserApi(CI_IMPORT_SCRIPT)
   assert(userApiState.list.some(a => a.id === info.id), 'imported api appears in store list')
   setApiSource(info.id)
