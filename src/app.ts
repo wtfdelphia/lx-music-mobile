@@ -7,9 +7,12 @@ import { exitApp } from './utils/nativeModules/utils'
 import { windowSizeTools } from './utils/windowSizeTools'
 import { listenLaunchEvent } from './navigation/regLaunchedEvent'
 import { tipDialog } from './utils/tools'
+import { ciSelfTestBoot } from './utils/ciSelfTest'
 
 console.log('starting app...')
 listenLaunchEvent()
+// iOS CI 应用内自测：无标记文件时为空操作（见 src/utils/ciSelfTest.ts）
+ciSelfTestBoot()
 
 void Promise.all([getFontSize(), windowSizeTools.init()]).then(async([fontSize]) => {
   global.lx.fontSize = fontSize

@@ -1,0 +1,521 @@
+// iOS CI 应用内自测：沙箱 tmp 目录存在标记文件 `.lx-ci-selftest` 时运行，
+// 结果写入 `lx-ci-report.json` 供 CI 宿主读取断言。无标记文件立即返回，
+// 对正式包零影响。宿主侧流程见 .github/workflows/ios-verify.yml 冒烟 job。
+import { Alert, Linking, Platform } from 'react-native'
+import RNFS from 'react-native-fs'
+import AsyncStorage from '@react-native-async-storage/async-storage'
+import { Navigation } from 'react-native-navigation'
+import { DEFAULT_SETTING, storageDataPrefix } from '@/config/constant'
+
+type TestResult = { id: string, ok: boolean, ms: number, detail?: unknown }
+
+const state = {
+  startedAt: 0,
+  results: [] as TestResult[],
+  alerts: [] as Array<{ at: number, title: string, message: string, buttons: string[] }>,
+  overlays: [] as Array<{ at: number, name: string, componentId: string, dismissed: boolean }>,
+  consoleRing: [] as string[],
+  linkingListeners: [] as string[],
+  userApiLogs: [] as string[],
+  userApiEvents: [] as Array<{ action: string, at: number }>,
+}
+
+const tmpDir = () => RNFS.TemporaryDirectoryPath
+const markerPath = () => `${tmpDir()}/.lx-ci-selftest`
+const reportPath = () => `${tmpDir()}/lx-ci-report.json`
+const probeSentMarker = () => `${tmpDir()}/.lx-ci-probe-sent`
+
+const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
+
+const withTimeout = async<T>(p: Promise<T>, ms: number, label: string): Promise<T> => {
+  return Promise.race([
+    p,
+    sleep(ms).then(() => { throw new Error(`timeout after ${ms}ms: ${label}`) }),
+  ])
+}
+
+const assert = (cond: unknown, message: string) => {
+  if (!cond) throw new Error('assert failed: ' + message)
+}
+
+const errText = (err: unknown) => {
+  if (err instanceof Error) return err.message
+  return String(err)
+}
+
+// ---------- 运行时探针（仅标记文件存在时安装） ----------
+
+const DISMISSABLE_OVERLAYS = new Set(['lxm.VersionModal', 'lxm.PactModal', 'lxm.SyncModeModal', 'lxm.Toast'])
+
+const installAlertSpy = () => {
+  const original = Alert.alert.bind(Alert)
+  // @ts-expect-error 猴子补丁：记录所有原生弹窗以定位 CI 中出现的对话框来源
+  Alert.alert = (title: string, message?: string, buttons?: Array<{ text?: string }>, ...rest: unknown[]) => {
+    try {
+      state.alerts.push({
+        at: Date.now(),
+        title: String(title ?? ''),
+        message: String(message ?? '').slice(0, 300),
+        buttons: (buttons ?? []).map(b => String(b?.text ?? '')),
+      })
+    } catch { /* 记录失败不影响弹窗 */ }
+    return original(title, message, buttons, ...rest)
+  }
+}
+
+const installConsoleRing = () => {
+  const levels = ['log', 'info', 'warn', 'error', 'debug'] as const
+  for (const level of levels) {
+    const original = console[level].bind(console)
+    console[level] = (...args: unknown[]) => {
+      try {
+        const line = `[${level}] ` + args.map(a => {
+          if (typeof a === 'string') return a
+          try { return JSON.stringify(a) } catch { return String(a) }
+        }).join(' ').slice(0, 500)
+        state.consoleRing.push(line)
+        if (state.consoleRing.length > 400) state.consoleRing.splice(0, state.consoleRing.length - 400)
+      } catch { /* 忽略 */ }
+      return original(...args)
+    }
+  }
+}
+
+const installLinkingSpy = () => {
+  const original = Linking.addEventListener.bind(Linking)
+  // @ts-expect-error 猴子补丁：记录深链监听注册，验证 initDeeplink 是否执行
+  Linking.addEventListener = (type: string, handler: unknown) => {
+    try { state.linkingListeners.push(String(type)) } catch { /* 忽略 */ }
+    return original(type, handler)
+  }
+}
+
+const installOverlayWatcher = () => {
+  Navigation.events().registerComponentDidAppearListener(({ componentId, componentName }) => {
+    try {
+      const entry = { at: Date.now(), name: String(componentName), componentId: String(componentId), dismissed: false }
+      state.overlays.push(entry)
+      if (DISMISSABLE_OVERLAYS.has(String(componentName))) {
+        void Navigation.dismissOverlay(componentId).then(() => {
+          entry.dismissed = true
+        }).catch(() => {})
+      }
+    } catch { /* 忽略 */ }
+  })
+}
+
+// 预置存储，让 CI 冷启动跳过首启对话框（谨防被骗提示 / 用户协议），
+// 使 initDeeplink 正常注册、首页无遮挡。必须在 core/init 读取存储前完成。
+const prewriteStorage = async() => {
+  await AsyncStorage.setItem(storageDataPrefix.cheatTip, JSON.stringify(true))
+  const setting = { ...DEFAULT_SETTING, 'common.isAgreePact': true }
+  await AsyncStorage.setItem(storageDataPrefix.setting, JSON.stringify(setting))
+}
+
+// ---------- 测试用例 ----------
+
+const runTest = async(id: string, fn: () => Promise<unknown>) => {
+  const t0 = Date.now()
+  try {
+    const detail = await withTimeout(fn(), 120_000, id)
+    state.results.push({ id, ok: true, ms: Date.now() - t0, detail })
+  } catch (err) {
+    state.results.push({ id, ok: false, ms: Date.now() - t0, detail: errText(err) })
+  }
+}
+
+// 1.3 UtilsModule
+const testUtils = async() => {
+  const utils = await import('@/utils/nativeModules/utils')
+  const size = await utils.getWindowSize()
+  assert(typeof size.width === 'number' && size.width > 0, 'window width > 0')
+  assert(typeof size.height === 'number' && size.height > 0, 'window height > 0')
+  const deviceName = await utils.getDeviceName()
+  const locales = await utils.getSystemLocales()
+  const notif = await utils.isNotificationsEnabled()
+  return { size, deviceName, locales, notif }
+}
+
+// 1.4 fs 导出面
+const EXPECTED_FS_EXPORTS = [
+  'extname', 'temporaryDirectoryPath', 'externalStorageDirectoryPath', 'privateStorageDirectoryPath',
+  'getExternalStoragePaths', 'selectManagedFolder', 'selectFile', 'removeManagedFolder',
+  'getManagedFolders', 'getPersistedUriList', 'readDir', 'unlink', 'mkdir', 'stat', 'hash',
+  'readFile', 'moveFile', 'gzipFile', 'unGzipFile', 'gzipString', 'unGzipString', 'existsFile',
+  'rename', 'writeFile', 'appendFile', 'downloadFile', 'stopDownload',
+]
+const testFsExports = async() => {
+  const fs = await import('@/utils/fs') as Record<string, unknown>
+  const missing = EXPECTED_FS_EXPORTS.filter(name => fs[name] === undefined)
+  assert(missing.length === 0, `fs missing exports: ${missing.join(', ')}`)
+  return { count: EXPECTED_FS_EXPORTS.length }
+}
+
+// 1.4 fs 读写往返
+const testFsRoundtrip = async() => {
+  const fs = await import('@/utils/fs')
+  const dir = `${fs.temporaryDirectoryPath}/lx-ci-fs`
+  try { await fs.mkdir(dir) } catch { /* 已存在 */ }
+  const f1 = `${dir}/a.txt`
+  await fs.writeFile(f1, '你好 lx', 'utf8')
+  assert(await fs.readFile(f1, 'utf8') === '你好 lx', 'utf8 roundtrip')
+  await fs.appendFile(f1, '!!', 'utf8')
+  assert(await fs.readFile(f1, 'utf8') === '你好 lx!!', 'append')
+  const f2 = `${dir}/b.bin`
+  await fs.writeFile(f2, 'aGVsbG8=', 'base64')
+  assert(await fs.readFile(f2, 'base64') === 'aGVsbG8=', 'base64 roundtrip')
+  const st = await fs.stat(f1)
+  assert(st.name === 'a.txt', 'stat name')
+  assert(st.mimeType === 'text/plain', `stat mimeType got ${st.mimeType as string}`)
+  assert(st.canRead === true, 'stat canRead')
+  assert((st.size ?? 0) > 0, 'stat size')
+  const items = await fs.readDir(dir)
+  assert(items.some(i => i.name === 'a.txt'), 'readDir lists a.txt')
+  assert(await fs.existsFile(f2), 'existsFile')
+  const md5 = await fs.hash(f1, 'md5')
+  assert(/^[0-9a-f]{32}$/.test(md5), 'hash md5 shape')
+  await fs.moveFile(f1, `${dir}/moved.txt`)
+  await fs.rename(`${dir}/moved.txt`, 'c.txt')
+  assert(await fs.existsFile(`${dir}/c.txt`), 'move+rename')
+  await fs.unlink(`${dir}/c.txt`)
+  await fs.unlink(f2)
+  assert(!(await fs.existsFile(`${dir}/c.txt`)), 'unlink')
+  return { md5 }
+}
+
+// 3.1 桥 + 3.4 CryptoModule：复跑黄金基准
+const testCryptoGolden = async() => {
+  const crypto = await import('@/utils/nativeModules/crypto')
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const vectors = require('../../test/crypto-golden-vectors.json') as {
+    aes: Array<{ name: string, mode: string, dataB64: string, keyB64: string, ivB64: string, expectCipherB64: string }>,
+    rsa: { publicKeyB64: string, privateKeyB64: string, cases: Array<{ name: string, padding: string, dataB64: string, cipherB64: string, plainB64: string }> },
+  }
+  const aesSummary: Array<{ name: string, syncOk: boolean }> = []
+  for (const c of vectors.aes) {
+    const mode = c.mode as 'AES/CBC/PKCS7Padding' | 'AES'
+    const cipher = await crypto.aesEncrypt(c.dataB64, c.keyB64, c.ivB64, mode)
+    assert(cipher === c.expectCipherB64, `aes encrypt ${c.name}`)
+    const plain = await crypto.aesDecrypt(c.expectCipherB64, c.keyB64, c.ivB64, mode)
+    assert(plain === c.dataB64, `aes decrypt ${c.name}`)
+    const syncCipher = crypto.aesEncryptSync(c.dataB64, c.keyB64, c.ivB64, mode)
+    const syncPlain = crypto.aesDecryptSync(c.expectCipherB64, c.keyB64, c.ivB64, mode)
+    assert(syncCipher === c.expectCipherB64 && syncPlain === c.dataB64, `aes sync ${c.name}`)
+    aesSummary.push({ name: c.name, syncOk: true })
+  }
+  const rsaSummary: Array<{ name: string, roundtrip: boolean, decryptGolden: boolean }> = []
+  for (const c of vectors.rsa.cases) {
+    const padding = c.padding as typeof crypto.RSA_PADDING.OAEPWithSHA1AndMGF1Padding
+    const decrypted = await crypto.rsaDecrypt(c.cipherB64, vectors.rsa.privateKeyB64, padding)
+    assert(decrypted === c.plainB64, `rsa decrypt golden ${c.name}`)
+    const enc = await crypto.rsaEncrypt(c.dataB64, vectors.rsa.publicKeyB64, padding)
+    const back = await crypto.rsaDecrypt(enc, vectors.rsa.privateKeyB64, padding)
+    assert(back === c.plainB64, `rsa roundtrip ${c.name}`)
+    rsaSummary.push({ name: c.name, roundtrip: true, decryptGolden: true })
+  }
+  const gen = await crypto.generateRsaKey()
+  assert(gen.publicKey.includes('BEGIN PUBLIC KEY'), 'generateRsaKey public')
+  const genEnc = await crypto.rsaEncrypt('aGVsbG8=', gen.publicKey, crypto.RSA_PADDING.OAEPWithSHA1AndMGF1Padding)
+  const genDec = await crypto.rsaDecrypt(genEnc, gen.privateKey, crypto.RSA_PADDING.OAEPWithSHA1AndMGF1Padding)
+  assert(genDec === 'aGVsbG8=', 'generated key roundtrip')
+  return { aes: aesSummary.length, rsa: rsaSummary }
+}
+
+// 6.1 gzip 契约（含宿主交叉验证样本）
+const GZIP_CROSS_FIXTURE = 'H4sIAAAAAAAC/wEtANL/5rSb6Zuq6Z+z5LmQIGd6aXAg5aWR57qm5rWL6K+VIGx4bWMgaGVsbG8gMTIzGh/CoS0AAAA='
+const GZIP_CROSS_TEXT = '洛雪音乐 gzip 契约测试 lxmc hello 123'
+const testGzip = async() => {
+  const fs = await import('@/utils/fs')
+  // Android（Java zlib）→ iOS
+  const cross = await fs.unGzipString(GZIP_CROSS_FIXTURE, 'utf8')
+  assert(cross === GZIP_CROSS_TEXT, 'cross fixture ungzip')
+  // iOS → Android：产物交宿主用标准 gzip 解压交叉验证
+  const out = await fs.gzipString(GZIP_CROSS_TEXT, 'utf8')
+  assert(await fs.unGzipString(out, 'utf8') === GZIP_CROSS_TEXT, 'gzipString roundtrip')
+  // base64 编码路径
+  const out2 = await fs.gzipString('aGVsbG8=', 'base64')
+  assert(await fs.unGzipString(out2, 'base64') === 'aGVsbG8=', 'base64 path roundtrip')
+  // 文件级往返
+  const dir = `${fs.temporaryDirectoryPath}/lx-ci-gzip`
+  try { await fs.mkdir(dir) } catch { /* 已存在 */ }
+  const src = `${dir}/plain.txt`
+  const gz = `${dir}/plain.txt.gz`
+  const back = `${dir}/plain-back.txt`
+  await fs.writeFile(src, GZIP_CROSS_TEXT, 'utf8')
+  await fs.gzipFile(src, gz)
+  await fs.unGzipFile(gz, back)
+  assert(await fs.readFile(back, 'utf8') === GZIP_CROSS_TEXT, 'file roundtrip')
+  await fs.unlink(src); await fs.unlink(gz); await fs.unlink(back)
+  return { gzipOutB64: out, expectText: GZIP_CROSS_TEXT }
+}
+
+// 5.6 CacheModule
+const testCache = async() => {
+  const cache = await import('@/utils/nativeModules/cache')
+  const size = await cache.getAppCacheSize()
+  assert(Number.isFinite(size) && size >= 0, 'cache size >= 0')
+  await cache.clearAppCache()
+  const sizeAfter = await cache.getAppCacheSize()
+  assert(Number.isFinite(sizeAfter) && sizeAfter >= 0, 'cache size after clear')
+  return { size, sizeAfter }
+}
+
+// 7.1 桌面歌词桩：全部导出可调用、无 reject
+const testLyricStubs = async() => {
+  const ld = await import('@/utils/nativeModules/lyricDesktop') as Record<string, unknown>
+  const fns = Object.entries(ld).filter(([, v]) => typeof v === 'function') as Array<[string, () => Promise<void>]>
+  assert(fns.length >= 20, `lyric stub exports >= 20, got ${fns.length}`)
+  for (const [name, fn] of fns) {
+    await fn()
+    void name
+  }
+  return { exports: fns.map(([name]) => name) }
+}
+
+// 7.2 本地音乐降级
+const testLocalMedia = async() => {
+  const fs = await import('@/utils/fs')
+  const lmm = await import('@/utils/localMediaMetadata')
+  const dir = `${fs.temporaryDirectoryPath}/lx-ci-media`
+  try { await fs.mkdir(dir) } catch { /* 已存在 */ }
+  const fake = `${dir}/lx-ci-fake.mp3`
+  await fs.writeFile(fake, 'fake audio bytes', 'utf8')
+  const files = await lmm.scanAudioFiles(dir)
+  assert(files.some(f => String((f as { name?: string }).name ?? f).includes('lx-ci-fake.mp3')), 'scan finds fake mp3')
+  const meta = await lmm.readMetadata(fake)
+  assert(meta != null && meta.name === 'lx-ci-fake', 'metadata degrades to filename')
+  let writeRejected = false
+  try {
+    await lmm.writeMetadata(fake, { name: 'x', singer: 'y', albumName: 'z', pic: null, lyric: null, lyrics: null } as never)
+  } catch { writeRejected = true }
+  assert(writeRejected, 'writeMetadata rejects on iOS')
+  const pic = await lmm.readPic(dir)
+  const lyric = await lmm.readLyric(fake)
+  assert(pic === '', 'readPic empty')
+  assert(lyric === '', 'readLyric empty')
+  await fs.unlink(fake)
+  return { scanned: files.length, metaName: meta?.name }
+}
+
+// 4.1/4.2/4.3 UserApiModule：preload 完成 + 注入函数字节级一致 + 反向通道 + 定时器
+const CI_USER_API_SCRIPT = [
+  '\'use strict\';',
+  'try {',
+  '  const { EVENT_NAMES, send, utils } = globalThis.lx;',
+  '  const cipher = utils.buffer.bufToString(utils.crypto.aesEncrypt(\'hello\', \'aes-128-cbc\', \'0123456789abcdef\', \'abcdef9876543210\'), \'base64\');',
+  '  const md5 = utils.crypto.md5(\'a b\');',
+  '  const b64 = utils.buffer.bufToString(utils.buffer.from(\'aGVsbG8=\', \'base64\'), \'base64\');',
+  '  console.log(\'LXCI_UTILS \' + cipher + \' \' + md5 + \' \' + b64);',
+  '  setTimeout(() => { console.log(\'LXCI_TIMER_OK\'); }, 300);',
+  '  send(EVENT_NAMES.inited, { status: true, sources: {} });',
+  '} catch (err) { console.error(\'LXCI_SCRIPT_ERR \' + (err && err.message)); }',
+].join('\n')
+const GOLDEN_AES_CIPHER = 'rkbumbtCClkN+Jkds7bQJw=='
+const GOLDEN_MD5 = '0cc9cd4dd26c5137b675a0d819cb9ab0'
+
+const testUserApi = async() => {
+  const userApi = await import('@/utils/nativeModules/userApi')
+  let initEvent: { status?: boolean, errorMessage?: string } | null = null
+  const off = userApi.onScriptAction((event) => {
+    state.userApiEvents.push({ action: event.action, at: Date.now() })
+    const raw = event as unknown as { action: string, log?: string }
+    if (event.action === 'log' && typeof raw.log === 'string') state.userApiLogs.push(raw.log)
+    if (event.action === 'init') initEvent = event.data as typeof initEvent
+  })
+  try {
+    userApi.loadScript({
+      id: 'lx-ci-selftest',
+      name: 'CI Self Test',
+      description: 'in-app CI verification script',
+      version: '1.0.0',
+      author: 'lx-ci',
+      homepage: '',
+      script: CI_USER_API_SCRIPT,
+    } as never)
+    const waitInit = async() => {
+      const t0 = Date.now()
+      while (Date.now() - t0 < 30_000) {
+        if (initEvent) return
+        await sleep(250)
+      }
+      throw new Error(`no init event in 30s; logs: ${state.userApiLogs.slice(-5).join(' | ')}`)
+    }
+    await waitInit()
+    assert(initEvent != null && initEvent.status === true, `init status true, got ${JSON.stringify(initEvent)}`)
+    assert(state.userApiLogs.some(l => l.includes('Preload finished.')), 'preload finished log')
+    const utilsLine = state.userApiLogs.find(l => l.startsWith('LXCI_UTILS '))
+    assert(utilsLine != null, 'utils probe line')
+    const [aesCipher, md5, b64] = String(utilsLine).slice('LXCI_UTILS '.length).split(' ')
+    assert(aesCipher === GOLDEN_AES_CIPHER, `jsc aes golden, got ${aesCipher}`)
+    assert(md5 === GOLDEN_MD5, `jsc md5 golden, got ${md5}`)
+    assert(b64 === 'aGVsbG8=', 'buffer roundtrip')
+    const t0 = Date.now()
+    while (Date.now() - t0 < 10_000) {
+      if (state.userApiLogs.some(l => l.includes('LXCI_TIMER_OK'))) break
+      await sleep(250)
+    }
+    assert(state.userApiLogs.some(l => l.includes('LXCI_TIMER_OK')), 'set_timeout round trip')
+  } finally {
+    off()
+    try { userApi.destroy() } catch { /* 忽略 */ }
+  }
+  return { logs: state.userApiLogs.slice(0, 20), events: state.userApiEvents.map(e => e.action) }
+}
+
+// 5.1 track-player setupPlayer
+const testPlayerSetup = async() => {
+  const player = await import('@/plugins/player')
+  await withTimeout(player.initial({
+    volume: 1,
+    playRate: 1,
+    cacheSize: 1024,
+    isHandleAudioFocus: false,
+    isEnableAudioOffload: false,
+  }), 90_000, 'setupPlayer')
+  assert(player.isInitialized(), 'player initialized')
+  return { initialized: true }
+}
+
+// 5.5 缓存三方法 iOS 降级
+const testPlayerCacheDegrade = async() => {
+  const putils = await import('@/plugins/player/utils')
+  const cached = await putils.isCached('https://example.com/lx-ci.mp3')
+  assert(cached === false, 'isCached degrades to false')
+  const size = await putils.getCacheSize()
+  assert(size === 0, 'getCacheSize degrades to 0')
+  await putils.clearCache()
+  return { cached, size }
+}
+
+// 1.6 四 Tab 切换（宿主按标记文件逐 Tab 截图）
+const NAV_IDS = ['nav_search', 'nav_songlist', 'nav_love', 'nav_setting'] as const
+const testTabs = async() => {
+  const commonAction = (await import('@/store/common/action')).default
+  const commonState = (await import('@/store/common/state')).default
+  const switched: string[] = []
+  for (const id of NAV_IDS) {
+    commonAction.setNavActiveId(id)
+    await sleep(6000) // 等待视图渲染稳定
+    assert(commonState.navActiveId === id, `navActiveId == ${id}`)
+    const marker = `${tmpDir()}/lx-ci-tab-${id}`
+    await RNFS.writeFile(marker, String(Date.now()), 'utf8')
+    // 等待宿主截图完成（宿主截图后删除标记）；宿主缺席时最多等 20s
+    const t0 = Date.now()
+    while (Date.now() - t0 < 20_000) {
+      if (!(await RNFS.exists(marker))) break
+      await sleep(500)
+    }
+    switched.push(id)
+  }
+  await RNFS.writeFile(`${tmpDir()}/lx-ci-tabs-done`, String(Date.now()), 'utf8')
+  commonAction.setNavActiveId('nav_search')
+  return { switched }
+}
+
+// 6.3/6.4 深链：等待宿主探针标记，校验监听注册与处理痕迹
+const testDeeplink = async() => {
+  const t0 = Date.now()
+  let probeSeen = false
+  while (Date.now() - t0 < 120_000) {
+    if (await RNFS.exists(probeSentMarker())) { probeSeen = true; break }
+    await sleep(2000)
+  }
+  assert(probeSeen, 'host probe marker')
+  await sleep(8000) // 等待 JS 侧处理完成
+  const deeplinkLines = state.consoleRing.filter(l => l.includes('deeplink'))
+  const fileAlert = state.alerts.find(a => a.message.includes('lx-ci-probe'))
+  assert(state.linkingListeners.includes('url'), 'deeplink url listener registered')
+  assert(deeplinkLines.some(l => l.includes('lxmusic://player/pause')), 'lxmusic probe reached JS listener')
+  assert(deeplinkLines.some(l => l.includes('lx-ci-probe.lxmc')), 'file probe reached JS listener')
+  return {
+    probeSeen,
+    linkingListeners: state.linkingListeners,
+    deeplinkLines: deeplinkLines.slice(-10),
+    fileImportDialogSeen: fileAlert != null,
+    fileAlertDialog: fileAlert ?? null,
+    recentAlerts: state.alerts.slice(-5),
+  }
+}
+
+// ---------- 主流程 ----------
+
+const collectEnv = async() => {
+  let bootLogText = ''
+  try {
+    const { getBootLog } = await import('@/utils/bootLog')
+    bootLogText = getBootLog()
+  } catch { /* 忽略 */ }
+  let storageKeys: string[] = []
+  let cheatTipValue: unknown = null
+  let settingValue: { 'common.isAgreePact'?: boolean, 'common.langId'?: string } | null = null
+  try {
+    storageKeys = await AsyncStorage.getAllKeys()
+    cheatTipValue = JSON.parse(String(await AsyncStorage.getItem(storageDataPrefix.cheatTip)))
+    settingValue = JSON.parse(String(await AsyncStorage.getItem(storageDataPrefix.setting)))
+  } catch { /* 忽略 */ }
+  return {
+    bootLog: bootLogText,
+    storageKeys,
+    cheatTipValue,
+    isAgreePact: settingValue?.['common.isAgreePact'] ?? null,
+    langId: settingValue?.['common.langId'] ?? null,
+    playerStatus: global.lx?.playerStatus ?? null,
+  }
+}
+
+const writeReport = async() => {
+  const env = await collectEnv()
+  const report = {
+    v: 1,
+    ok: state.results.every(r => r.ok),
+    startedAt: state.startedAt,
+    finishedAt: Date.now(),
+    durationMs: Date.now() - state.startedAt,
+    results: state.results,
+    env,
+    alerts: state.alerts,
+    overlays: state.overlays,
+    consoleTail: state.consoleRing.slice(-250),
+    userApiLogs: state.userApiLogs,
+  }
+  await RNFS.writeFile(reportPath(), JSON.stringify(report), 'utf8')
+  await RNFS.writeFile(`${tmpDir()}/lx-ci-done`, String(Date.now()), 'utf8')
+}
+
+const runSuite = async() => {
+  state.startedAt = Date.now()
+  try {
+    await runTest('utils_window_size', testUtils)
+    await runTest('fs_exports', testFsExports)
+    await runTest('fs_roundtrip', testFsRoundtrip)
+    await runTest('crypto_golden', testCryptoGolden)
+    await runTest('gzip_contract', testGzip)
+    await runTest('cache_module', testCache)
+    await runTest('lyric_stubs', testLyricStubs)
+    await runTest('local_media_degrade', testLocalMedia)
+    await runTest('user_api_sandbox', testUserApi)
+    await runTest('player_setup', testPlayerSetup)
+    await runTest('player_cache_degrade', testPlayerCacheDegrade)
+    await runTest('tab_switch', testTabs)
+    await runTest('deeplink', testDeeplink)
+  } finally {
+    try { await writeReport() } catch { /* 报告写失败不崩应用 */ }
+  }
+}
+
+// 由 src/app.ts 启动期调用。无标记文件 / 非 iOS 时立即返回。
+export const ciSelfTestBoot = () => {
+  if (Platform.OS !== 'ios') return
+  void (async() => {
+    try {
+      if (!(await RNFS.exists(markerPath()))) return
+      installAlertSpy()
+      installConsoleRing()
+      installLinkingSpy()
+      installOverlayWatcher()
+      await prewriteStorage()
+      // 等待 core/init 与首页推送完成（模拟器冷启动约 10s 内）
+      setTimeout(() => { void runSuite() }, 25_000)
+    } catch { /* 自测机制自身故障绝不拖累应用 */ }
+  })()
+}

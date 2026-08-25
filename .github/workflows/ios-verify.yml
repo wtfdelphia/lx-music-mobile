@@ -188,88 +188,87 @@ jobs:
           COMPILER_INDEX_STORE_ENABLE=NO
           build
 
-      - name: 启动模拟器并运行 App
+      - name: 启动模拟器并安装（写入自测标记）
         working-directory: ios/build/Build/Products/Release-iphonesimulator
         run: |
           UDID=$(xcrun simctl list devices available | grep -E 'iPhone' | head -1 | grep -oE '\([0-9A-F-]{36}\)' | tr -d '()')
           echo "Simulator: $UDID"
+          echo "UDID=$UDID" >> "$GITHUB_ENV"
           xcrun simctl boot "$UDID"
           xcrun simctl bootstatus "$UDID" -b
           xcrun simctl install "$UDID" LxMusicMobile.app
+          # 自测标记 + 文件深链探针：须在 launch 前写入（install 后容器目录已存在）
+          CONTAINER=$(xcrun simctl get_app_container "$UDID" cn.toside.music.mobile data)
+          echo "CONTAINER=$CONTAINER" >> "$GITHUB_ENV"
+          mkdir -p "$CONTAINER/tmp"
+          touch "$CONTAINER/tmp/.lx-ci-selftest"
+          echo 'lx-ci probe lxmc' > "$CONTAINER/tmp/lx-ci-probe.lxmc"
           xcrun simctl launch "$UDID" cn.toside.music.mobile | tee launch.txt
           APP_PID=$(grep -oE '[0-9]+' launch.txt | head -1 || true)
           echo "$APP_PID" > app-pid.txt
           echo "App PID: ${APP_PID:-UNKNOWN}"
+
+      - name: 首页取证（启动到首页）
+        working-directory: ios/build/Build/Products/Release-iphonesimulator
+        run: |
+          APP_PID=$(cat app-pid.txt 2>/dev/null || true)
           sleep 10
           xcrun simctl io "$UDID" screenshot screenshot-early.png || true
           { echo '--- process check @10s ---'
             [ -n "$APP_PID" ] && { kill -0 "$APP_PID" 2>/dev/null && echo "PID_ALIVE" || echo "PID_DEAD"; }
-            pgrep -l LxMusicMobile || echo "PGREP_NO_MATCH"
-            ps aux | grep -i lxmusic | grep -v grep | head -5 || true; } | tee proc-10s.txt
-          sleep 90
-          xcrun simctl io "$UDID" screenshot screenshot.png || true
-          { echo '--- process check @100s ---'
+            pgrep -l LxMusicMobile || echo "PGREP_NO_MATCH"; } | tee proc-10s.txt
+          sleep 15
+          xcrun simctl io "$UDID" screenshot screenshot-home.png || true
+          { echo '--- process check @25s ---'
             [ -n "$APP_PID" ] && { kill -0 "$APP_PID" 2>/dev/null && echo "PID_ALIVE" || echo "PID_DEAD"; }
-            pgrep -l LxMusicMobile || echo "PGREP_NO_MATCH"
-            ps aux | grep -i lxmusic | grep -v grep | head -5 || true; } | tee proc-100s.txt
+            pgrep -l LxMusicMobile || echo "PGREP_NO_MATCH"; } | tee proc-25s.txt
 
-      - name: 深链探针（lxmusic:// 到达验证）
+      - name: Tab 截图握手（应用内标记文件驱动）
+        working-directory: ios/build/Build/Products/Release-iphonesimulator
         run: |
-          UDID=$(xcrun simctl list devices booted | grep -oE '\([0-9A-F-]{36}\)' | head -1 | tr -d '()')
-          cd ios/build/Build/Products/Release-iphonesimulator
-          echo "Deep link probe on $UDID"
+          for id in nav_search nav_songlist nav_love nav_setting; do
+            marker="$CONTAINER/tmp/lx-ci-tab-$id"
+            ok=0
+            for i in $(seq 1 90); do [ -f "$marker" ] && { ok=1; break; }; sleep 2; done
+            echo "tab marker $id: $([ "$ok" = 1 ] && echo READY || echo TIMEOUT)"
+            xcrun simctl io "$UDID" screenshot "tab-$id.png" || true
+            rm -f "$marker"
+          done
+
+      - name: 深链探针（等待 Tab 阶段结束后发送）
+        working-directory: ios/build/Build/Products/Release-iphonesimulator
+        run: |
+          tabs_done="$CONTAINER/tmp/lx-ci-tabs-done"
+          for i in $(seq 1 30); do [ -f "$tabs_done" ] && break; sleep 2; done
+          echo "tabs-done marker: $([ -f "$tabs_done" ] && echo YES || echo NO)"
           APP_PID=$(cat app-pid.txt 2>/dev/null || true)
           { echo '--- process check pre-probe ---'
             [ -n "$APP_PID" ] && { kill -0 "$APP_PID" 2>/dev/null && echo "PID_ALIVE" || echo "PID_DEAD"; }
             pgrep -l LxMusicMobile || echo "PGREP_NO_MATCH"; } | tee proc-preprobe.txt
           xcrun simctl openurl "$UDID" "lxmusic://player/pause" || echo "OPENURL_FAILED_PAUSE"
-          sleep 8
-          xcrun simctl io "$UDID" screenshot deeplink-after-pause.png || true
+          sleep 5
           # 文件导入走 file:// 分支（runLinkAction 对非 lxmusic:// 才进 handleFileAction）
-          xcrun simctl openurl "$UDID" "file:///tmp/lx-ci-probe.lxmc" || echo "OPENURL_FAILED_FILE"
-          sleep 12
+          xcrun simctl openurl "$UDID" "file://$CONTAINER/tmp/lx-ci-probe.lxmc" || echo "OPENURL_FAILED_FILE"
+          sleep 3
           xcrun simctl io "$UDID" screenshot deeplink.png || true
-          { echo '--- process check post-probe ---'
-            [ -n "$APP_PID" ] && { kill -0 "$APP_PID" 2>/dev/null && echo "PID_ALIVE" || echo "PID_DEAD"; }
-            pgrep -l LxMusicMobile || echo "PGREP_NO_MATCH"; } | tee proc-postprobe.txt
+          # 通知应用内自测：探针已发送，可进入报告阶段
+          touch "$CONTAINER/tmp/.lx-ci-probe-sent"
 
-      - name: 采集统一日志（含 JS console / preload 痕迹）
+      - name: 采集自测报告并断言
+        working-directory: ios/build/Build/Products/Release-iphonesimulator
         run: |
-          UDID=$(xcrun simctl list devices booted | grep -oE '\([0-9A-F-]{36}\)' | head -1 | tr -d '()')
-          cd ios/build/Build/Products/Release-iphonesimulator
-          # 宿主侧 log show：模拟器 App 以宿主进程运行；此前 simctl spawn 路线
-          # 因 CI 无 uid 501 用户上下文而失败（getpwuid_r）
-          log show --last 10m --predicate 'process == "LxMusicMobile"' --style compact > unified.log 2>&1 || true
-          # 对照查询：确认 log show 本身在 Runner 上可读（排除谓词问题）
-          CONTROL=$(log show --last 2m --predicate 'process == "SpringBoard"' --style compact 2>/dev/null | wc -l | tr -d ' ')
-          echo "log show control (SpringBoard lines): ${CONTROL:-0}"
-          # 崩溃报告：进程若崩溃，.ips 落在宿主诊断目录
+          REPORT="$CONTAINER/tmp/lx-ci-report.json"
+          ok=0
+          for i in $(seq 1 90); do [ -f "$REPORT" ] && { ok=1; break; }; sleep 5; done
+          echo "report ready: $ok"
+          [ -f "$REPORT" ] && cp "$REPORT" ci-report.json
+          APP_PID=$(cat app-pid.txt 2>/dev/null || true)
+          { echo '--- process check final ---'
+            [ -n "$APP_PID" ] && { kill -0 "$APP_PID" 2>/dev/null && echo "PID_ALIVE" || echo "PID_DEAD"; }
+            pgrep -l LxMusicMobile || echo "PGREP_NO_MATCH"; } | tee proc-final.txt
           ls -la ~/Library/Logs/DiagnosticReports/ 2>/dev/null | grep -i lxmusic || echo "NO_CRASH_REPORTS"
-          find ~/Library/Logs/CoreSimulator/"$UDID" -name '*.ips' -o -name '*.crash' 2>/dev/null | head -10 || true
-          CONTAINER=$(xcrun simctl get_app_container "$UDID" cn.toside.music.mobile data 2>/dev/null || true)
-          echo "App container: ${CONTAINER:-UNKNOWN}"
-          if [ -n "$CONTAINER" ]; then
-            { echo '== sandbox tree =='; find "$CONTAINER" | head -80; } > sandbox-logs.txt 2>&1 || true
-            find "$CONTAINER" -name '*.log' -exec sh -c 'echo; echo "== $1 =="; cat "$1"' _ {} \; >> sandbox-logs.txt 2>&1 || true
-            echo '== preferences ==' >> sandbox-logs.txt
-            ls -la "$CONTAINER/Library/Preferences/" >> sandbox-logs.txt 2>&1 || true
-            for p in "$CONTAINER/Library/Preferences/"*.plist; do
-              [ -f "$p" ] || continue
-              { echo; echo "== $p =="; plutil -p "$p"; } >> sandbox-logs.txt 2>&1 || true
-            done
-            # AsyncStorage 键值直读：判定 isAgreePact / cheatTip 等关键状态
-            AS_DIR="$CONTAINER/Library/Application Support/cn.toside.music.mobile/RCTAsyncLocalStorage_V1"
-            if [ -d "$AS_DIR" ]; then
-              { echo; echo '== asyncstorage manifest =='; cat "$AS_DIR/manifest.json"; } >> sandbox-logs.txt 2>&1 || true
-              for f in "$AS_DIR"/*; do
-                [ -f "$f" ] || continue
-                case "$f" in *manifest.json) continue;; esac
-                { echo; echo "== $f =="; head -c 4000 "$f"; echo; } >> sandbox-logs.txt 2>&1 || true
-              done
-            fi
-          fi
-          echo '--- unified log 关键行 ---'
-          grep -E 'starting app|Preload|deeplink|lx_|Exception|crash' unified.log | tail -n 100 || true
+          node "$GITHUB_WORKSPACE/test/ci-report-assert.js" ci-report.json \
+            tab-nav_search.png tab-nav_songlist.png tab-nav_love.png tab-nav_setting.png
 
       - name: 上传冒烟证据
         if: always()
@@ -279,12 +278,10 @@ jobs:
           path: |
             ios/build/Build/Products/Release-iphonesimulator/launch.txt
             ios/build/Build/Products/Release-iphonesimulator/proc-*.txt
-            ios/build/Build/Products/Release-iphonesimulator/screenshot-early.png
-            ios/build/Build/Products/Release-iphonesimulator/screenshot.png
-            ios/build/Build/Products/Release-iphonesimulator/deeplink-after-pause.png
+            ios/build/Build/Products/Release-iphonesimulator/screenshot-*.png
+            ios/build/Build/Products/Release-iphonesimulator/tab-*.png
             ios/build/Build/Products/Release-iphonesimulator/deeplink.png
-            ios/build/Build/Products/Release-iphonesimulator/unified.log
-            ios/build/Build/Products/Release-iphonesimulator/sandbox-logs.txt
+            ios/build/Build/Products/Release-iphonesimulator/ci-report.json
           retention-days: 30
 
   android-regression:
