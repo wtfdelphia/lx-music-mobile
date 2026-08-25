@@ -65,6 +65,17 @@ console.log('alerts=%d overlays=%s linkingListeners=%s',
   JSON.stringify((report.overlays || []).map(o => `${o.name}${o.dismissed ? '(dismissed)' : ''}`)),
   JSON.stringify((report.env && report.env.linkingListeners) || []))
 
+// 脚本回归集通过率摘要（G1 雏形）：硬断言失败已由 runTest 计入 failures，
+// 这里仅呈现逐脚本结果供 design.md D6 判读
+const regression = report.results.find(r => r.id === 'user_api_regression')
+if (regression && regression.detail && Array.isArray(regression.detail.results)) {
+  console.log(`\nscripts regression: ${regression.detail.inited}/${regression.detail.total} inited (hard-required ${regression.detail.hardRequired})`)
+  for (const r of regression.detail.results) {
+    const tag = r.ok ? 'INITED' : (r.expectInited ? 'HARD-FAIL' : 'soft')
+    console.log(`  [${tag}] ${r.script} (${r.ms}ms, sources=${r.sources}${r.error ? ', ' + String(r.error).slice(0, 80) : ''})`)
+  }
+}
+
 if (failures.length) {
   console.error(`\nFAIL (${failures.length}):`)
   for (const f of failures) console.error('  - ' + f)

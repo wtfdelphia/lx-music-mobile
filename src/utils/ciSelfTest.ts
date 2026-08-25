@@ -113,7 +113,7 @@ const installOverlayWatcher = () => {
 // testDeeplink 显式调用 initDeeplink 兜底。
 const prewriteStorage = async() => {
   await AsyncStorage.setItem(storageDataPrefix.cheatTip, JSON.stringify(true))
-  const setting = { ...DEFAULT_SETTING, 'common.isAgreePact': true }
+  const setting = { ...DEFAULT_SETTING, 'common.isAgreePact': true, 'common.isAutoTheme': true }
   await AsyncStorage.setItem(storageDataPrefix.setting, JSON.stringify(setting))
 }
 
@@ -495,6 +495,122 @@ const testDeeplink = async() => {
   }
 }
 
+// 2.3 社区脚本回归一键入口：宿主按 test/scripts-regression/ci-expect.json
+// 把候选脚本 + 清单投递到沙箱临时目录，应用内逐个「加载→inited」断言。
+// 断言口径（本地预跑判读）：离线可 inited 的脚本硬断言；需远端的包装/
+// 自更新脚本仅记录（CI 外网对社区源不稳定，不作硬门禁）。搜索/取链接
+// 依赖外网，按 design.md D6 留手测与报告判读。
+const REGRESSION_MANIFEST = 'lx-ci-regression-manifest.json'
+type RegressionEntry = { file: string, expectInited: boolean, reason?: string }
+const testScriptsRegression = async() => {
+  const userApi = await import('@/utils/nativeModules/userApi')
+  const manifestPath = `${tmpDir()}/${REGRESSION_MANIFEST}`
+  assert(await RNFS.exists(manifestPath), 'regression manifest not delivered by host')
+  const manifest = JSON.parse(await RNFS.readFile(manifestPath, 'utf8')) as { scripts: RegressionEntry[] }
+  assert(manifest.scripts.length >= 10, `manifest too small: ${manifest.scripts.length}`)
+  const results: Array<{ script: string, expectInited: boolean, ok: boolean, inited: boolean, sources: number, ms: number, error?: string }> = []
+  for (const entry of manifest.scripts) {
+    const scriptPath = `${tmpDir()}/${entry.file}`
+    if (!(await RNFS.exists(scriptPath))) {
+      results.push({ script: entry.file, expectInited: entry.expectInited, ok: false, inited: false, sources: 0, ms: 0, error: 'script not delivered by host' })
+      continue
+    }
+    const script = await RNFS.readFile(scriptPath, 'utf8')
+    let initEvent: { status?: boolean, sources?: Record<string, unknown> } | null = null
+    const off = userApi.onScriptAction((event) => {
+      if (event.action === 'init') initEvent = event.data as typeof initEvent
+    })
+    const t0 = Date.now()
+    try {
+      userApi.loadScript({
+        id: `lx-ci-regression-${entry.file}`,
+        name: entry.file,
+        description: 'regression',
+        version: '1.0.0',
+        author: 'lx-ci',
+        homepage: '',
+        script,
+      } as never)
+      while (Date.now() - t0 < 20_000) {
+        if (initEvent) break
+        await sleep(250)
+      }
+      const inited = initEvent?.status === true
+      const sources = initEvent?.sources ? Object.keys(initEvent.sources).length : 0
+      results.push({ script: entry.file, expectInited: entry.expectInited, ok: inited, inited, sources, ms: Date.now() - t0 })
+    } catch (err) {
+      results.push({ script: entry.file, expectInited: entry.expectInited, ok: false, inited: false, sources: 0, ms: Date.now() - t0, error: errText(err) })
+    } finally {
+      off()
+      try { userApi.destroy() } catch { /* 忽略 */ }
+    }
+  }
+  assert(results.length > 0, 'no regression scripts evaluated')
+  const hardFailures = results.filter(r => r.expectInited && !r.ok)
+  assert(hardFailures.length === 0, `regression hard failures: ${JSON.stringify(hardFailures)}`)
+  return {
+    total: results.length,
+    inited: results.filter(r => r.ok).length,
+    hardRequired: results.filter(r => r.expectInited).length,
+    results,
+  }
+}
+
+// 6.2 toast：iOS 经 RNN overlay 显示，断言 overlay 出现并被记录
+const testToast = async() => {
+  const { toast } = await import('@/utils/toast')
+  toast('lx-ci toast probe')
+  const t0 = Date.now()
+  while (Date.now() - t0 < 8000) {
+    if (state.overlays.some(o => o.name === 'lxm.Toast')) break
+    await sleep(200)
+  }
+  const found = state.overlays.find(o => o.name === 'lxm.Toast')
+  assert(found != null, `toast overlay not shown (overlays=${state.overlays.map(o => o.name).join(',')})`)
+  return { shown: true, dismissed: found?.dismissed ?? false }
+}
+
+// 6.8 深色跟随：iOS≥13 支持自动主题 + Appearance 取值合法；
+// 深色翻转由宿主在探针阶段 `simctl ui appearance dark` 触发，
+// 应用内等待 Appearance 变暗且主题已应用为 dark。isAutoTheme 不依赖
+// prewrite 竞态——此处显式写设置，保证外观事件到达时跟随生效
+const testAutoTheme = async() => {
+  const tools = await import('@/utils/tools')
+  assert(tools.getIsSupportedAutoTheme() === true, 'iOS should support auto theme (>=13)')
+  const { updateSetting } = await import('@/core/common')
+  updateSetting({ 'common.isAutoTheme': true })
+  const themeState = (await import('@/store/theme/state')).default
+  const t0 = Date.now()
+  let appearance = tools.getAppearance()
+  while (Date.now() - t0 < 150_000) {
+    appearance = tools.getAppearance()
+    if (appearance === 'dark' && themeState.theme.isDark) break
+    await sleep(1000)
+  }
+  assert(appearance === 'dark', `appearance never switched to dark by host (got ${String(appearance)})`)
+  assert(themeState.theme.isDark === true, `theme did not follow dark appearance (themeId=${themeState.theme.id})`)
+  return { supported: true, appearance, themeId: themeState.theme.id }
+}
+
+// 7.3 应用内更新改跳 Release 页：spy Linking.openURL，
+// 断言 downloadNewVersion/updateApp 打开的是 GitHub Release 页而非下载/安装
+const testVersionUpdate = async() => {
+  const version = await import('@/utils/version') as { downloadNewVersion: (v: string) => Promise<unknown>, updateApp: () => Promise<unknown> }
+  const opened: string[] = []
+  const original = Linking.openURL
+  Linking.openURL = (url: string) => { opened.push(String(url)); return Promise.resolve(true) }
+  try {
+    await version.downloadNewVersion('1.8.1')
+    await version.updateApp()
+  } finally {
+    Linking.openURL = original
+  }
+  assert(opened.length === 2, `expected 2 openURL calls, got ${opened.length}`)
+  const releaseRxp = /github\.com\/[^/]+\/lx-music-mobile\/releases/
+  assert(opened.every(u => releaseRxp.test(u)), `urls not release page: ${opened.join(' ')}`)
+  return { opened }
+}
+
 // 深链监听兜底：预置设置若被首启竞态覆盖，handlePushedHomeScreen 不会
 // 注册监听；须在宿主探针到达前（Tab 阶段之前）完成注册
 const ensureDeeplinkListener = async() => {
@@ -565,8 +681,13 @@ const runSuite = async() => {
     await runTest('user_api_sandbox', testUserApi)
     await runTest('player_setup', testPlayerSetup)
     await runTest('player_cache_degrade', testPlayerCacheDegrade)
+    await runTest('toast_overlay', testToast)
+    await runTest('version_update_release', testVersionUpdate)
     await runTest('tab_switch', testTabs, 300_000)
+    await runTest('auto_theme', testAutoTheme, 180_000)
     await runTest('deeplink', testDeeplink)
+    // 回归集耗时最长且无宿主时序依赖，放最后跑
+    await runTest('user_api_regression', testScriptsRegression, 300_000)
   } finally {
     try { await writeReport() } catch { /* 报告写失败不崩应用 */ }
   }

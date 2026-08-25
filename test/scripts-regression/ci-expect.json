@@ -1,0 +1,28 @@
+{
+  "$comment": "iOS CI 回归断言清单（任务 2.3 一键入口）。由宿主在冒烟 job 投递到应用沙箱 tmp/，应用内 user_api_regression 用例逐个执行 加载→inited 断言。expectInited 口径来自本地预跑判读（2026-08）：21 个脚本离线即可完成握手为硬断言；sixyin 求值期依赖远端、zxwy 为运行时拉远端源的包装器，仅记录不作门禁。搜索→取链接断言依赖外网且社区端点易变，按 design.md D6 留手测与报告判读。",
+  "scripts": [
+    { "file": "lyswhut-example.js", "expectInited": true },
+    { "file": "HYWmusic_beta_公益测试 v0.74.0.js", "expectInited": true },
+    { "file": "K×H测试 v1.7.17.js", "expectInited": true },
+    { "file": "lx-玉宁熙-Pro v1.2.2 (1).js", "expectInited": true },
+    { "file": "屿溪-终章  v 0.0.0.js", "expectInited": true },
+    { "file": "独家音源-v5.js", "expectInited": true },
+    { "file": "长青SVIP音源(二改修复版) v1.2.0.js", "expectInited": true },
+    { "file": "a970-huibq.js", "expectInited": true },
+    { "file": "a970-monster.js", "expectInited": true },
+    { "file": "a970-nya.js", "expectInited": true },
+    { "file": "a970-zhizun.js", "expectInited": true },
+    { "file": "a970-肥猫不肥.js", "expectInited": true },
+    { "file": "a970-野花音源.js", "expectInited": true },
+    { "file": "a970-野草音源.js", "expectInited": true },
+    { "file": "gdstudio.js", "expectInited": true },
+    { "file": "gy-feichangdao-v5.js", "expectInited": true },
+    { "file": "gy-molan-2.0.0.js", "expectInited": true },
+    { "file": "gy-nianxin-1.0.2.js", "expectInited": true },
+    { "file": "gy-suyin-v1.js", "expectInited": true },
+    { "file": "gy-wending-1.0.3.js", "expectInited": true },
+    { "file": "gy-xinghai-2.3.11.js", "expectInited": true },
+    { "file": "a970-sixyin-1.2.1.js", "expectInited": false, "reason": "求值期依赖远端音源信息，离线必失败（本地预跑实证）" },
+    { "file": "zxwy-lx-script.js", "expectInited": false, "reason": "包装器型脚本，运行时拉取远端源，CI 外网不稳定不作门禁" }
+  ]
+}

@@ -203,6 +203,10 @@ jobs:
           mkdir -p "$CONTAINER/tmp"
           touch "$CONTAINER/tmp/.lx-ci-selftest"
           echo 'lx-ci probe lxmc' > "$CONTAINER/tmp/lx-ci-probe.lxmc"
+          # 任务 2.3 一键入口：回归脚本 + 断言清单投递沙箱，
+          # 应用内 user_api_regression 用例逐个跑 加载→inited
+          cp "$GITHUB_WORKSPACE"/test/scripts-regression/candidates/*.js "$CONTAINER/tmp/"
+          cp "$GITHUB_WORKSPACE"/test/scripts-regression/ci-expect.json "$CONTAINER/tmp/lx-ci-regression-manifest.json"
           xcrun simctl launch "$UDID" cn.toside.music.mobile | tee launch.txt
           APP_PID=$(grep -oE '[0-9]+' launch.txt | head -1 || true)
           echo "$APP_PID" > app-pid.txt
@@ -241,6 +245,9 @@ jobs:
           tabs_done="$CONTAINER/tmp/lx-ci-tabs-done"
           for i in $(seq 1 30); do [ -f "$tabs_done" ] && break; sleep 2; done
           echo "tabs-done marker: $([ -f "$tabs_done" ] && echo YES || echo NO)"
+          # 任务 6.8 深色跟随：Tab 阶段结束后切设备外观为 dark，
+          # 应用内 auto_theme 用例轮询 Appearance 翻转与主题 isDark
+          xcrun simctl ui "$UDID" appearance dark 2>&1 || echo "APPEARANCE_SWITCH_FAILED"
           APP_PID=$(cat app-pid.txt 2>/dev/null || true)
           { echo '--- process check pre-probe ---'
             [ -n "$APP_PID" ] && { kill -0 "$APP_PID" 2>/dev/null && echo "PID_ALIVE" || echo "PID_DEAD"; }
