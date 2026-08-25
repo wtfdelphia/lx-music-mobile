@@ -196,27 +196,40 @@ jobs:
           xcrun simctl boot "$UDID"
           xcrun simctl bootstatus "$UDID" -b
           xcrun simctl install "$UDID" LxMusicMobile.app
-          xcrun simctl launch --console-pty "$UDID" cn.toside.music.mobile > console.log 2>&1 &
-          LAUNCH_PID=$!
+          xcrun simctl launch "$UDID" cn.toside.music.mobile | tee launch.txt
+          APP_PID=$(grep -oE '[0-9]+' launch.txt | head -1 || true)
+          echo "$APP_PID" > app-pid.txt
+          echo "App PID: ${APP_PID:-UNKNOWN}"
+          sleep 10
+          xcrun simctl io "$UDID" screenshot screenshot-early.png || true
+          { echo '--- process check @10s ---'
+            [ -n "$APP_PID" ] && { kill -0 "$APP_PID" 2>/dev/null && echo "PID_ALIVE" || echo "PID_DEAD"; }
+            pgrep -l LxMusicMobile || echo "PGREP_NO_MATCH"
+            ps aux | grep -i lxmusic | grep -v grep | head -5 || true; } | tee proc-10s.txt
           sleep 90
-          kill "$LAUNCH_PID" 2>/dev/null || true
           xcrun simctl io "$UDID" screenshot screenshot.png || true
-          echo '--- console tail ---'
-          tail -n 60 console.log
-          pgrep -x LxMusicMobile > /dev/null && echo "APP_RUNNING_AT_90S" || echo "APP_GONE_AT_90S"
+          { echo '--- process check @100s ---'
+            [ -n "$APP_PID" ] && { kill -0 "$APP_PID" 2>/dev/null && echo "PID_ALIVE" || echo "PID_DEAD"; }
+            pgrep -l LxMusicMobile || echo "PGREP_NO_MATCH"
+            ps aux | grep -i lxmusic | grep -v grep | head -5 || true; } | tee proc-100s.txt
 
       - name: 深链探针（lxmusic:// 到达验证）
         run: |
           UDID=$(xcrun simctl list devices booted | grep -oE '\([0-9A-F-]{36}\)' | head -1 | tr -d '()')
           cd ios/build/Build/Products/Release-iphonesimulator
           echo "Deep link probe on $UDID"
-          pgrep -x LxMusicMobile > /dev/null && echo "APP_ALIVE_PRE_PROBE" || echo "APP_DEAD_PRE_PROBE"
+          APP_PID=$(cat app-pid.txt 2>/dev/null || true)
+          { echo '--- process check pre-probe ---'
+            [ -n "$APP_PID" ] && { kill -0 "$APP_PID" 2>/dev/null && echo "PID_ALIVE" || echo "PID_DEAD"; }
+            pgrep -l LxMusicMobile || echo "PGREP_NO_MATCH"; } | tee proc-preprobe.txt
           xcrun simctl openurl "$UDID" "lxmusic://player/pause" || echo "OPENURL_FAILED_PAUSE"
           sleep 8
           xcrun simctl openurl "$UDID" "lxmusic:///tmp/lx-ci-probe.lxmc" || echo "OPENURL_FAILED_FILE"
           sleep 12
           xcrun simctl io "$UDID" screenshot deeplink.png || true
-          pgrep -x LxMusicMobile > /dev/null && echo "APP_ALIVE_POST_PROBE" || echo "APP_DEAD_POST_PROBE"
+          { echo '--- process check post-probe ---'
+            [ -n "$APP_PID" ] && { kill -0 "$APP_PID" 2>/dev/null && echo "PID_ALIVE" || echo "PID_DEAD"; }
+            pgrep -l LxMusicMobile || echo "PGREP_NO_MATCH"; } | tee proc-postprobe.txt
 
       - name: 采集统一日志（含 JS console / preload 痕迹）
         run: |
@@ -225,10 +238,16 @@ jobs:
           # 宿主侧 log show：模拟器 App 以宿主进程运行；此前 simctl spawn 路线
           # 因 CI 无 uid 501 用户上下文而失败（getpwuid_r）
           log show --last 10m --predicate 'process == "LxMusicMobile"' --style compact > unified.log 2>&1 || true
+          # 对照查询：确认 log show 本身在 Runner 上可读（排除谓词问题）
+          CONTROL=$(log show --last 2m --predicate 'process == "SpringBoard"' --style compact 2>/dev/null | wc -l | tr -d ' ')
+          echo "log show control (SpringBoard lines): ${CONTROL:-0}"
+          # 崩溃报告：进程若崩溃，.ips 落在宿主诊断目录
+          ls -la ~/Library/Logs/DiagnosticReports/ 2>/dev/null | grep -i lxmusic || echo "NO_CRASH_REPORTS"
+          find ~/Library/Logs/CoreSimulator/"$UDID" -name '*.ips' -o -name '*.crash' 2>/dev/null | head -10 || true
           CONTAINER=$(xcrun simctl get_app_container "$UDID" cn.toside.music.mobile data 2>/dev/null || true)
           echo "App container: ${CONTAINER:-UNKNOWN}"
           if [ -n "$CONTAINER" ]; then
-            { echo '== sandbox tree =='; find "$CONTAINER" -type f | head -50; } > sandbox-logs.txt 2>&1 || true
+            { echo '== sandbox tree =='; find "$CONTAINER" | head -80; } > sandbox-logs.txt 2>&1 || true
             find "$CONTAINER" -name '*.log' -exec sh -c 'echo; echo "== $1 =="; cat "$1"' _ {} \; >> sandbox-logs.txt 2>&1 || true
             echo '== preferences ==' >> sandbox-logs.txt
             ls -la "$CONTAINER/Library/Preferences/" >> sandbox-logs.txt 2>&1 || true
@@ -246,7 +265,9 @@ jobs:
         with:
           name: ios-simulator-smoke
           path: |
-            ios/build/Build/Products/Release-iphonesimulator/console.log
+            ios/build/Build/Products/Release-iphonesimulator/launch.txt
+            ios/build/Build/Products/Release-iphonesimulator/proc-*.txt
+            ios/build/Build/Products/Release-iphonesimulator/screenshot-early.png
             ios/build/Build/Products/Release-iphonesimulator/screenshot.png
             ios/build/Build/Products/Release-iphonesimulator/deeplink.png
             ios/build/Build/Products/Release-iphonesimulator/unified.log
