@@ -443,8 +443,21 @@ const testTabs = async() => {
 // 6.3/6.4 深链：等待宿主探针标记，校验监听注册与处理痕迹
 const testDeeplink = async() => {
   const t0 = Date.now()
+  // iOS 18.5 模拟器上 `simctl openurl` 对自定义 scheme 静默吞件（前台/
+  // 后台唤醒均证伪，run 32834027405/32836063520：AppDelegate 零收件）。
+  // 改由应用内 Linking.openURL 自投递：同样经 SpringBoard 路由 →
+  // AppDelegate openURL → RCTLinkingManager → JS 监听，验证 6.3 全链路。
+  let inAppProbeOk = false
+  try {
+    inAppProbeOk = await Linking.openURL('lxmusic://player/pause')
+  } catch { /* 失败由下方断言带诊断信息呈现 */ }
+  while (Date.now() - t0 < 15_000) {
+    if (state.consoleRing.some(l => l.includes('deeplink lxmusic://player/pause'))) break
+    await sleep(500)
+  }
+  const tProbe = Date.now()
   let probeSeen = false
-  while (Date.now() - t0 < 120_000) {
+  while (Date.now() - tProbe < 120_000) {
     if (await RNFS.exists(probeSentMarker())) { probeSeen = true; break }
     await sleep(2000)
   }
@@ -459,13 +472,18 @@ const testDeeplink = async() => {
       nativeUrls = (await RNFS.readFile(nativeOpenUrlLog(), 'utf8')).split('\n').filter(Boolean)
     }
   } catch { /* 读取失败不阻断断言 */ }
+  // 处理链报错会走 errorDialog → Alert spy；本阶段唯一合法弹窗是
+  // 文件导入确认，其余文案都说明深链处理链抛了错
+  const unexpectedAlert = state.alerts.find(a => !a.message.includes('lx-ci-probe'))
   assert(state.linkingListeners.includes('url'), 'deeplink url listener registered')
   // 失败时把原生投递取证带进错误文本，宿主日志即可区分投递层/事件层
-  const diag = `nativeOpenUrls=${JSON.stringify(nativeUrls)} deeplinkLines=${JSON.stringify(deeplinkLines.slice(-5))}`
-  assert(deeplinkLines.some(l => l.includes('lxmusic://player/pause')), `lxmusic probe reached JS listener | ${diag}`)
+  const diag = `inAppProbeOk=${inAppProbeOk} nativeOpenUrls=${JSON.stringify(nativeUrls)} deeplinkLines=${JSON.stringify(deeplinkLines.slice(-5))}`
+  assert(deeplinkLines.some(l => l.includes('lxmusic://player/pause')), `lxmusic probe reached JS listener (in-app openURL) | ${diag}`)
+  assert(!unexpectedAlert, `no unexpected alert during deeplink probes | ${diag} unexpectedAlert=${JSON.stringify(unexpectedAlert)}`)
   assert(deeplinkLines.some(l => l.includes('lx-ci-probe.lxmc')), `file probe reached JS listener | ${diag}`)
   assert(fileAlert != null, `file probe triggered import confirm dialog | ${diag}`)
   return {
+    inAppProbeOk,
     probeSeen,
     registeredByTest: state.deeplinkRegisteredByTest,
     linkingListeners: state.linkingListeners,

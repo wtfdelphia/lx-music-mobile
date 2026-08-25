@@ -245,20 +245,16 @@ jobs:
           { echo '--- process check pre-probe ---'
             [ -n "$APP_PID" ] && { kill -0 "$APP_PID" 2>/dev/null && echo "PID_ALIVE" || echo "PID_DEAD"; }
             pgrep -l LxMusicMobile || echo "PGREP_NO_MATCH"; } | tee proc-preprobe.txt
-          # run 32834027405 实锤：iOS 18.5 模拟器对前台应用吞掉自定义
-          # scheme 的 openurl（simctl 返回成功，AppDelegate 收不到），
-          # file:// 文档通道正常。因此自定义 scheme 走后台唤醒路径：
-          # 先起 Safari 把应用切后台，再由 SpringBoard 经 URL 唤醒投递。
-          # 前台直发保留为对照组，输出落盘供判读。
-          { echo "--- openurl lxmusic (foreground, control) ---"
+          # run 32834027405/32836063520 实锤：iOS 18.5 模拟器上
+          # `simctl openurl` 对自定义 scheme 静默吞件（前台直发与后台
+          # 唤醒均成功返回、AppDelegate 零收件），file:// 文档通道正常。
+          # lxmusic:// 全链路改由应用内 Linking.openURL 自投递验证；
+          # 宿主保留对照组 + 假 scheme 诊断（判别 simctl 是否校验路由）。
+          { echo "--- openurl lxmusic (simctl control) ---"
             xcrun simctl openurl "$UDID" "lxmusic://player/pause" 2>&1 || echo "OPENURL_FAILED_FG"
+            echo "--- openurl bogus scheme (routing diagnostic) ---"
+            xcrun simctl openurl "$UDID" "lxcibogus://probe" 2>&1 || echo "BOGUS_OPENURL_FAILED"
             sleep 3
-            echo "--- background app via Safari ---"
-            xcrun simctl launch "$UDID" com.apple.mobilesafari 2>&1 || echo "SAFARI_LAUNCH_FAILED"
-            sleep 4
-            echo "--- openurl lxmusic (background wake) ---"
-            xcrun simctl openurl "$UDID" "lxmusic://player/pause" 2>&1 || echo "OPENURL_FAILED_BG"
-            sleep 4
             # 文件导入走 file:// 分支（runLinkAction 对非 lxmusic:// 才进 handleFileAction）
             echo "--- openurl file://probe.lxmc ---"
             xcrun simctl openurl "$UDID" "file://$CONTAINER/tmp/lx-ci-probe.lxmc" 2>&1 || echo "OPENURL_FAILED_FILE"; } | tee openurl-probe.log
