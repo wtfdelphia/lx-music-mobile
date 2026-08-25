@@ -2,12 +2,12 @@
 
 ## 1. Phase 0：能跑起来
 
-- [ ] 1.1 `pod install` 通过（关 Flipper），`ios/Pods` 生成无 error
-- [ ] 1.2 修 Bundle ID / 版本号 / Display Name / arm64，Xcode build 成功（配置已改：Bundle ID `cn.toside.music.mobile`、MARKETING_VERSION 1.8.1、CURRENT_PROJECT_VERSION 73、显示名「洛雪音乐助手」、UIRequiredDeviceCapabilities arm64；待 CI 构建验证）
+- [X] 1.1 `pod install` 通过（关 Flipper），`ios/Pods` 生成无 error（CI run 32746235295 双 macOS job 均以 `NO_FLIPPER=1` 通过）
+- [X] 1.2 修 Bundle ID / 版本号 / Display Name / arm64，Xcode build 成功（配置已改：Bundle ID `cn.toside.music.mobile`、MARKETING_VERSION 1.8.1、CURRENT_PROJECT_VERSION 73、显示名「洛雪音乐助手」、UIRequiredDeviceCapabilities arm64；CI run 32746235295 设备/模拟器双 SDK 构建通过，IPA 已产 artifact）
 - [ ] 1.3 UtilsModule iOS 骨架（`exitApp` 桩 + `getWindowSize`），`src/app.ts` 求值不再抛 TypeError（代码已写并经 CI 编译验证：`ios/LxMusicMobile/Modules/UtilsModule.{h,m}` 全 JS 面对齐；运行时待模拟器）
 - [ ] 1.4 `fs.ios.ts` 适配层（除 gzip 外全部方法），27 个导出无 undefined，`stat`/`readDir` 合成 `mimeType`/`name`/`canRead`（代码已写并经 Metro 打包验证：RNFS 适配 27 导出；gzip 占位待 6.1、`selectFile` 占位待 6.5；运行时待模拟器）
 - [ ] 1.5 字体入 bundle + `UIAppFonts`，首页图标无豆腐块（已挂载并经 CI 构建验证：`ios/LxMusicMobile/Fonts/icomoon.ttf` + `UIAppFonts`；图标渲染待模拟器）
-- [ ] 1.6 门槛验证：模拟器启动到首页，四个 Tab 可切换，无红屏
+- [ ] 1.6 门槛验证：模拟器启动到首页，四个 Tab 可切换，无红屏（CI 冒烟已证启动到首页渲染且无红屏：screenshot 像素分析红色占比 0.00%，状态栏/卡片列表/底部栏结构完整；四 Tab 切换待手测或 UI 自动化）
 
 ## 2. Phase 1.0：验证基础设施
 
@@ -60,4 +60,4 @@
 - [ ] 7.4 横屏 / iPad 布局：24 个 Horizontal tsx 不错位
 - [X] 7.5 CI 新增 iOS unsigned build job 并通过（`.github/workflows/ios-verify.yml`，macos-15 / Xcode 16.4；首验 run 32705189097，门禁后归并为设备版构建 + IPA artifact，run 32707901201 双 SDK 均通过）
 - [ ] 7.6 真机测试 ≥2 台（含 iOS 13/14 旧机），连续 30 分钟无崩溃，Instruments 无明显泄漏
-- [ ] 7.7 `assets/script/user-api-preload.js` 移动后，Android release 构建回归一次
+- [ ] 7.7 `assets/script/user-api-preload.js` 移动后，Android release 构建回归一次（已统一到仓库根 `assets/script/user-api-preload.js`：iOS pbxproj 跨目录引用、Android gradle sourceSets assets 映射，包内路径 `script/user-api-preload.js` 不变；Android release 回归已入 CI `android-regression` job——一次性签名 + APK 入包校验，待绿）
