@@ -18,6 +18,7 @@ const state = {
   linkingListeners: [] as string[],
   userApiLogs: [] as string[],
   userApiEvents: [] as Array<{ action: string, at: number }>,
+  deeplinkRegisteredByTest: false,
 }
 
 const tmpDir = () => RNFS.TemporaryDirectoryPath
@@ -320,7 +321,9 @@ const CI_USER_API_SCRIPT = [
   '\'use strict\';',
   'try {',
   '  const { EVENT_NAMES, send, utils } = globalThis.lx;',
-  '  const cipher = utils.buffer.bufToString(utils.crypto.aesEncrypt(\'hello\', \'aes-128-cbc\', \'0123456789abcdef\', \'abcdef9876543210\'), \'base64\');',
+  // 生态约定：二进制产物走 hex（bufToString 的 base64 路经 bytesToString
+  // UTF-8 解释，仅对文本字节安全；社区脚本对密文一律用 hex，双端同此约定）
+  '  const cipher = utils.buffer.bufToString(utils.crypto.aesEncrypt(\'hello\', \'aes-128-cbc\', \'0123456789abcdef\', \'abcdef9876543210\'), \'hex\');',
   '  const md5 = utils.crypto.md5(\'a b\');',
   '  const b64 = utils.buffer.bufToString(utils.buffer.from(\'aGVsbG8=\', \'base64\'), \'base64\');',
   '  console.log(\'LXCI_UTILS \' + cipher + \' \' + md5 + \' \' + b64);',
@@ -328,7 +331,7 @@ const CI_USER_API_SCRIPT = [
   '  send(EVENT_NAMES.inited, { status: true, sources: {} });',
   '} catch (err) { console.error(\'LXCI_SCRIPT_ERR \' + (err && err.message)); }',
 ].join('\n')
-const GOLDEN_AES_CIPHER = 'rkbumbtCClkN+Jkds7bQJw=='
+const GOLDEN_AES_CIPHER_HEX = 'ae46ee99bb420a590df8991db3b6d027'
 const GOLDEN_MD5 = '0cc9cd4dd26c5137b675a0d819cb9ab0'
 
 const testUserApi = async() => {
@@ -364,7 +367,7 @@ const testUserApi = async() => {
     const utilsLine = state.userApiLogs.find(l => l.startsWith('LXCI_UTILS '))
     assert(utilsLine != null, 'utils probe line')
     const [aesCipher, md5, b64] = String(utilsLine).slice('LXCI_UTILS '.length).split(' ')
-    assert(aesCipher === GOLDEN_AES_CIPHER, `jsc aes golden, got ${aesCipher}`)
+    assert(aesCipher === GOLDEN_AES_CIPHER_HEX, `jsc aes golden, got ${aesCipher}`)
     assert(md5 === GOLDEN_MD5, `jsc md5 golden, got ${md5}`)
     assert(b64 === 'aGVsbG8=', 'buffer roundtrip')
     const t0 = Date.now()
@@ -432,14 +435,6 @@ const testTabs = async() => {
 
 // 6.3/6.4 深链：等待宿主探针标记，校验监听注册与处理痕迹
 const testDeeplink = async() => {
-  // 预置设置若被首启竞态覆盖，handlePushedHomeScreen 不会注册监听；
-  // 此时由自测显式调用 initDeeplink 补注册（被测代码本身）
-  let registeredByTest = false
-  if (!state.linkingListeners.includes('url')) {
-    const { initDeeplink } = await import('@/core/init/deeplink')
-    await initDeeplink()
-    registeredByTest = true
-  }
   const t0 = Date.now()
   let probeSeen = false
   while (Date.now() - t0 < 120_000) {
@@ -455,13 +450,22 @@ const testDeeplink = async() => {
   assert(deeplinkLines.some(l => l.includes('lx-ci-probe.lxmc')), 'file probe reached JS listener')
   return {
     probeSeen,
-    registeredByTest,
+    registeredByTest: state.deeplinkRegisteredByTest,
     linkingListeners: state.linkingListeners,
     deeplinkLines: deeplinkLines.slice(-10),
     fileImportDialogSeen: fileAlert != null,
     fileAlertDialog: fileAlert ?? null,
     recentAlerts: state.alerts.slice(-5),
   }
+}
+
+// 深链监听兜底：预置设置若被首启竞态覆盖，handlePushedHomeScreen 不会
+// 注册监听；须在宿主探针到达前（Tab 阶段之前）完成注册
+const ensureDeeplinkListener = async() => {
+  if (state.linkingListeners.includes('url')) return false
+  const { initDeeplink } = await import('@/core/init/deeplink')
+  await initDeeplink()
+  return true
 }
 
 // ---------- 主流程 ----------
@@ -513,6 +517,7 @@ const writeReport = async() => {
 const runSuite = async() => {
   state.startedAt = Date.now()
   try {
+    state.deeplinkRegisteredByTest = await ensureDeeplinkListener()
     await runTest('utils_window_size', testUtils)
     await runTest('fs_exports', testFsExports)
     await runTest('fs_roundtrip', testFsRoundtrip)
