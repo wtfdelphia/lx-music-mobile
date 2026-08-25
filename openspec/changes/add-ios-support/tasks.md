@@ -44,7 +44,7 @@
 
 - [ ] 6.1 gzip 走 libz `windowBits=31`，`.lxmc` 与 Android 双向导入成功（代码已写：`GzipModule.{h,m}` 契约自 fork Java 源码提取——`gzipString` 输出恒 base64、`unGzipString` 输入恒 base64；`.lxmc` 双向实测待 M）
 - [ ] 6.2 `toast.ios.tsx`，各处 toast 正常显示（代码已写：`src/utils/toast.ios.tsx` 经 RNN overlay 显示 + Toast 组件注册，`tools.ts` 改按平台引入；运行时待验证）
-- [ ] 6.3 深链（AppDelegate + Info.plist），`lxmusic://` 触发对应行为（代码已写：`CFBundleURLTypes` lxmusic scheme + AppDelegate `RCTLinkingManager` openURL/continueUserActivity；运行时待验证）
+- [ ] 6.3 深链（AppDelegate + Info.plist），`lxmusic://` 触发对应行为（代码已写：`CFBundleURLTypes` lxmusic scheme + AppDelegate `RCTLinkingManager` openURL/continueUserActivity；run 32802185448 冒烟探针：`simctl openurl` 送达无报错、App 存活判定改用宿主 `pgrep`（原 `simctl spawn launchctl` 因 CI 缺 uid 501 上下文误报），另发现首启协议弹窗可能阻塞深链监听注册（initDeeplink 在 isAgreePact 后才跑）——已加「不存在文件→错误弹窗」确定性探针与宿主侧统一日志/沙箱日志采集，待下轮证据判读）
 - [ ] 6.4 `CFBundleDocumentTypes`，从"文件"App 打开 `.lxmc` 触发导入（代码已写：lxmc/js/audio 三类 DocumentTypes + lxmc UTI 导出声明 + iTunes 文件共享 + ATS 放行 http；运行时待验证）
 - [ ] 6.5 ChoosePath iOS 化（DocumentPicker），能选文件并导入歌单（代码已写：UtilsModule `selectFile` UIDocumentPicker 拷贝进沙箱、`fs.ios.ts` 接入、存储权限恒真、Header 隐藏存储卷切换、FileType 补 isFile/lastModified；运行时待验证）
 - [ ] 6.6 通知权限 / 屏幕常亮 / 分享 / 设备名 / WiFi IP 逐项手测
@@ -60,4 +60,4 @@
 - [ ] 7.4 横屏 / iPad 布局：24 个 Horizontal tsx 不错位
 - [X] 7.5 CI 新增 iOS unsigned build job 并通过（`.github/workflows/ios-verify.yml`，macos-15 / Xcode 16.4；首验 run 32705189097，门禁后归并为设备版构建 + IPA artifact，run 32707901201 双 SDK 均通过）
 - [ ] 7.6 真机测试 ≥2 台（含 iOS 13/14 旧机），连续 30 分钟无崩溃，Instruments 无明显泄漏
-- [ ] 7.7 `assets/script/user-api-preload.js` 移动后，Android release 构建回归一次（已统一到仓库根 `assets/script/user-api-preload.js`：iOS pbxproj 跨目录引用、Android gradle sourceSets assets 映射，包内路径 `script/user-api-preload.js` 不变；Android release 回归已入 CI `android-regression` job——一次性签名 + APK 入包校验，待绿）
+- [X] 7.7 `assets/script/user-api-preload.js` 移动后，Android release 构建回归一次（统一到仓库根：iOS pbxproj 跨目录引用、Android gradle sourceSets assets 映射，包内路径不变；CI `android-regression` job 通过——run 32802185448 assembleRelease 成功且 `assets/script/user-api-preload.js` 确认入包；iOS 侧同一构建经 `ios-build` job 验证）
