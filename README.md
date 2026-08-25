@@ -78,12 +78,17 @@ GitHub ──► GitHub Actions
 
 说明：
 
+- `ios-verify` 工作流含 5 个并行门禁：JS 门禁（单测 + Metro 双端打包）、
+  Rust iOS 交叉编译（含宿主黄金基准）、设备未签名构建（产出 IPA）、
+  模拟器冒烟（启动到首页 + 进程判活 + 深链探针）、Android release 回归
+  （守护双端共用的 `assets/script/user-api-preload.js`）；
 - CI 产物为**未签名设备包**（`ios-verify` 工作流 Artifact，保留 30 天），
   下载后用个人免费 Apple ID 经 AltStore / SideStore 重签安装；
 - 免费账号签名有效期 7 天、同时最多 3 个应用，需用电脑端
   AltServer / SideServer 定期刷新；
-- 当前进度：设备版未签名 IPA 已由 CI 产出（见上方 Artifact 链接），
-  加密核心（Rust）独立编译验证已过，接入 App 与运行时功能开发中，
+- 当前进度：设备版未签名 IPA 与模拟器冒烟（启动到首页、进程稳定存活、
+  无崩溃）均通过，加密核心（Rust）交叉编译与黄金基准已过，
+  原生模块代码已写完并经编译验证，运行时功能验证进行中，
   详见 `openspec/changes/add-ios-support/`。
 
 ## 贡献代码

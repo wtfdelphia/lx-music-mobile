@@ -7,7 +7,7 @@
 - [ ] 1.3 UtilsModule iOS 骨架（`exitApp` 桩 + `getWindowSize`），`src/app.ts` 求值不再抛 TypeError（代码已写并经 CI 编译验证：`ios/LxMusicMobile/Modules/UtilsModule.{h,m}` 全 JS 面对齐；运行时待模拟器）
 - [ ] 1.4 `fs.ios.ts` 适配层（除 gzip 外全部方法），27 个导出无 undefined，`stat`/`readDir` 合成 `mimeType`/`name`/`canRead`（代码已写并经 Metro 打包验证：RNFS 适配 27 导出；gzip 占位待 6.1、`selectFile` 占位待 6.5；运行时待模拟器）
 - [ ] 1.5 字体入 bundle + `UIAppFonts`，首页图标无豆腐块（已挂载并经 CI 构建验证：`ios/LxMusicMobile/Fonts/icomoon.ttf` + `UIAppFonts`；图标渲染待模拟器）
-- [ ] 1.6 门槛验证：模拟器启动到首页，四个 Tab 可切换，无红屏（CI 冒烟已证启动到首页渲染且无红屏：screenshot 像素分析红色占比 0.00%，状态栏/卡片列表/底部栏结构完整；四 Tab 切换待手测或 UI 自动化）
+- [ ] 1.6 门槛验证：模拟器启动到首页，四个 Tab 可切换，无红屏（CI 冒烟已证：首页渲染、无红屏（红色像素占比 0.00%）、`simctl launch` PID + `kill -0` 判定进程存活 ≥120s 且空闲（CPU 累计 <1s）、宿主诊断目录无崩溃报告、`error.log` 空；run 32807821148 决定性取证；四 Tab 切换待手测或 UI 自动化）
 
 ## 2. Phase 1.0：验证基础设施
 
@@ -44,7 +44,7 @@
 
 - [ ] 6.1 gzip 走 libz `windowBits=31`，`.lxmc` 与 Android 双向导入成功（代码已写：`GzipModule.{h,m}` 契约自 fork Java 源码提取——`gzipString` 输出恒 base64、`unGzipString` 输入恒 base64；`.lxmc` 双向实测待 M）
 - [ ] 6.2 `toast.ios.tsx`，各处 toast 正常显示（代码已写：`src/utils/toast.ios.tsx` 经 RNN overlay 显示 + Toast 组件注册，`tools.ts` 改按平台引入；运行时待验证）
-- [ ] 6.3 深链（AppDelegate + Info.plist），`lxmusic://` 触发对应行为（代码已写：`CFBundleURLTypes` lxmusic scheme + AppDelegate `RCTLinkingManager` openURL/continueUserActivity；run 32802185448 冒烟探针：`simctl openurl` 送达无报错、App 存活判定改用宿主 `pgrep`（原 `simctl spawn launchctl` 因 CI 缺 uid 501 上下文误报），另发现首启协议弹窗可能阻塞深链监听注册（initDeeplink 在 isAgreePact 后才跑）——已加「不存在文件→错误弹窗」确定性探针与宿主侧统一日志/沙箱日志采集，待下轮证据判读）
+- [ ] 6.3 深链（AppDelegate + Info.plist），`lxmusic://` 触发对应行为（代码已写：`CFBundleURLTypes` lxmusic scheme + AppDelegate `RCTLinkingManager` openURL/continueUserActivity；冒烟探针已证 `simctl openurl` 送达无报错、进程存活；取证中发现：Runner 统一日志不可用（SpringBoard 对照查询仅 1 行）、文件导入探针须用 `file://` 前缀（`lxmusic://` 只进 handleLinkAction）、probe 后出现未归因对话框（疑似 cheatTip/版本弹窗，与 AsyncStorage 仅写入 `@setting_v1` 互证首启状态）——已改为双探针分拍截图 + AsyncStorage 键值直读，待下轮判读）
 - [ ] 6.4 `CFBundleDocumentTypes`，从"文件"App 打开 `.lxmc` 触发导入（代码已写：lxmc/js/audio 三类 DocumentTypes + lxmc UTI 导出声明 + iTunes 文件共享 + ATS 放行 http；运行时待验证）
 - [ ] 6.5 ChoosePath iOS 化（DocumentPicker），能选文件并导入歌单（代码已写：UtilsModule `selectFile` UIDocumentPicker 拷贝进沙箱、`fs.ios.ts` 接入、存储权限恒真、Header 隐藏存储卷切换、FileType 补 isFile/lastModified；运行时待验证）
 - [ ] 6.6 通知权限 / 屏幕常亮 / 分享 / 设备名 / WiFi IP 逐项手测
