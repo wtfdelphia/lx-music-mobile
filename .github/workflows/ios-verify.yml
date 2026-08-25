@@ -224,7 +224,9 @@ jobs:
             pgrep -l LxMusicMobile || echo "PGREP_NO_MATCH"; } | tee proc-preprobe.txt
           xcrun simctl openurl "$UDID" "lxmusic://player/pause" || echo "OPENURL_FAILED_PAUSE"
           sleep 8
-          xcrun simctl openurl "$UDID" "lxmusic:///tmp/lx-ci-probe.lxmc" || echo "OPENURL_FAILED_FILE"
+          xcrun simctl io "$UDID" screenshot deeplink-after-pause.png || true
+          # 文件导入走 file:// 分支（runLinkAction 对非 lxmusic:// 才进 handleFileAction）
+          xcrun simctl openurl "$UDID" "file:///tmp/lx-ci-probe.lxmc" || echo "OPENURL_FAILED_FILE"
           sleep 12
           xcrun simctl io "$UDID" screenshot deeplink.png || true
           { echo '--- process check post-probe ---'
@@ -255,6 +257,16 @@ jobs:
               [ -f "$p" ] || continue
               { echo; echo "== $p =="; plutil -p "$p"; } >> sandbox-logs.txt 2>&1 || true
             done
+            # AsyncStorage 键值直读：判定 isAgreePact / cheatTip 等关键状态
+            AS_DIR="$CONTAINER/Library/Application Support/cn.toside.music.mobile/RCTAsyncLocalStorage_V1"
+            if [ -d "$AS_DIR" ]; then
+              { echo; echo '== asyncstorage manifest =='; cat "$AS_DIR/manifest.json"; } >> sandbox-logs.txt 2>&1 || true
+              for f in "$AS_DIR"/*; do
+                [ -f "$f" ] || continue
+                case "$f" in *manifest.json) continue;; esac
+                { echo; echo "== $f =="; head -c 4000 "$f"; echo; } >> sandbox-logs.txt 2>&1 || true
+              done
+            fi
           fi
           echo '--- unified log 关键行 ---'
           grep -E 'starting app|Preload|deeplink|lx_|Exception|crash' unified.log | tail -n 100 || true
@@ -269,6 +281,7 @@ jobs:
             ios/build/Build/Products/Release-iphonesimulator/proc-*.txt
             ios/build/Build/Products/Release-iphonesimulator/screenshot-early.png
             ios/build/Build/Products/Release-iphonesimulator/screenshot.png
+            ios/build/Build/Products/Release-iphonesimulator/deeplink-after-pause.png
             ios/build/Build/Products/Release-iphonesimulator/deeplink.png
             ios/build/Build/Products/Release-iphonesimulator/unified.log
             ios/build/Build/Products/Release-iphonesimulator/sandbox-logs.txt
