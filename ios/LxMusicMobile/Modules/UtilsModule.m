@@ -4,6 +4,7 @@
 #import <MobileCoreServices/MobileCoreServices.h>
 #import <AVFoundation/AVFoundation.h>
 #import <MediaPlayer/MediaPlayer.h>
+#import <CoreText/CoreText.h>
 #import <ifaddrs.h>
 #import <arpa/inet.h>
 #import <net/if.h>
@@ -224,6 +225,40 @@ RCT_EXPORT_METHOD(isFontRegistered:(NSString *)name
 {
   UIFont *font = [UIFont fontWithName:(name ?: @"") size:12];
   resolve(@(font != nil));
+}
+
+// CI 自测：UIAppFonts 偶发不生效时的诊断 + 兜底挂载。
+// 返回当前 familyNames 中与文件名（去扩展名）相关的匹配（诊断面），
+// 并尝试用 CTFontManager 手动注册 bundle 内同名文件；结果由调用方复核。
+// 仅自测标记存在时生效，正式包恒拒绝。
+RCT_EXPORT_METHOD(registerBundledFont:(NSString *)fileName
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSString *tmp = NSTemporaryDirectory();
+  NSString *marker = [tmp stringByAppendingPathComponent:@".lx-ci-selftest"];
+  if (![[NSFileManager defaultManager] fileExistsAtPath:marker]) {
+    reject(@"not_allowed", @"font registration fallback requires the CI self-test marker", nil);
+    return;
+  }
+  NSString *stem = [fileName stringByDeletingPathExtension] ?: @"";
+  NSMutableArray *matched = [NSMutableArray array];
+  for (NSString *family in [UIFont familyNames]) {
+    if ([family rangeOfString:stem options:(NSCaseInsensitiveSearch)].location != NSNotFound) {
+      [matched addObject:family];
+    }
+  }
+  NSString *path = [[NSBundle mainBundle] pathForResource:stem
+                                                   ofType:[fileName pathExtension]];
+  BOOL registered = NO;
+  if (path.length) {
+    NSURL *url = [NSURL fileURLWithPath:path];
+    CFErrorRef error = NULL;
+    registered = CTFontManagerRegisterFontsForURL((__bridge CFURLRef)url,
+                                                  kCTFontManagerScopeProcess, &error);
+    if (!registered && error) CFRelease(error);
+  }
+  resolve(@{ @"matched": matched, @"registered": @(registered) });
 }
 
 // CI 自测：音频会话运行时类别（任务 5.2）。

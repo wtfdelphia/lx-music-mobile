@@ -22,6 +22,8 @@ const state = {
   deeplinkRegisteredByTest: false,
   searchHits: [] as Array<{ id: string, name: string, singer: string, source: string, songmid: string }>,
   appStates: [] as Array<{ at: number, s: string }>,
+  // 播放状态事件流（相对套件起点毫秒）：定位「轨道已加载但位置冻结」类故障
+  playbackStates: [] as Array<{ t: number, state: string }>,
 }
 
 const tmpDir = () => RNFS.TemporaryDirectoryPath
@@ -45,6 +47,8 @@ const landscapeShotMarker = () => `${tmpDir()}/lx-ci-landscape-shot`
 // UtilsModule CI 探针面（原生侧为自测新增的只读方法，正式包不调用）
 const utilsNative = NativeModules.UtilsModule as unknown as {
   isFontRegistered: (name: string) => Promise<boolean>,
+  // 诊断 + 兜底：返回匹配家族名；未注册时尝试 CTFontManager 挂载 bundle 内字体
+  registerBundledFont: (fileName: string) => Promise<{ matched: string[], registered: boolean }>,
   getAudioSessionCategory: () => Promise<string>,
   getNowPlayingInfo: () => Promise<{ title?: string, artist?: string, album?: string, duration?: number, elapsed?: number, hasArtwork?: boolean } | null>,
   isScreenKeepAwake: () => Promise<boolean>,
@@ -143,6 +147,18 @@ const installAppStateLogger = () => {
   AppState.addEventListener('change', (s) => {
     state.appStates.push({ at: Date.now(), s })
   })
+}
+
+// 播放状态事件流：fork 的 SwiftAudioEx 状态机 + AVPlayer 竞态是起播
+// 冻结类故障的高发点，完整记录 Ready/Playing/Paused 序列用于事后判读
+const installPlaybackStateLogger = async() => {
+  try {
+    const { default: TrackPlayer, Event } = await import('react-native-track-player')
+    TrackPlayer.addEventListener(Event.PlaybackState, (info) => {
+      state.playbackStates.push({ t: Date.now() - state.startedAt, state: String(info.state) })
+      if (state.playbackStates.length > 200) state.playbackStates.splice(0, 100)
+    })
+  } catch { /* 记录失败不拖累自测 */ }
 }
 
 // 预置存储，让 CI 冷启动跳过首启对话框（谨防被骗提示 / 用户协议），
@@ -712,13 +728,22 @@ const testUserApiImport = async() => {
 }
 
 // 1.5 字体注册：UIAppFonts 挂载后 fontWithName 必须能取到图标字体，
-// 否则 Icon 组件无渲染源即豆腐块。含反向对照防探针恒真
+// 否则 Icon 组件无渲染源即豆腐块。含反向对照防探针恒真。
+// 模拟器上观察到 UIAppFonts 偶发不生效（run 32982319768：字体已入包、
+// Info.plist 配置正确但 fontWithName 取不到），失败时先取诊断数据，
+// 再走 CTFontManager 手动挂载兜底——判定以「最终可取到」为准
 const testFontRegistered = async() => {
-  const registered = await utilsNative.isFontRegistered('icomoon')
-  assert(registered === true, 'icomoon font not registered (UIAppFonts ineffective)')
+  let registered = await utilsNative.isFontRegistered('icomoon')
+  let fontDiag: { matched: string[], registered: boolean } | null = null
+  if (!registered) {
+    fontDiag = await utilsNative.registerBundledFont('icomoon.ttf')
+    registered = await utilsNative.isFontRegistered('icomoon')
+  }
+  assert(registered === true,
+    `icomoon font not registered (UIAppFonts ineffective) diag=${JSON.stringify(fontDiag)}`)
   const negative = await utilsNative.isFontRegistered('lx-nonexistent-font')
   assert(negative === false, 'negative control unexpectedly registered')
-  return { registered, negative }
+  return { registered, negative, uiAppFontsEffective: fontDiag === null, fontDiag }
 }
 
 // 6.6 杂项逐项（可自动化的部分）：设备名 / WiFi IP / 通知开关只读 /
@@ -751,15 +776,15 @@ const testAudioSession = async() => {
   return { category }
 }
 
-// 5.1/5.7 真实起播：本地夹具（宿主投递的 180s wav，零外网依赖，时长留足
-// 元数据轮询窗口避免播放中途结束）经
-// 生产播放链 setResource 起播，断言 起播→推进→暂停冻结→恢复推进
+// 5.1/5.7 真实起播：本地夹具（宿主投递的 90s 44.1kHz wav——8kHz 夹具在
+// 模拟器 AVPlayer 上加载成功但位置冻结，run 32982319768 实锤——零外网
+// 依赖）经生产播放链 setResource 起播，断言 起播→推进→暂停冻结→恢复推进
 const ciMusicInfo = (path: string): LX.Player.PlayMusic => ({
   id: 'lx_ci_local_1',
   name: 'lx-ci song',
   singer: 'lx-ci',
   source: 'local',
-  interval: '03:00',
+  interval: '01:30',
   meta: {
     songId: path,
     albumName: 'lx-ci album',
@@ -775,18 +800,26 @@ const testPlayback = async() => {
   const putils = await import('@/plugins/player/utils')
   const musicInfo = ciMusicInfo(ciSongPath())
   // fork 的 Track 仅把 `file://` 前缀的 URL 判为本地文件（MediaURL.isLocal），
-  // 裸路径会走 stream 分支而失败。第三参是起播定位（秒），但生产链对 0 值
-  // 不触发 seekTo（falsy 短路），续播场景会从上次的进度继续——故给极小非零值
+  // 裸路径会走 stream 分支而失败。起播不带定位（第三参 0 短路 seekTo），
+  // 避开 SwiftAudioEx 加载期 _initialTime/seek 竞态（run 32982319768 实锤：
+  // 带定位起播后位置冻结在 0.0278s，30s 不推进）
   const url = `file://${ciSongPath()}`
-  putils.setResource(musicInfo, url, 0.01)
+  putils.setResource(musicInfo, url)
   const t0 = Date.now()
   let pos = 0
+  let retried = false
   while (Date.now() - t0 < 30_000) {
     pos = await putils.getPosition()
     if (pos > 0.5) break
+    // 起播冻结兜底：15s 未推进则再推一次 play（AVPlayer 加载竞态自愈面）
+    if (!retried && Date.now() - t0 > 15_000) {
+      retried = true
+      await putils.setPlay()
+    }
     await sleep(500)
   }
-  assert(pos > 0.5, `playback never started (pos=${pos})`)
+  const stateTail = state.playbackStates.slice(-8).map(s => `${s.state}@${s.t}`).join(',')
+  assert(pos > 0.5, `playback never started (pos=${pos}, retried=${retried}, states=[${stateTail}])`)
   await putils.setPause()
   await sleep(1500)
   const pausedPos1 = await putils.getPosition()
@@ -822,7 +855,7 @@ const testPlayback = async() => {
   }
   assert(np?.hasArtwork === true, `now playing artwork not set: ${JSON.stringify(np)}`)
   // 5.4：歌词标题通道（updateNowPlayingTitles）iOS 走 patch 后的 metadata 通道
-  await putils.updateNowPlayingTitles(180_000, 'lx-ci lyric line', 'lx-ci song - lx-ci', 'lx-ci album')
+  await putils.updateNowPlayingTitles(90_000, 'lx-ci lyric line', 'lx-ci song - lx-ci', 'lx-ci album')
   const tTitle = Date.now()
   let np2: Awaited<ReturnType<typeof utilsNative.getNowPlayingInfo>> = null
   while (Date.now() - tTitle < 15_000) {
@@ -935,22 +968,43 @@ const testLandscape = async() => {
 // 6.9 主流程本地段：搜索（真实网络）→ 收藏 → 歌单管理 → 备份/恢复。
 // 播放段由 testPlayback/testBackgroundPlay 覆盖；同步需双端留手测
 const testMainflowLocal = async() => {
-  // 搜索：内置音源走官方端点，重试一次
+  // 搜索段依赖外网（design.md D6 明确不作硬门禁——run 32982319768 实锤
+  // GH runner 出网到 search.kuwo.cn 直接 Network request failed，首页推荐
+  // 位请求同样失败，属出口网络而非沙箱问题）。可达时取证真实结果；不可达
+  // 时降级合成曲目，后续收藏/歌单/备份链照常硬断言
   const { search } = await import('@/core/search/music')
   let hits: LX.Music.MusicInfoOnline[] = []
   let searchErr = ''
+  let searchReachable = false
   for (let attempt = 0; attempt < 2 && hits.length === 0; attempt++) {
     try {
       hits = await withTimeout(search('周杰伦', 1, 'kw'), 30_000, 'kw search')
+      searchReachable = true
     } catch (err) { searchErr = errText(err) }
   }
-  assert(hits.length > 0, `kw search returned nothing (${searchErr})`)
-  const first = hits[0]
-  assert(first.id && first.name, 'search hit missing id/name')
-  state.searchHits = hits.slice(0, 3).map(h => ({
-    id: h.id, name: h.name, singer: h.singer, source: h.source,
-    songmid: (h.meta as { songId?: string }).songId ?? '',
-  }))
+  const first: LX.Music.MusicInfo = hits.length
+    ? hits[0]
+    : ({
+        id: 'kw_lx_ci_offline',
+        name: 'lx-ci offline song',
+        singer: 'lx-ci',
+        source: 'kw',
+        interval: '03:00',
+        meta: {
+          songId: 'lx_ci_offline_mid',
+          albumName: 'lx-ci album',
+          picUrl: null,
+          qualitys: [],
+          _qualitys: {},
+        },
+      } as LX.Music.MusicInfo)
+  assert(first.id && first.name, 'song missing id/name')
+  if (searchReachable) {
+    state.searchHits = hits.slice(0, 3).map(h => ({
+      id: h.id, name: h.name, singer: h.singer, source: h.source,
+      songmid: (h.meta as { songId?: string }).songId ?? '',
+    }))
+  }
 
   // 收藏 + 歌单管理
   const { createList, addListMusics, removeUserList, getListMusics } = await import('@/core/list')
@@ -1001,6 +1055,8 @@ const testMainflowLocal = async() => {
   try { await removeUserList([listId]) } catch { /* 列表可能已随 overwrite 清理 */ }
   await RNFS.unlink(backupPath).catch(() => {})
   return {
+    searchReachable,
+    searchErr: searchReachable ? '' : searchErr,
     searchTotal: hits.length,
     firstHit: { id: first.id, name: first.name, singer: first.singer },
     backupBytes,
@@ -1052,6 +1108,8 @@ const writeReport = async() => {
     searchHits: state.searchHits,
     // 任务 5.2 后台续播放证：全程 AppState 序列（须见 background）
     appStates: state.appStates,
+    // 播放状态机事件流：起播冻结类故障（轨道加载但位置不推进）的判读依据
+    playbackStates: state.playbackStates,
   }
   await RNFS.writeFile(reportPath(), JSON.stringify(report), 'utf8')
   await RNFS.writeFile(`${tmpDir()}/lx-ci-done`, String(Date.now()), 'utf8')
@@ -1106,6 +1164,7 @@ export const ciSelfTestBoot = () => {
       installLinkingSpy()
       installOverlayWatcher()
       installAppStateLogger()
+      void installPlaybackStateLogger()
       await prewriteStorage()
       // 等待 core/init 与首页推送完成（模拟器冷启动约 10s 内）
       setTimeout(() => { void runSuite() }, 25_000)

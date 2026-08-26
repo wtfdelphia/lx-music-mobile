@@ -281,7 +281,10 @@ jobs:
           bg_done="$CONTAINER/tmp/lx-ci-bg-done"
           { echo "--- background phase ---"
             ok=0
-            for i in $(seq 1 90); do [ -f "$bg_ready" ] && { ok=1; break; }; sleep 2; done
+            # bg-ready 在播放恢复后数秒内写出；60s 未出现即永远不会出现。
+            # 轮询窗口必须短于应用侧横屏用例的等相位窗口（180s），
+            # 否则后台用例提前失败时横屏相位失步（run 32982319768 实证）
+            for i in $(seq 1 30); do [ -f "$bg_ready" ] && { ok=1; break; }; sleep 2; done
             echo "bg-ready marker: $([ "$ok" = 1 ] && echo READY || echo TIMEOUT)"
             [ "$ok" = 1 ] || exit 0
             # 把前台切到系统设置，应用进入后台（音频后台模式应续播）
