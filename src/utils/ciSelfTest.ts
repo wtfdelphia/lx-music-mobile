@@ -53,7 +53,7 @@ const utilsNative = NativeModules.UtilsModule as unknown as {
   getNowPlayingInfo: () => Promise<{ title?: string, artist?: string, album?: string, duration?: number, elapsed?: number, hasArtwork?: boolean } | null>,
   isScreenKeepAwake: () => Promise<boolean>,
   // 横屏自测驱动：宿主无可靠无头旋转通道，改由应用内强制旋转（仅自测标记存在时生效）
-  setDeviceOrientation: (orientation: string) => Promise<void>,
+  setDeviceOrientation: (orientation: string) => Promise<{ ok: boolean, applied: string[], error: string | null }>,
 }
 
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
@@ -181,6 +181,9 @@ const runTest = async(id: string, fn: () => Promise<unknown>, timeoutMs = 120_00
   } catch (err) {
     state.results.push({ id, ok: false, ms: Date.now() - t0, detail: errText(err) })
   }
+  // 增量落盘：用例级持久化，进程中途崩溃也不丢已完成结果（部分报告
+  // 无 lx-ci-done 标记，宿主仍判失败但能读到崩溃前全部取证）
+  try { await writeReport(false) } catch { /* 增量写失败不影响套件 */ }
 }
 
 // 1.3 UtilsModule
@@ -873,14 +876,29 @@ const testPlayback = async() => {
 // 设置），应用内采样「后台期间位置持续推进」，随后宿主唤回前台
 const testBackgroundPlay = async() => {
   const putils = await import('@/plugins/player/utils')
-  // 承接 playback 用例暂停的同一首夹具（180s 夹具，余量充足）直接恢复：
-  // 用同 id 重新 setResource 会走「已存在曲目」分支先 pause 再 seek，起播断言必挂
+  // 承接 playback 用例暂停的同一首夹具直接恢复。注意：夹具实际 90s
+  // （8kHz 时代注释误写 180s），中间用例（tab_switch 等）可能耗时数分钟，
+  // 夹具早已播完——对播完的轨道 setPlay 位置不推进（run 32995785233：
+  // bg-ready TIMEOUT）。探测不推进则回卷到开头续播
   await putils.setPlay()
-  // 承接的是已暂停位置，`pos > 1` 判不出恢复——改断言恢复后位置推进
+  // 承接的是已暂停位置，`pos > 1` 判不出恢复——断言恢复后位置推进
   const posBefore = await putils.getPosition()
   await sleep(2500)
-  const posAfter = await putils.getPosition()
-  assert(posAfter > posBefore + 0.5, `resume did not advance position (${posBefore} -> ${posAfter})`)
+  let posAfter = await putils.getPosition()
+  let restartSeeked = false
+  if (!(posAfter > posBefore + 0.5)) {
+    restartSeeked = true
+    await putils.setCurrentTime(0)
+    await putils.setPlay()
+    const tRestart = Date.now()
+    while (Date.now() - tRestart < 30_000) {
+      posAfter = await putils.getPosition()
+      if (posAfter > 0.5) break
+      await sleep(500)
+    }
+  }
+  assert(restartSeeked ? posAfter > 0.5 : posAfter > posBefore + 0.5,
+    `resume did not advance position (before=${posBefore} after=${posAfter} restartSeeked=${restartSeeked})`)
   await RNFS.writeFile(bgReadyMarker(), String(Date.now()), 'utf8')
   // 等待进入后台（宿主切前台到系统设置）
   const tBg = Date.now()
@@ -928,7 +946,7 @@ const testLandscape = async() => {
     await sleep(2000)
   }
   assert(phaseSeen, 'host never entered rotate phase')
-  await utilsNative.setDeviceOrientation('landscape')
+  const rotL = await utilsNative.setDeviceOrientation('landscape')
   const tRot = Date.now()
   let landscapeSize = before
   while (Date.now() - tRot < 60_000) {
@@ -937,7 +955,7 @@ const testLandscape = async() => {
     await sleep(500)
   }
   assert(landscapeSize.width > landscapeSize.height,
-    `window size did not flip to landscape (${landscapeSize.width}x${landscapeSize.height})`)
+    `window size did not flip to landscape (${landscapeSize.width}x${landscapeSize.height}) rot=${JSON.stringify(rotL)}`)
   assert(isHorizontalMode(landscapeSize.width, landscapeSize.height), 'isHorizontalMode false in landscape')
   // 请宿主截图（宿主截图后删除 shot 标记）
   await RNFS.writeFile(landscapeShotMarker(), `${landscapeSize.width}x${landscapeSize.height}`, 'utf8')
@@ -949,7 +967,7 @@ const testLandscape = async() => {
   }
   assert(shotConsumed, 'host consumed landscape-shot marker')
   // 复原竖屏
-  await utilsNative.setDeviceOrientation('portrait')
+  const rotP = await utilsNative.setDeviceOrientation('portrait')
   const tBack = Date.now()
   let restored = landscapeSize
   while (Date.now() - tBack < 60_000) {
@@ -958,7 +976,7 @@ const testLandscape = async() => {
     await sleep(500)
   }
   assert(restored.height > restored.width,
-    `window size did not restore to portrait (${restored.width}x${restored.height})`)
+    `window size did not restore to portrait (${restored.width}x${restored.height}) rot=${JSON.stringify(rotP)}`)
   await RNFS.unlink(rotatePhaseMarker()).catch(() => {})
   const newAlerts = state.alerts.slice(alertsBefore)
   assert(newAlerts.length === 0, `unexpected alerts during landscape: ${JSON.stringify(newAlerts)}`)
@@ -1090,11 +1108,15 @@ const collectEnv = async() => {
   }
 }
 
-const writeReport = async() => {
+// finished=false 时写「部分报告」：套件中途原生崩溃（run 32995785233：
+// 旋转通道崩进程，最终报告全丢）也能留下已完成用例的结果供判读。
+// `lx-ci-done` 标记仅在套件真正跑完时写，宿主以该标记判「套件完成」。
+const writeReport = async(finished = true) => {
   const env = await collectEnv()
   const report = {
     v: 1,
-    ok: state.results.every(r => r.ok),
+    ok: state.results.every(r => r.ok) && finished,
+    finished,
     startedAt: state.startedAt,
     finishedAt: Date.now(),
     durationMs: Date.now() - state.startedAt,
@@ -1112,7 +1134,7 @@ const writeReport = async() => {
     playbackStates: state.playbackStates,
   }
   await RNFS.writeFile(reportPath(), JSON.stringify(report), 'utf8')
-  await RNFS.writeFile(`${tmpDir()}/lx-ci-done`, String(Date.now()), 'utf8')
+  if (finished) await RNFS.writeFile(`${tmpDir()}/lx-ci-done`, String(Date.now()), 'utf8')
 }
 
 const runSuite = async() => {

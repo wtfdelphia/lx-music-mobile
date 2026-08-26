@@ -307,7 +307,10 @@ RCT_EXPORT_METHOD(isScreenKeepAwake:(RCTPromiseResolveBlock)resolve
 
 // CI 自测（任务 7.4 横屏）：强制旋转模拟器窗口。宿主侧无可靠的无头旋转
 // 通道（simctl 无 rotate 子命令，AppleScript 依赖 GUI 会话），改由应用内
-// 驱动：KVC 设置设备方向 + attemptRotation；iOS 16+ 追加场景几何请求。
+// 驱动：iOS 16+ 场景几何请求（requestGeometryUpdate）。
+// run 32995785233 实锤：KVC 写 UIDevice.orientation 在 iOS 16+ 模拟器上
+// 抛 NSUndefinedKeyException 直接崩进程（rotate 标记后 3s 崩溃）；
+// respondsToSelector 对 setValue:forKey: 恒真，形同虚设，已整段移除。
 // 双保险门控：仅当沙箱存在 .lx-ci-selftest 标记时生效，正式包恒拒绝。
 RCT_EXPORT_METHOD(setDeviceOrientation:(NSString *)name
                   resolver:(RCTPromiseResolveBlock)resolve
@@ -321,26 +324,34 @@ RCT_EXPORT_METHOD(setDeviceOrientation:(NSString *)name
   }
   BOOL landscape = [name isEqualToString:@"landscape"];
   dispatch_async(dispatch_get_main_queue(), ^{
-    UIDeviceOrientation target = landscape ? UIDeviceOrientationLandscapeLeft : UIDeviceOrientationPortrait;
-    // KVC 通道走运行时查找，避免在个别构建下触发 KVC 异常（仅模拟器自测场景）
-    UIDevice *device = [UIDevice currentDevice];
-    SEL setter = NSSelectorFromString(@"setValue:forKey:");
-    if ([device respondsToSelector:setter]) {
-      [device setValue:@(target) forKey:@"orientation"];
-    }
-    [UIViewController attemptRotationToDeviceOrientation];
-    if (@available(iOS 16.0, *)) {
-      UIInterfaceOrientationMask mask = landscape ? UIInterfaceOrientationMaskLandscape : UIInterfaceOrientationMaskPortrait;
-      UIWindowSceneGeometryPreferencesIOS *prefs =
-        [[UIWindowSceneGeometryPreferencesIOS alloc] initWithInterfaceOrientations:mask];
-      for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-        if ([scene isKindOfClass:[UIWindowScene class]] &&
-            scene.activationState == UISceneActivationStateForegroundActive) {
-          [(UIWindowScene *)scene requestGeometryUpdateWithPreferences:prefs errorHandler:nil];
+    // CI 专用代码：全程 @try/@catch，异常转诊断返回而非崩进程
+    NSString *error = nil;
+    NSMutableArray<NSString *> *applied = [NSMutableArray array];
+    @try {
+      [UIViewController attemptRotationToDeviceOrientation];
+      [applied addObject:@"attemptRotation"];
+      if (@available(iOS 16.0, *)) {
+        UIInterfaceOrientationMask mask = landscape ? UIInterfaceOrientationMaskLandscape : UIInterfaceOrientationMaskPortrait;
+        UIWindowSceneGeometryPreferencesIOS *prefs =
+          [[UIWindowSceneGeometryPreferencesIOS alloc] initWithInterfaceOrientations:mask];
+        NSUInteger scenes = 0;
+        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+          if ([scene isKindOfClass:[UIWindowScene class]] &&
+              scene.activationState == UISceneActivationStateForegroundActive) {
+            scenes++;
+            [(UIWindowScene *)scene requestGeometryUpdateWithPreferences:prefs errorHandler:^(NSError *geoError) {
+              NSLog(@"lx-ci: requestGeometryUpdate failed: %@", geoError);
+            }];
+          }
         }
+        [applied addObject:[NSString stringWithFormat:@"requestGeometryUpdate(scenes=%lu)", (unsigned long)scenes]];
+      } else {
+        error = @"iOS < 16: no headless rotation channel";
       }
+    } @catch (NSException *exception) {
+      error = [NSString stringWithFormat:@"%@: %@", exception.name, exception.reason];
     }
-    resolve(@(YES));
+    resolve(@{ @"ok": @(error == nil), @"applied": applied, @"error": error ?: (id)[NSNull null] });
   });
 }
 

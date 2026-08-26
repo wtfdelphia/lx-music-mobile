@@ -318,14 +318,36 @@ jobs:
         working-directory: ios/build/Build/Products/Release-iphonesimulator
         run: |
           REPORT="$CONTAINER/tmp/lx-ci-report.json"
-          ok=0
-          for i in $(seq 1 180); do [ -f "$REPORT" ] && { ok=1; break; }; sleep 5; done
-          echo "report ready: $ok"
-          [ -f "$REPORT" ] && cp "$REPORT" ci-report.json
+          DONE="$CONTAINER/tmp/lx-ci-done"
           APP_PID=$(cat app-pid.txt 2>/dev/null || true)
+          ok=0
+          # 等套件完成标记（应用每用例增量落盘部分报告，报告文件存在
+          # 不再是完成信号；lx-ci-done 仅在套件跑完时写）。应用进程
+          # 崩溃则提前退出轮询——部分报告 + 崩溃文件即完整取证面
+          for i in $(seq 1 288); do
+            [ -f "$DONE" ] && { ok=1; break; }
+            if [ -n "$APP_PID" ] && ! kill -0 "$APP_PID" 2>/dev/null; then
+              echo "app PID $APP_PID died at poll $i - breaking wait"
+              break
+            fi
+            sleep 5
+          done
+          echo "suite done marker: $ok"
+          [ -f "$REPORT" ] && cp "$REPORT" ci-report.json
           { echo '--- process check final ---'
             [ -n "$APP_PID" ] && { kill -0 "$APP_PID" 2>/dev/null && echo "PID_ALIVE" || echo "PID_DEAD"; }
             pgrep -l LxMusicMobile || echo "PGREP_NO_MATCH"; } | tee proc-final.txt
+          # 崩溃报告采集（run 32995785233 最大信息缺口）：.ips 全文进
+          # artifact，异常类型 + 崩溃线程栈摘要直接进日志
+          crash_count=0
+          for ips in ~/Library/Logs/DiagnosticReports/*LxMusicMobile*.ips; do
+            [ -f "$ips" ] || continue
+            crash_count=$((crash_count + 1))
+            cp "$ips" "crash-${crash_count}.ips"
+            echo "=== crash report $crash_count: $ips ==="
+            node "$GITHUB_WORKSPACE/test/crash-summary.js" "$ips" || true
+          done
+          echo "crash reports collected: $crash_count"
           ls -la ~/Library/Logs/DiagnosticReports/ 2>/dev/null | grep -i lxmusic || echo "NO_CRASH_REPORTS"
           node "$GITHUB_WORKSPACE/test/ci-report-assert.js" ci-report.json \
             tab-nav_search.png tab-nav_songlist.png tab-nav_love.png tab-nav_setting.png
@@ -348,6 +370,7 @@ jobs:
             ios/build/Build/Products/Release-iphonesimulator/ci-report.json
             ios/build/Build/Products/Release-iphonesimulator/openurl-probe.log
             ios/build/Build/Products/Release-iphonesimulator/openurl-native.log
+            ios/build/Build/Products/Release-iphonesimulator/crash-*.ips
           retention-days: 30
 
   android-regression:

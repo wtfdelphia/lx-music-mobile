@@ -18,6 +18,12 @@ if (!fs.existsSync(reportFile)) {
 const report = JSON.parse(fs.readFileSync(reportFile, 'utf8'))
 const failures = []
 
+// finished=false：应用增量写的部分报告（套件中途崩溃，如 run 32995785233
+// 旋转通道崩进程）。照常断言已有结果，并显式判套件未完成
+if (report.finished === false) {
+  failures.push('suite_incomplete: 部分报告（应用中途退出，未见 lx-ci-done 标记）')
+}
+
 console.log(`report v${report.v} ok=${report.ok} duration=${(report.durationMs / 1000).toFixed(1)}s`)
 for (const r of report.results) {
   console.log(`  [${r.ok ? 'PASS' : 'FAIL'}] ${r.id} (${r.ms}ms)`)
