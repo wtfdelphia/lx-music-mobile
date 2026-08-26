@@ -1,8 +1,10 @@
+import { NativeModules } from 'react-native'
 import TrackPlayer, { State } from 'react-native-track-player'
 import BackgroundTimer from 'react-native-background-timer'
 import { defaultUrl } from '@/config'
 // import { action as playerAction } from '@/store/modules/player'
 import settingState from '@/store/setting/state'
+import { isAndroid } from '@/utils/tools'
 
 
 const list: LX.Player.Track[] = []
@@ -13,6 +15,18 @@ const httpRxp = /^(https?:\/\/.+|\/.+)/
 export const state = {
   isPlaying: false,
   prevDuration: -1,
+}
+
+// fork（lyswhut/react-native-track-player）iOS 侧两处实锤缺陷（任务 5.3/5.4）：
+// 1. 桥接仅声明单参 updateNowPlayingMetadata:(metadata)，而 fork 的 JS wrapper
+//    恒传 (metadata, playing) 两参——RCTModuleMethod 按参数个数不匹配拦截，
+//    锁屏/通知栏元数据在 iOS 从未写入；
+// 2. 原生实现从不调用 resolve/reject，任何 await 都会永久挂起。
+// 因此 iOS 必须绕过 wrapper 直调原生单参接口，且不能等待 promise 落地。
+export const updateNowPlayingMetadataIOS = (metadata: object) => {
+  const native = NativeModules.TrackPlayerModule as
+    { updateNowPlayingMetadata?: (metadata: object) => Promise<void> } | undefined
+  native?.updateNowPlayingMetadata?.(metadata)?.catch(() => {})
 }
 
 const formatMusicInfo = (musicInfo: LX.Player.PlayMusic) => {
@@ -212,13 +226,15 @@ const updateMetaInfo = async(mInfo: LX.Player.MusicInfo, lyric?: string) => {
     name = lyric
     singer = `${mInfo.name}${mInfo.singer ? ` - ${mInfo.singer}` : ''}`
   }
-  await TrackPlayer.updateNowPlayingMetadata({
+  const metadata = {
     title: name,
     artist: singer,
     album: mInfo.album ?? undefined,
     artwork,
     duration: state.prevDuration || 0,
-  }, state.isPlaying)
+  }
+  if (isAndroid) await TrackPlayer.updateNowPlayingMetadata(metadata, state.isPlaying)
+  else updateNowPlayingMetadataIOS(metadata)
 }
 
 

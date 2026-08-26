@@ -1,6 +1,6 @@
 import TrackPlayer, { Capability, Event, RepeatMode, State } from 'react-native-track-player'
 import BackgroundTimer from 'react-native-background-timer'
-import { playMusic as handlePlayMusic } from './playList'
+import { playMusic as handlePlayMusic, updateNowPlayingMetadataIOS } from './playList'
 import { existsFile, moveFile, privateStorageDirectoryPath, temporaryDirectoryPath } from '@/utils/fs'
 import { isAndroid, toast } from '@/utils/tools'
 // import { PlayerMusicInfo } from '@/store/modules/player/playInfo'
@@ -170,7 +170,17 @@ export const setVolume = async(num: number) => TrackPlayer.setVolume(num)
 export const setPlaybackRate = async(num: number) => TrackPlayer.setRate(num)
 export const updateNowPlayingTitles = async(duration: number, title: string, artist: string, album: string) => {
   console.log('set playing titles', duration, title, artist, album)
-  return TrackPlayer.updateNowPlayingTitles(duration, title, artist, album)
+  // fork 的 iOS 侧未实现 updateNowPlayingTitles（Android 独有，任务 5.4 实锤），
+  // iOS 改走已实现的单参 metadata 通道（绕过 fork wrapper 的两参转发与
+  // 永不 resolve 的原生实现，见 playList.ts 的 updateNowPlayingMetadataIOS），
+  // 歌名/歌手/专辑/时长同样进锁屏 Now Playing 面板。
+  if (isAndroid) return TrackPlayer.updateNowPlayingTitles(duration, title, artist, album)
+  updateNowPlayingMetadataIOS({
+    title,
+    artist,
+    album,
+    duration: duration / 1000,
+  })
 }
 
 export const resetPlay = async() => Promise.all([setPause(), setCurrentTime(0)])
