@@ -219,12 +219,15 @@ RCT_EXPORT_METHOD(getWindowSize:(RCTPromiseResolveBlock)resolve
 
 // CI 自测：字体注册检查（任务 1.5 豆腐块的根因判据）。
 // UIAppFonts 挂载失败时 fontWithName 返回 nil，图标字形无渲染源。
+// 注意：.m 文件里 `@(font != nil)` 的比较结果是 int，桥接转为 JS 数字
+// 1/0 而非布尔（run 33012088667：JS 侧 === true 误判未注册，字体其实
+// 已挂载），必须显式三元到 BOOL
 RCT_EXPORT_METHOD(isFontRegistered:(NSString *)name
                   resolver:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 {
   UIFont *font = [UIFont fontWithName:(name ?: @"") size:12];
-  resolve(@(font != nil));
+  resolve(@(font != nil ? YES : NO));
 }
 
 // CI 自测：UIAppFonts 偶发不生效时的诊断 + 兜底挂载。
@@ -270,6 +273,86 @@ RCT_EXPORT_METHOD(getAudioSessionCategory:(RCTPromiseResolveBlock)resolve
   resolve([AVAudioSession sharedInstance].category);
 }
 
+// CI 自测（播放位置冻结判别）：裸 AVPlayer A/B 探针。
+// run 32982319768/33012088667 实锤：两轮不同采样率夹具位置都冻结在
+// ~0.027s（AVPlayer 报 playing 但时钟不走），疑似无头 runner 无音频
+// 输出设备 → 媒体时钟停摆。本探针脱离 track-player 栈直接采样裸
+// AVPlayer 位置：A 阶段复刻应用配置（automaticallyWaits=true），
+// B 阶段关等待。若两阶段均不走 → 环境约束（门禁软化并带证据）；
+// 若裸播放器走而应用栈不走 → 栈配置问题。附带会话路由诊断。
+RCT_EXPORT_METHOD(audioClockProbe:(NSString *)path
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSString *tmp = NSTemporaryDirectory();
+  NSString *marker = [tmp stringByAppendingPathComponent:@".lx-ci-selftest"];
+  if (![[NSFileManager defaultManager] fileExistsAtPath:marker]) {
+    reject(@"not_allowed", @"audio clock probe requires the CI self-test marker", nil);
+    return;
+  }
+  NSURL *fileURL = [NSURL URLWithString:path];
+  if (fileURL == nil) {
+    fileURL = [NSURL fileURLWithPath:(path ?: @"")];
+  }
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    // 会话诊断：路由/延迟/缓冲是「无输出设备」的直接读面
+    AVAudioSession *session = [AVAudioSession sharedInstance];
+    NSMutableArray *outputs = [NSMutableArray array];
+    for (AVAudioSessionPortDescription *port in session.currentRoute.outputs) {
+      [outputs addObject:@{ @"type": port.portType ?: @"?", @"name": port.portName ?: @"?" }];
+    }
+    NSDictionary *sessionInfo = @{
+      @"category": session.category ?: @"?",
+      @"mode": session.mode ?: @"?",
+      @"outputLatency": @(session.outputLatency),
+      @"ioBufferDuration": @(session.IOBufferDuration),
+      @"sampleRate": @(session.sampleRate),
+      @"outputs": outputs,
+    };
+
+    NSMutableArray *phases = [NSMutableArray array];
+    BOOL clockAdvances = NO;
+    NSString *probeError = nil;
+    @try {
+      for (int phase = 0; phase < 2; phase++) {
+        BOOL waits = (phase == 0);
+        AVURLAsset *asset = [AVURLAsset assetWithURL:fileURL];
+        AVPlayerItem *item = [AVPlayerItem playerItemWithAsset:asset];
+        AVPlayer *player = [AVPlayer playerWithPlayerItem:item];
+        player.automaticallyWaitsToMinimizeStalling = waits;
+        [player play];
+        usleep(300 * 1000);
+        NSMutableArray *samples = [NSMutableArray array];
+        for (int i = 0; i < 8; i++) {
+          double seconds = player.currentTime.seconds;
+          [samples addObject:@(isnan(seconds) ? 0.0 : seconds)];
+          usleep(400 * 1000);
+        }
+        [player pause];
+        double first = [samples.firstObject doubleValue];
+        double last = [samples.lastObject doubleValue];
+        double advance = last - first;
+        if (advance > 1.0) clockAdvances = YES;
+        [phases addObject:@{
+          @"waits": @(waits ? YES : NO),
+          @"samples": samples,
+          @"advance": @(advance),
+          @"timeControlStatus": @(player.timeControlStatus),
+        }];
+        player = nil;
+      }
+    } @catch (NSException *exception) {
+      probeError = [NSString stringWithFormat:@"%@: %@", exception.name, exception.reason];
+    }
+    NSMutableDictionary *out = [NSMutableDictionary dictionary];
+    out[@"session"] = sessionInfo;
+    out[@"phases"] = phases;
+    out[@"clockAdvances"] = @(clockAdvances ? YES : NO);
+    out[@"error"] = probeError ?: (id)[NSNull null];
+    resolve(out);
+  });
+}
+
 // CI 自测：锁屏/控制中心 Now Playing 面板内容（任务 5.3/5.4）。
 // 返回 MPNowPlayingInfoCenter 当前信息的可读子集；无内容时 resolve(null)。
 RCT_EXPORT_METHOD(getNowPlayingInfo:(RCTPromiseResolveBlock)resolve
@@ -311,6 +394,9 @@ RCT_EXPORT_METHOD(isScreenKeepAwake:(RCTPromiseResolveBlock)resolve
 // run 32995785233 实锤：KVC 写 UIDevice.orientation 在 iOS 16+ 模拟器上
 // 抛 NSUndefinedKeyException 直接崩进程（rotate 标记后 3s 崩溃）；
 // respondsToSelector 对 setValue:forKey: 恒真，形同虚设，已整段移除。
+// run 33012088667 实锤：无头模拟器上窗口场景处于 ForegroundInactive，
+// ForegroundActive 门控把场景全部滤掉（scenes=0）；且本应用为 legacy
+// 生命周期（无 scene manifest），场景须经 UIWindow.windowScene 兜底发现。
 // 双保险门控：仅当沙箱存在 .lx-ci-selftest 标记时生效，正式包恒拒绝。
 RCT_EXPORT_METHOD(setDeviceOrientation:(NSString *)name
                   resolver:(RCTPromiseResolveBlock)resolve
@@ -327,31 +413,64 @@ RCT_EXPORT_METHOD(setDeviceOrientation:(NSString *)name
     // CI 专用代码：全程 @try/@catch，异常转诊断返回而非崩进程
     NSString *error = nil;
     NSMutableArray<NSString *> *applied = [NSMutableArray array];
+    NSMutableArray<UIWindowScene *> *scenesFound = [NSMutableArray array];
+    NSMutableArray<NSString *> *sceneStates = [NSMutableArray array];
+    NSMutableArray<NSString *> *geoErrors = [NSMutableArray array];
     @try {
+      for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if ([scene isKindOfClass:[UIWindowScene class]]) [scenesFound addObject:(UIWindowScene *)scene];
+      }
+      // legacy 生命周期应用 connectedScenes 可能为空，从窗口反查场景
+      if (scenesFound.count == 0) {
+        for (UIWindow *window in [UIApplication sharedApplication].windows) {
+          if (window.windowScene != nil && ![scenesFound containsObject:window.windowScene]) {
+            [scenesFound addObject:window.windowScene];
+          }
+        }
+      }
+      for (UIWindowScene *scene in scenesFound) {
+        NSString *stateName = scene.activationState == UISceneActivationStateForegroundActive ? @"active"
+          : scene.activationState == UISceneActivationStateForegroundInactive ? @"inactive"
+          : scene.activationState == UISceneActivationStateBackground ? @"background" : @"unattached";
+        [sceneStates addObject:[NSString stringWithFormat:@"%@(%@)", NSStringFromClass([scene class]), stateName]];
+      }
       [UIViewController attemptRotationToDeviceOrientation];
       [applied addObject:@"attemptRotation"];
       if (@available(iOS 16.0, *)) {
         UIInterfaceOrientationMask mask = landscape ? UIInterfaceOrientationMaskLandscape : UIInterfaceOrientationMaskPortrait;
         UIWindowSceneGeometryPreferencesIOS *prefs =
           [[UIWindowSceneGeometryPreferencesIOS alloc] initWithInterfaceOrientations:mask];
-        NSUInteger scenes = 0;
-        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-          if ([scene isKindOfClass:[UIWindowScene class]] &&
-              scene.activationState == UISceneActivationStateForegroundActive) {
-            scenes++;
-            [(UIWindowScene *)scene requestGeometryUpdateWithPreferences:prefs errorHandler:^(NSError *geoError) {
-              NSLog(@"lx-ci: requestGeometryUpdate failed: %@", geoError);
-            }];
-          }
+        for (UIWindowScene *scene in scenesFound) {
+          [scene requestGeometryUpdateWithPreferences:prefs errorHandler:^(NSError *geoError) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+              [geoErrors addObject:geoError.localizedDescription ?: @"unknown"];
+            });
+          }];
         }
-        [applied addObject:[NSString stringWithFormat:@"requestGeometryUpdate(scenes=%lu)", (unsigned long)scenes]];
+        [applied addObject:[NSString stringWithFormat:@"requestGeometryUpdate(scenes=%lu)", (unsigned long)scenesFound.count]];
       } else {
         error = @"iOS < 16: no headless rotation channel";
       }
     } @catch (NSException *exception) {
       error = [NSString stringWithFormat:@"%@: %@", exception.name, exception.reason];
     }
-    resolve(@{ @"ok": @(error == nil), @"applied": applied, @"error": error ?: (id)[NSNull null] });
+    // 延迟 2s resolve：带回实际 interfaceOrientation 与异步 geoErrors，
+    // JS 侧断言文本即可判别「请求未送达 / 送达但场景拒绝 / 已生效」
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      NSString *orientNow = nil;
+      UIWindowScene *scene0 = scenesFound.firstObject;
+      if (scene0 != nil) {
+        orientNow = UIInterfaceOrientationIsLandscape(scene0.interfaceOrientation) ? @"landscape" : @"portrait";
+      }
+      resolve(@{
+        @"ok": @(error == nil),
+        @"applied": applied,
+        @"error": error ?: (id)[NSNull null],
+        @"sceneStates": sceneStates,
+        @"geoErrors": geoErrors,
+        @"interfaceOrientationAfter2s": orientNow ?: (id)[NSNull null],
+      });
+    });
   });
 }
 

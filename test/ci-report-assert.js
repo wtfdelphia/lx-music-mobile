@@ -94,6 +94,16 @@ if (Array.isArray(report.appStates) && report.appStates.length) {
   console.log(`\napp state trail (task 5.2): ${seq}`)
 }
 
+// 播放位置冻结判别：裸 AVPlayer 音频时钟探针（环境约束 / 播放栈问题）
+if (report.audioClockProbe) {
+  const p = report.audioClockProbe
+  console.log(`\naudio clock probe: clockAdvances=${p.clockAdvances} error=${p.error ?? 'null'}`)
+  console.log(`  session: ${p.session.category}/${p.session.mode} latency=${p.session.outputLatency}s outputs=${JSON.stringify(p.session.outputs)}`)
+  for (const ph of p.phases) {
+    console.log(`  phase waits=${ph.waits} advance=${ph.advance.toFixed(3)}s timeControl=${ph.timeControlStatus} samples=[${ph.samples.map(s => s.toFixed(2)).join(',')}]`)
+  }
+}
+
 if (failures.length) {
   console.error(`\nFAIL (${failures.length}):`)
   for (const f of failures) console.error('  - ' + f)
