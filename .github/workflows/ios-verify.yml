@@ -207,6 +207,9 @@ jobs:
           # 应用内 user_api_regression 用例逐个跑 加载→inited
           cp "$GITHUB_WORKSPACE"/test/scripts-regression/candidates/*.js "$CONTAINER/tmp/"
           cp "$GITHUB_WORKSPACE"/test/scripts-regression/ci-expect.json "$CONTAINER/tmp/lx-ci-regression-manifest.json"
+          # CI 夹具：确定性本地音源（起播/后台续播，零外网依赖）+ 封面图（锁屏元数据）
+          cp "$GITHUB_WORKSPACE/test/fixtures/lx-ci-song.wav" "$CONTAINER/tmp/"
+          cp "$GITHUB_WORKSPACE/test/fixtures/lx-ci-pic.png" "$CONTAINER/tmp/"
           xcrun simctl launch "$UDID" cn.toside.music.mobile | tee launch.txt
           APP_PID=$(grep -oE '[0-9]+' launch.txt | head -1 || true)
           echo "$APP_PID" > app-pid.txt
@@ -271,12 +274,49 @@ jobs:
           # 通知应用内自测：探针已发送，可进入报告阶段
           touch "$CONTAINER/tmp/.lx-ci-probe-sent"
 
+      - name: 后台续播阶段（标记握手：起播就绪→切后台→采样→唤回）
+        working-directory: ios/build/Build/Products/Release-iphonesimulator
+        run: |
+          bg_ready="$CONTAINER/tmp/lx-ci-bg-ready"
+          bg_done="$CONTAINER/tmp/lx-ci-bg-done"
+          { echo "--- background phase ---"
+            ok=0
+            for i in $(seq 1 90); do [ -f "$bg_ready" ] && { ok=1; break; }; sleep 2; done
+            echo "bg-ready marker: $([ "$ok" = 1 ] && echo READY || echo TIMEOUT)"
+            [ "$ok" = 1 ] || exit 0
+            # 把前台切到系统设置，应用进入后台（音频后台模式应续播）
+            xcrun simctl launch "$UDID" com.apple.Preferences 2>&1 || echo "BG_LAUNCH_FAILED"
+            ok=0
+            for i in $(seq 1 90); do [ -f "$bg_done" ] && { ok=1; break; }; sleep 2; done
+            echo "bg-done marker: $([ "$ok" = 1 ] && echo DONE || echo TIMEOUT)"
+            # 唤回前台（simctl launch 对后台挂起进程即激活）
+            xcrun simctl launch "$UDID" cn.toside.music.mobile | tee launch-bg.txt
+            grep -oE '[0-9]+' launch-bg.txt | head -1 > app-pid.txt || true; } | tee bg-phase.log
+
+      - name: 横屏阶段（标记握手：应用内驱动旋转，宿主截图取证）
+        working-directory: ios/build/Build/Products/Release-iphonesimulator
+        run: |
+          rotate_phase="$CONTAINER/tmp/lx-ci-rotate-phase"
+          shot="$CONTAINER/tmp/lx-ci-landscape-shot"
+          { echo "--- landscape phase ---"
+            echo "landscape $(date +%s)" > "$rotate_phase"
+            ok=0
+            for i in $(seq 1 90); do [ -f "$shot" ] && { ok=1; break; }; sleep 2; done
+            echo "landscape-shot marker: $([ "$ok" = 1 ] && echo READY || echo TIMEOUT)"
+            echo "shot content: $(cat "$shot" 2>/dev/null || echo '<none>')"
+            xcrun simctl io "$UDID" screenshot landscape.png || echo "LANDSCAPE_SHOT_FAILED"
+            rm -f "$shot"
+            # 等应用复原竖屏（应用复原后删除 rotate-phase）
+            ok=0
+            for i in $(seq 1 45); do [ ! -f "$rotate_phase" ] && { ok=1; break; }; sleep 2; done
+            echo "portrait restored: $([ "$ok" = 1 ] && echo YES || echo TIMEOUT)"; } | tee landscape-phase.log
+
       - name: 采集自测报告并断言
         working-directory: ios/build/Build/Products/Release-iphonesimulator
         run: |
           REPORT="$CONTAINER/tmp/lx-ci-report.json"
           ok=0
-          for i in $(seq 1 90); do [ -f "$REPORT" ] && { ok=1; break; }; sleep 5; done
+          for i in $(seq 1 180); do [ -f "$REPORT" ] && { ok=1; break; }; sleep 5; done
           echo "report ready: $ok"
           [ -f "$REPORT" ] && cp "$REPORT" ci-report.json
           APP_PID=$(cat app-pid.txt 2>/dev/null || true)
@@ -298,6 +338,10 @@ jobs:
             ios/build/Build/Products/Release-iphonesimulator/screenshot-*.png
             ios/build/Build/Products/Release-iphonesimulator/tab-*.png
             ios/build/Build/Products/Release-iphonesimulator/deeplink.png
+            ios/build/Build/Products/Release-iphonesimulator/landscape.png
+            ios/build/Build/Products/Release-iphonesimulator/bg-phase.log
+            ios/build/Build/Products/Release-iphonesimulator/landscape-phase.log
+            ios/build/Build/Products/Release-iphonesimulator/launch-bg.txt
             ios/build/Build/Products/Release-iphonesimulator/ci-report.json
             ios/build/Build/Products/Release-iphonesimulator/openurl-probe.log
             ios/build/Build/Products/Release-iphonesimulator/openurl-native.log

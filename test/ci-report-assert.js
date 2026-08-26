@@ -76,6 +76,18 @@ if (regression && regression.detail && Array.isArray(regression.detail.results))
   }
 }
 
+// 任务 4.4 取证：内置源真实搜索返回（mainflow_local 用例写入）
+if (Array.isArray(report.searchHits) && report.searchHits.length) {
+  console.log('\nsearch hits (task 4.4):')
+  for (const h of report.searchHits) console.log(`  [${h.source}] ${h.name} - ${h.singer} (id=${h.id})`)
+}
+
+// 任务 5.2 取证：全程 AppState 序列须出现 background（后台续播放生效）
+if (Array.isArray(report.appStates) && report.appStates.length) {
+  const seq = report.appStates.map(e => e.s).join(' -> ')
+  console.log(`\napp state trail (task 5.2): ${seq}`)
+}
+
 if (failures.length) {
   console.error(`\nFAIL (${failures.length}):`)
   for (const f of failures) console.error('  - ' + f)

@@ -1,11 +1,12 @@
 // iOS CI 应用内自测：沙箱 tmp 目录存在标记文件 `.lx-ci-selftest` 时运行，
 // 结果写入 `lx-ci-report.json` 供 CI 宿主读取断言。无标记文件立即返回，
 // 对正式包零影响。宿主侧流程见 .github/workflows/ios-verify.yml 冒烟 job。
-import { Alert, Linking, Platform } from 'react-native'
+import { Alert, AppState, Linking, NativeModules, Platform } from 'react-native'
 import RNFS from 'react-native-fs'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { Navigation } from 'react-native-navigation'
-import { DEFAULT_SETTING, storageDataPrefix } from '@/config/constant'
+import BackgroundTimer from 'react-native-background-timer'
+import { DEFAULT_SETTING, LIST_IDS, storageDataPrefix } from '@/config/constant'
 
 type TestResult = { id: string, ok: boolean, ms: number, detail?: unknown }
 
@@ -19,6 +20,8 @@ const state = {
   userApiLogs: [] as string[],
   userApiEvents: [] as Array<{ action: string, at: number }>,
   deeplinkRegisteredByTest: false,
+  searchHits: [] as Array<{ id: string, name: string, singer: string, source: string, songmid: string }>,
+  appStates: [] as Array<{ at: number, s: string }>,
 }
 
 const tmpDir = () => RNFS.TemporaryDirectoryPath
@@ -27,8 +30,35 @@ const reportPath = () => `${tmpDir()}/lx-ci-report.json`
 const probeSentMarker = () => `${tmpDir()}/.lx-ci-probe-sent`
 // AppDelegate 在标记门控下把收到的 openURL 逐条落盘（原生投递取证）
 const nativeOpenUrlLog = () => `${tmpDir()}/lx-ci-openurl.log`
+// CI 音频夹具：宿主在 install 后投递到沙箱 tmp（后台续播用例的确定性音源，零外网依赖）
+const ciSongPath = () => `${tmpDir()}/lx-ci-song.wav`
+const ciPicPath = () => `${tmpDir()}/lx-ci-pic.png`
+// 后台续播握手标记：应用起播就绪后写 bg-ready，宿主把前台切到系统设置
+// （应用进入后台），采样完成后应用写 bg-done，宿主把应用唤回前台
+const bgReadyMarker = () => `${tmpDir()}/lx-ci-bg-ready`
+const bgDoneMarker = () => `${tmpDir()}/lx-ci-bg-done`
+// 横屏握手标记：宿主写 rotate-phase 进入横屏阶段，应用确认尺寸翻转后写
+// landscape-shot 请宿主截图
+const rotatePhaseMarker = () => `${tmpDir()}/lx-ci-rotate-phase`
+const landscapeShotMarker = () => `${tmpDir()}/lx-ci-landscape-shot`
+
+// UtilsModule CI 探针面（原生侧为自测新增的只读方法，正式包不调用）
+const utilsNative = NativeModules.UtilsModule as unknown as {
+  isFontRegistered: (name: string) => Promise<boolean>,
+  getAudioSessionCategory: () => Promise<string>,
+  getNowPlayingInfo: () => Promise<{ title?: string, artist?: string, album?: string, duration?: number, elapsed?: number, hasArtwork?: boolean } | null>,
+  isScreenKeepAwake: () => Promise<boolean>,
+  // 横屏自测驱动：宿主无可靠无头旋转通道，改由应用内强制旋转（仅自测标记存在时生效）
+  setDeviceOrientation: (orientation: string) => Promise<void>,
+}
 
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
+
+// 后台安全睡眠：普通 setTimeout 在应用切后台后可能被挂起，
+// 后台续播采样必须用 BackgroundTimer（后台音频模式下仍持续触发）
+const bgSleep = (ms: number) => new Promise<void>(resolve => {
+  BackgroundTimer.setTimeout(() => resolve(), ms)
+})
 
 const withTimeout = async<T>(p: Promise<T>, ms: number, label: string): Promise<T> => {
   return Promise.race([
@@ -104,6 +134,14 @@ const installOverlayWatcher = () => {
         }).catch(() => {})
       }
     } catch { /* 忽略 */ }
+  })
+}
+
+// AppState 历史：后台续播用例判「确实进过后台」的唯一硬证据
+const installAppStateLogger = () => {
+  state.appStates.push({ at: Date.now(), s: AppState.currentState })
+  AppState.addEventListener('change', (s) => {
+    state.appStates.push({ at: Date.now(), s })
   })
 }
 
@@ -673,6 +711,302 @@ const testUserApiImport = async() => {
   return { imported: info.name, apis: apisRegistered }
 }
 
+// 1.5 字体注册：UIAppFonts 挂载后 fontWithName 必须能取到图标字体，
+// 否则 Icon 组件无渲染源即豆腐块。含反向对照防探针恒真
+const testFontRegistered = async() => {
+  const registered = await utilsNative.isFontRegistered('icomoon')
+  assert(registered === true, 'icomoon font not registered (UIAppFonts ineffective)')
+  const negative = await utilsNative.isFontRegistered('lx-nonexistent-font')
+  assert(negative === false, 'negative control unexpectedly registered')
+  return { registered, negative }
+}
+
+// 6.6 杂项逐项（可自动化的部分）：设备名 / WiFi IP / 通知开关只读 /
+// 屏幕常亮开-读-关。分享面板需人工交互，仅验证导出存在
+const testMiscUtils = async() => {
+  const utils = await import('@/utils/nativeModules/utils')
+  const deviceName = await utils.getDeviceName()
+  assert(typeof deviceName === 'string' && deviceName.length > 0, 'device name empty')
+  const ip = await utils.getWIFIIPV4Address()
+  assert(ip === null || typeof ip === 'string', `wifi ip type: ${typeof ip}`)
+  const notif = await utils.isNotificationsEnabled()
+  assert(typeof notif === 'boolean', 'notifications flag not boolean')
+  utils.screenkeepAwake()
+  await sleep(500)
+  const keepOn = await utilsNative.isScreenKeepAwake()
+  assert(keepOn === true, 'idleTimerDisabled not set after screenkeepAwake')
+  utils.screenUnkeepAwake()
+  await sleep(500)
+  const keepOff = await utilsNative.isScreenKeepAwake()
+  assert(keepOff === false, 'idleTimerDisabled still set after screenUnkeepAwake')
+  assert(typeof utils.shareText === 'function', 'shareText export missing')
+  return { deviceName, ip, notif, keepOn, keepOff, shareTextExported: true }
+}
+
+// 5.2 音频会话类别：setupPlayer(iosCategory: playback) 后运行时类别必须是
+// AVAudioSessionCategoryPlayback（后台出声的必要配置证据）
+const testAudioSession = async() => {
+  const category = await utilsNative.getAudioSessionCategory()
+  assert(category === 'AVAudioSessionCategoryPlayback', `audio session category: ${String(category)}`)
+  return { category }
+}
+
+// 5.1/5.7 真实起播：本地夹具（宿主投递的 180s wav，零外网依赖，时长留足
+// 元数据轮询窗口避免播放中途结束）经
+// 生产播放链 setResource 起播，断言 起播→推进→暂停冻结→恢复推进
+const ciMusicInfo = (path: string): LX.Player.PlayMusic => ({
+  id: 'lx_ci_local_1',
+  name: 'lx-ci song',
+  singer: 'lx-ci',
+  source: 'local',
+  interval: '03:00',
+  meta: {
+    songId: path,
+    albumName: 'lx-ci album',
+    picUrl: `file://${ciPicPath()}`,
+    filePath: path,
+    ext: 'wav',
+  },
+} as never)
+
+const testPlayback = async() => {
+  assert(await RNFS.exists(ciSongPath()), 'fixture lx-ci-song.wav not delivered by host')
+  assert(await RNFS.exists(ciPicPath()), 'fixture lx-ci-pic.png not delivered by host')
+  const putils = await import('@/plugins/player/utils')
+  const musicInfo = ciMusicInfo(ciSongPath())
+  // fork 的 Track 仅把 `file://` 前缀的 URL 判为本地文件（MediaURL.isLocal），
+  // 裸路径会走 stream 分支而失败。第三参是起播定位（秒），但生产链对 0 值
+  // 不触发 seekTo（falsy 短路），续播场景会从上次的进度继续——故给极小非零值
+  const url = `file://${ciSongPath()}`
+  putils.setResource(musicInfo, url, 0.01)
+  const t0 = Date.now()
+  let pos = 0
+  while (Date.now() - t0 < 30_000) {
+    pos = await putils.getPosition()
+    if (pos > 0.5) break
+    await sleep(500)
+  }
+  assert(pos > 0.5, `playback never started (pos=${pos})`)
+  await putils.setPause()
+  await sleep(1500)
+  const pausedPos1 = await putils.getPosition()
+  await sleep(2000)
+  const pausedPos2 = await putils.getPosition()
+  assert(Math.abs(pausedPos2 - pausedPos1) < 0.3, `position moved while paused (${pausedPos1} -> ${pausedPos2})`)
+  await putils.setPlay()
+  await sleep(2000)
+  const resumedPos = await putils.getPosition()
+  assert(resumedPos > pausedPos2 + 0.5, `position stuck after resume (${pausedPos2} -> ${resumedPos})`)
+  // 锁屏/通知栏元数据（任务 5.3 判据之一）：标题/歌手进 Now Playing 面板
+  await putils.updateMetaData({
+    ...musicInfo,
+    album: 'lx-ci album',
+    pic: `file://${ciPicPath()}`,
+  } as never, true, undefined, true)
+  const tMeta = Date.now()
+  let np: Awaited<ReturnType<typeof utilsNative.getNowPlayingInfo>> = null
+  while (Date.now() - tMeta < 15_000) {
+    np = await utilsNative.getNowPlayingInfo()
+    if (np?.title === 'lx-ci song') break
+    await sleep(500)
+  }
+  assert(np?.title === 'lx-ci song', `now playing title not set: ${JSON.stringify(np)}`)
+  assert(np?.artist === 'lx-ci', `now playing artist: ${String(np?.artist)}`)
+  // 5.3 封面：本地夹具图经 file:// 进 Now Playing 面板。fork 的 Metadata.update
+  // 先同步写文本键、异步载入图后才写 artwork 键，需单独轮询
+  const tArt = Date.now()
+  while (Date.now() - tArt < 15_000) {
+    np = await utilsNative.getNowPlayingInfo()
+    if (np?.hasArtwork === true) break
+    await sleep(500)
+  }
+  assert(np?.hasArtwork === true, `now playing artwork not set: ${JSON.stringify(np)}`)
+  // 5.4：歌词标题通道（updateNowPlayingTitles）iOS 走 patch 后的 metadata 通道
+  await putils.updateNowPlayingTitles(180_000, 'lx-ci lyric line', 'lx-ci song - lx-ci', 'lx-ci album')
+  const tTitle = Date.now()
+  let np2: Awaited<ReturnType<typeof utilsNative.getNowPlayingInfo>> = null
+  while (Date.now() - tTitle < 15_000) {
+    np2 = await utilsNative.getNowPlayingInfo()
+    if (np2?.title === 'lx-ci lyric line') break
+    await sleep(500)
+  }
+  assert(np2?.title === 'lx-ci lyric line', `now playing titles not applied: ${JSON.stringify(np2)}`)
+  // 暂停收尾：避免夹具在后续用例期间播完触发空轨降级路径
+  await putils.setPause()
+  return { startedAt: pos, pausedPos1, pausedPos2, resumedPos, nowPlaying: np, lyricTitle: np2?.title }
+}
+
+// 5.2/5.3 后台播放：宿主收到 lock-ready 标记后把应用切后台（启动系统
+// 设置），应用内采样「后台期间位置持续推进」，随后宿主唤回前台
+const testBackgroundPlay = async() => {
+  const putils = await import('@/plugins/player/utils')
+  // 承接 playback 用例暂停的同一首夹具（180s 夹具，余量充足）直接恢复：
+  // 用同 id 重新 setResource 会走「已存在曲目」分支先 pause 再 seek，起播断言必挂
+  await putils.setPlay()
+  // 承接的是已暂停位置，`pos > 1` 判不出恢复——改断言恢复后位置推进
+  const posBefore = await putils.getPosition()
+  await sleep(2500)
+  const posAfter = await putils.getPosition()
+  assert(posAfter > posBefore + 0.5, `resume did not advance position (${posBefore} -> ${posAfter})`)
+  await RNFS.writeFile(bgReadyMarker(), String(Date.now()), 'utf8')
+  // 等待进入后台（宿主切前台到系统设置）
+  const tBg = Date.now()
+  let enteredBg = false
+  while (Date.now() - tBg < 180_000) {
+    if (state.appStates.some(e => e.s === 'background')) { enteredBg = true; break }
+    await sleep(1000)
+  }
+  assert(enteredBg, `app never backgrounded (states=${state.appStates.map(e => e.s).join(',')})`)
+  const bgPos1 = await putils.getPosition()
+  await bgSleep(12_000)
+  const bgPos2 = await putils.getPosition()
+  await RNFS.writeFile(bgDoneMarker(), String(Date.now()), 'utf8')
+  assert(bgPos2 > bgPos1 + 5, `audio did not continue in background (${bgPos1} -> ${bgPos2})`)
+  // 等待宿主唤回前台
+  const tFg = Date.now()
+  let backFg = false
+  while (Date.now() - tFg < 180_000) {
+    if (AppState.currentState === 'active') { backFg = true; break }
+    await sleep(1000)
+  }
+  assert(backFg, 'host never returned app to foreground')
+  await putils.setPause()
+  return {
+    bgPos1, bgPos2,
+    bgProgress: bgPos2 - bgPos1,
+    states: state.appStates.map(e => e.s),
+  }
+}
+
+// 7.4 横屏：应用内驱动旋转（宿主无可靠无头旋转通道，原生侧
+// setDeviceOrientation 仅在自测标记存在时生效），断言窗口尺寸翻转、
+// isHorizontalMode 生效、宿主截图握手、可复原竖屏且全程无意外弹窗
+const testLandscape = async() => {
+  const { windowSizeTools } = await import('@/utils/windowSizeTools')
+  const { isHorizontalMode } = await import('@/utils/tools')
+  const alertsBefore = state.alerts.length
+  const before = { ...windowSizeTools.getSize() }
+  assert(before.height > before.width, `precondition portrait not met (${before.width}x${before.height})`)
+  // 等待宿主进入横屏阶段
+  const tPhase = Date.now()
+  let phaseSeen = false
+  while (Date.now() - tPhase < 180_000) {
+    if (await RNFS.exists(rotatePhaseMarker())) { phaseSeen = true; break }
+    await sleep(2000)
+  }
+  assert(phaseSeen, 'host never entered rotate phase')
+  await utilsNative.setDeviceOrientation('landscape')
+  const tRot = Date.now()
+  let landscapeSize = before
+  while (Date.now() - tRot < 60_000) {
+    landscapeSize = { ...windowSizeTools.getSize() }
+    if (landscapeSize.width > landscapeSize.height) break
+    await sleep(500)
+  }
+  assert(landscapeSize.width > landscapeSize.height,
+    `window size did not flip to landscape (${landscapeSize.width}x${landscapeSize.height})`)
+  assert(isHorizontalMode(landscapeSize.width, landscapeSize.height), 'isHorizontalMode false in landscape')
+  // 请宿主截图（宿主截图后删除 shot 标记）
+  await RNFS.writeFile(landscapeShotMarker(), `${landscapeSize.width}x${landscapeSize.height}`, 'utf8')
+  const tShot = Date.now()
+  let shotConsumed = false
+  while (Date.now() - tShot < 120_000) {
+    if (!(await RNFS.exists(landscapeShotMarker()))) { shotConsumed = true; break }
+    await sleep(1000)
+  }
+  assert(shotConsumed, 'host consumed landscape-shot marker')
+  // 复原竖屏
+  await utilsNative.setDeviceOrientation('portrait')
+  const tBack = Date.now()
+  let restored = landscapeSize
+  while (Date.now() - tBack < 60_000) {
+    restored = { ...windowSizeTools.getSize() }
+    if (restored.height > restored.width) break
+    await sleep(500)
+  }
+  assert(restored.height > restored.width,
+    `window size did not restore to portrait (${restored.width}x${restored.height})`)
+  await RNFS.unlink(rotatePhaseMarker()).catch(() => {})
+  const newAlerts = state.alerts.slice(alertsBefore)
+  assert(newAlerts.length === 0, `unexpected alerts during landscape: ${JSON.stringify(newAlerts)}`)
+  return { portrait: before, landscape: landscapeSize, restored }
+}
+
+// 6.9 主流程本地段：搜索（真实网络）→ 收藏 → 歌单管理 → 备份/恢复。
+// 播放段由 testPlayback/testBackgroundPlay 覆盖；同步需双端留手测
+const testMainflowLocal = async() => {
+  // 搜索：内置音源走官方端点，重试一次
+  const { search } = await import('@/core/search/music')
+  let hits: LX.Music.MusicInfoOnline[] = []
+  let searchErr = ''
+  for (let attempt = 0; attempt < 2 && hits.length === 0; attempt++) {
+    try {
+      hits = await withTimeout(search('周杰伦', 1, 'kw'), 30_000, 'kw search')
+    } catch (err) { searchErr = errText(err) }
+  }
+  assert(hits.length > 0, `kw search returned nothing (${searchErr})`)
+  const first = hits[0]
+  assert(first.id && first.name, 'search hit missing id/name')
+  state.searchHits = hits.slice(0, 3).map(h => ({
+    id: h.id, name: h.name, singer: h.singer, source: h.source,
+    songmid: (h.meta as { songId?: string }).songId ?? '',
+  }))
+
+  // 收藏 + 歌单管理
+  const { createList, addListMusics, removeUserList, getListMusics } = await import('@/core/list')
+  const listState = (await import('@/store/list/state')).default
+  const listId = `userlist_lx_ci_${Date.now()}`
+  await createList({ name: 'lx-ci-list', id: listId, list: [] })
+  assert(listState.userList.some(l => l.id === listId), 'user list created')
+  await addListMusics(listId, [first], 'top')
+  await addListMusics(LIST_IDS.LOVE, [first], 'top')
+  const inList = await getListMusics(listId)
+  const inLove = await getListMusics(LIST_IDS.LOVE)
+  assert(inList.some(m => m.id === first.id), 'music added to user list')
+  assert(inLove.some(m => m.id === first.id), 'music added to love list')
+
+  // 备份：与设置页导出同链路（handleSaveFile = JSON + gzipFile → .lxmc）
+  const { handleSaveFile, handleReadFile } = await import('@/utils/tools')
+  const backup = {
+    type: 'playList_v2',
+    data: [
+      { id: LIST_IDS.DEFAULT, name: '试听列表', list: [] },
+      { id: LIST_IDS.LOVE, name: '我的收藏', list: inLove },
+      { id: listId, name: 'lx-ci-list', list: inList, source: undefined, sourceListId: undefined, locationUpdateTime: null },
+    ],
+  }
+  const backupPath = `${tmpDir()}/lx-ci-backup.lxmc`
+  await handleSaveFile(backupPath, backup)
+  assert(await RNFS.exists(backupPath), 'backup file written')
+  const backupBytes = (await RNFS.stat(backupPath).catch(() => null))?.size ?? null
+  const restored = await handleReadFile<typeof backup>(backupPath)
+  assert(restored.type === 'playList_v2', 'backup type roundtrip')
+  const restoredLove = restored.data.find(l => l.id === LIST_IDS.LOVE)
+  assert((restoredLove?.list ?? []).some(m => m.id === first.id), 'backup content roundtrip')
+
+  // 恢复：覆盖写入 → 清理测试列表
+  const { overwriteListFull } = await import('@/core/list')
+  await overwriteListFull({
+    defaultList: [],
+    loveList: [],
+    userList: [],
+  })
+  const loveAfter = await getListMusics(LIST_IDS.LOVE)
+  assert(!loveAfter.some(m => m.id === first.id), 'overwriteListFull cleared love')
+  await addListMusics(LIST_IDS.LOVE, restoredLove?.list ?? [], 'top')
+  const loveRestored = await getListMusics(LIST_IDS.LOVE)
+  assert(loveRestored.some(m => m.id === first.id), 'restore from backup works')
+  // 清理现场：移除测试收藏与歌单
+  await overwriteListFull({ defaultList: [], loveList: [], userList: [] })
+  try { await removeUserList([listId]) } catch { /* 列表可能已随 overwrite 清理 */ }
+  await RNFS.unlink(backupPath).catch(() => {})
+  return {
+    searchTotal: hits.length,
+    firstHit: { id: first.id, name: first.name, singer: first.singer },
+    backupBytes,
+  }
+}
+
 // ---------- 主流程 ----------
 
 const collectEnv = async() => {
@@ -714,6 +1048,10 @@ const writeReport = async() => {
     overlays: state.overlays,
     consoleTail: state.consoleRing.slice(-250),
     userApiLogs: state.userApiLogs,
+    // 任务 4.4 搜索结果取证：内置源真实返回的前 3 条（名称/歌手/源）
+    searchHits: state.searchHits,
+    // 任务 5.2 后台续播放证：全程 AppState 序列（须见 background）
+    appStates: state.appStates,
   }
   await RNFS.writeFile(reportPath(), JSON.stringify(report), 'utf8')
   await RNFS.writeFile(`${tmpDir()}/lx-ci-done`, String(Date.now()), 'utf8')
@@ -723,6 +1061,8 @@ const runSuite = async() => {
   state.startedAt = Date.now()
   try {
     state.deeplinkRegisteredByTest = await ensureDeeplinkListener()
+    await runTest('font_registered', testFontRegistered)
+    await runTest('misc_utils', testMiscUtils)
     await runTest('utils_window_size', testUtils)
     await runTest('fs_exports', testFsExports)
     await runTest('fs_roundtrip', testFsRoundtrip)
@@ -733,13 +1073,21 @@ const runSuite = async() => {
     await runTest('local_media_degrade', testLocalMedia)
     await runTest('user_api_sandbox', testUserApi)
     await runTest('player_setup', testPlayerSetup)
+    await runTest('audio_session', testAudioSession)
     await runTest('player_cache_degrade', testPlayerCacheDegrade)
+    // 播放段：起播/暂停/恢复 + 锁屏元数据 + 歌词标题通道
+    await runTest('playback', testPlayback, 300_000)
     await runTest('toast_overlay', testToast)
     await runTest('version_update_release', testVersionUpdate)
     await runTest('tab_switch', testTabs, 300_000)
     await runTest('auto_theme', testAutoTheme, 180_000)
     await runTest('deeplink', testDeeplink)
+    // 宿主耦合段：后台续播与横屏依赖宿主按标记握手切换前台/截图，
+    // 顺序必须与 ios-verify.yml 的阶段顺序一致（后台阶段 → 横屏阶段）
+    await runTest('background_play', testBackgroundPlay, 300_000)
+    await runTest('landscape', testLandscape, 300_000)
     await runTest('user_api_import', testUserApiImport)
+    await runTest('mainflow_local', testMainflowLocal, 300_000)
     // 回归集耗时最长且无宿主时序依赖，放最后跑
     await runTest('user_api_regression', testScriptsRegression, 300_000)
   } finally {
@@ -757,6 +1105,7 @@ export const ciSelfTestBoot = () => {
       installConsoleRing()
       installLinkingSpy()
       installOverlayWatcher()
+      installAppStateLogger()
       await prewriteStorage()
       // 等待 core/init 与首页推送完成（模拟器冷启动约 10s 内）
       setTimeout(() => { void runSuite() }, 25_000)

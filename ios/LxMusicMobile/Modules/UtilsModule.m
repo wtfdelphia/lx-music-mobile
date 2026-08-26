@@ -2,6 +2,8 @@
 #import <UIKit/UIKit.h>
 #import <UserNotifications/UserNotifications.h>
 #import <MobileCoreServices/MobileCoreServices.h>
+#import <AVFoundation/AVFoundation.h>
+#import <MediaPlayer/MediaPlayer.h>
 #import <ifaddrs.h>
 #import <arpa/inet.h>
 #import <net/if.h>
@@ -212,6 +214,99 @@ RCT_EXPORT_METHOD(getWindowSize:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 {
   resolve([self currentWindowSize]);
+}
+
+// CI 自测：字体注册检查（任务 1.5 豆腐块的根因判据）。
+// UIAppFonts 挂载失败时 fontWithName 返回 nil，图标字形无渲染源。
+RCT_EXPORT_METHOD(isFontRegistered:(NSString *)name
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  UIFont *font = [UIFont fontWithName:(name ?: @"") size:12];
+  resolve(@(font != nil));
+}
+
+// CI 自测：音频会话运行时类别（任务 5.2）。
+// setupPlayer(iosCategory: playback) 生效后应为 AVAudioSessionCategoryPlayback，
+// 这是后台出声的必要配置在运行时的直接证据。
+RCT_EXPORT_METHOD(getAudioSessionCategory:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  resolve([AVAudioSession sharedInstance].category);
+}
+
+// CI 自测：锁屏/控制中心 Now Playing 面板内容（任务 5.3/5.4）。
+// 返回 MPNowPlayingInfoCenter 当前信息的可读子集；无内容时 resolve(null)。
+RCT_EXPORT_METHOD(getNowPlayingInfo:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSDictionary *info = [MPNowPlayingInfoCenter defaultCenter].nowPlayingInfo;
+  if (info == nil || info.count == 0) {
+    resolve([NSNull null]);
+    return;
+  }
+  NSMutableDictionary *out = [NSMutableDictionary dictionary];
+  id title = info[MPMediaItemPropertyTitle];
+  id artist = info[MPMediaItemPropertyArtist];
+  id album = info[MPMediaItemPropertyAlbumTitle];
+  id duration = info[MPMediaItemPropertyPlaybackDuration];
+  id elapsed = info[MPNowPlayingInfoPropertyElapsedPlaybackTime];
+  id artwork = info[MPMediaItemPropertyArtwork];
+  if ([title isKindOfClass:[NSString class]]) out[@"title"] = title;
+  if ([artist isKindOfClass:[NSString class]]) out[@"artist"] = artist;
+  if ([album isKindOfClass:[NSString class]]) out[@"album"] = album;
+  if ([duration isKindOfClass:[NSNumber class]]) out[@"duration"] = duration;
+  if ([elapsed isKindOfClass:[NSNumber class]]) out[@"elapsed"] = elapsed;
+  out[@"hasArtwork"] = @([artwork isKindOfClass:[MPMediaItemArtwork class]]);
+  resolve(out);
+}
+
+// CI 自测：屏幕常亮开关回读（任务 6.6 常亮项的运行时判据）
+RCT_EXPORT_METHOD(isScreenKeepAwake:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  dispatch_async(dispatch_get_main_queue(), ^{
+    resolve(@([UIApplication sharedApplication].idleTimerDisabled));
+  });
+}
+
+// CI 自测（任务 7.4 横屏）：强制旋转模拟器窗口。宿主侧无可靠的无头旋转
+// 通道（simctl 无 rotate 子命令，AppleScript 依赖 GUI 会话），改由应用内
+// 驱动：KVC 设置设备方向 + attemptRotation；iOS 16+ 追加场景几何请求。
+// 双保险门控：仅当沙箱存在 .lx-ci-selftest 标记时生效，正式包恒拒绝。
+RCT_EXPORT_METHOD(setDeviceOrientation:(NSString *)name
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSString *tmp = NSTemporaryDirectory();
+  NSString *marker = [tmp stringByAppendingPathComponent:@".lx-ci-selftest"];
+  if (![[NSFileManager defaultManager] fileExistsAtPath:marker]) {
+    reject(@"not_allowed", @"orientation forcing requires the CI self-test marker", nil);
+    return;
+  }
+  BOOL landscape = [name isEqualToString:@"landscape"];
+  dispatch_async(dispatch_get_main_queue(), ^{
+    UIDeviceOrientation target = landscape ? UIDeviceOrientationLandscapeLeft : UIDeviceOrientationPortrait;
+    // KVC 通道走运行时查找，避免在个别构建下触发 KVC 异常（仅模拟器自测场景）
+    UIDevice *device = [UIDevice currentDevice];
+    SEL setter = NSSelectorFromString(@"setValue:forKey:");
+    if ([device respondsToSelector:setter]) {
+      [device setValue:@(target) forKey:@"orientation"];
+    }
+    [UIViewController attemptRotationToDeviceOrientation];
+    if (@available(iOS 16.0, *)) {
+      UIInterfaceOrientationMask mask = landscape ? UIInterfaceOrientationMaskLandscape : UIInterfaceOrientationMaskPortrait;
+      UIWindowSceneGeometryPreferencesIOS *prefs =
+        [[UIWindowSceneGeometryPreferencesIOS alloc] initWithInterfaceOrientations:mask];
+      for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if ([scene isKindOfClass:[UIWindowScene class]] &&
+            scene.activationState == UISceneActivationStateForegroundActive) {
+          [(UIWindowScene *)scene requestGeometryUpdateWithPreferences:prefs errorHandler:nil];
+        }
+      }
+    }
+    resolve(@(YES));
+  });
 }
 
 // 观察者已在 init 注册，此处保留空实现以对齐 JS 调用面
