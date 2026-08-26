@@ -8,6 +8,8 @@
 #import <ifaddrs.h>
 #import <arpa/inet.h>
 #import <net/if.h>
+#import <math.h>
+#import <unistd.h>
 
 @interface UtilsModule () <UIDocumentPickerDelegate>
 @property (nonatomic, copy, nullable) RCTPromiseResolveBlock selectFileResolve;
@@ -324,7 +326,8 @@ RCT_EXPORT_METHOD(audioClockProbe:(NSString *)path
         usleep(300 * 1000);
         NSMutableArray *samples = [NSMutableArray array];
         for (int i = 0; i < 8; i++) {
-          double seconds = player.currentTime.seconds;
+          // CMTime 是 C 结构体，ObjC 无 .seconds 属性，须经 CMTimeGetSeconds
+          double seconds = CMTimeGetSeconds(player.currentTime);
           [samples addObject:@(isnan(seconds) ? 0.0 : seconds)];
           usleep(400 * 1000);
         }
