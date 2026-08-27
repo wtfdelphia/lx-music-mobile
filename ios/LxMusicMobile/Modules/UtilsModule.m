@@ -223,13 +223,15 @@ RCT_EXPORT_METHOD(getWindowSize:(RCTPromiseResolveBlock)resolve
 // UIAppFonts 挂载失败时 fontWithName 返回 nil，图标字形无渲染源。
 // 注意：.m 文件里 `@(font != nil)` 的比较结果是 int，桥接转为 JS 数字
 // 1/0 而非布尔（run 33012088667：JS 侧 === true 误判未注册，字体其实
-// 已挂载），必须显式三元到 BOOL
+// 已挂载）；三元表达式 `font != nil ? YES : NO` 同样会被 C 整型提升为
+// int（run 33021891043 复现），必须经 BOOL 变量装箱
 RCT_EXPORT_METHOD(isFontRegistered:(NSString *)name
                   resolver:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 {
   UIFont *font = [UIFont fontWithName:(name ?: @"") size:12];
-  resolve(@(font != nil ? YES : NO));
+  BOOL isRegistered = font != nil;
+  resolve(@(isRegistered));
 }
 
 // CI 自测：UIAppFonts 偶发不生效时的诊断 + 兜底挂载。

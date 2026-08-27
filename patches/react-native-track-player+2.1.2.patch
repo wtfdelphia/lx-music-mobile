@@ -1,0 +1,78 @@
+diff --git a/node_modules/react-native-track-player/ios/RNTrackPlayer/RNTrackPlayer.swift b/node_modules/react-native-track-player/ios/RNTrackPlayer/RNTrackPlayer.swift
+index 6ad6d92..0e0b8c6 100644
+--- a/node_modules/react-native-track-player/ios/RNTrackPlayer/RNTrackPlayer.swift
++++ b/node_modules/react-native-track-player/ios/RNTrackPlayer/RNTrackPlayer.swift
+@@ -16,13 +16,21 @@ public class RNTrackPlayer: RCTEventEmitter {
+     // MARK: - Attributes
+ 
+     private var hasInitialized = false
+-    private let player = QueuedAudioPlayer()
++    private var player = QueuedAudioPlayer()
+ 
+     // MARK: - Lifecycle Methods
+ 
+     public override init() {
+         super.init()
+ 
++        attachPlayerListeners()
++    }
++
++    deinit {
++        reset(resolve: { _ in }, reject: { _, _, _  in })
++    }
++
++    private func attachPlayerListeners() {
+         player.event.playbackEnd.addListener(self, handleAudioPlayerPlaybackEnded)
+         player.event.receiveMetadata.addListener(self, handleAudioPlayerMetadataReceived)
+         player.event.stateChange.addListener(self, handleAudioPlayerStateChange)
+@@ -30,8 +38,20 @@ public class RNTrackPlayer: RCTEventEmitter {
+         player.event.queueIndex.addListener(self, handleAudioPlayerQueueIndexChange)
+     }
+ 
+-    deinit {
+-        reset(resolve: { _ in }, reject: { _, _, _  in })
++    // lx-ci patch: AVPlayer 绑定 AVAudioSession/路由的时机敏感。模块属性初始化
++    // 创建的 AVPlayer 早于 setupPlayer 的会话配置/激活，在 iOS 模拟器上出现
++    // 播放状态 playing 但媒体时钟以 ~1/1000 速率爬升（run 33021891043：30s
++    // 仅推进 0.028s）。裸 AVPlayer 对照组（会话就绪后创建）以 1x 正常。
++    // setupPlayer 完成会话配置后重建播放器实例。此时尚未加载任何曲目，
++    // 重建无副作用；新实例自带命令/信息控制器（audioPlayer 弱引用指向
++    // 自身），后续「事件监听设置」段的闭包将赋给新控制器，不能复制旧控制器
++    private func rebuildPlayer() {
++        let newPlayer = QueuedAudioPlayer()
++        newPlayer.automaticallyWaitsToMinimizeStalling = player.automaticallyWaitsToMinimizeStalling
++        newPlayer.bufferDuration = player.bufferDuration
++        newPlayer.automaticallyUpdateNowPlayingInfo = player.automaticallyUpdateNowPlayingInfo
++        player = newPlayer
++        attachPlayerListeners()
+     }
+ 
+     // MARK: - RCTEventEmitter
+@@ -202,6 +222,9 @@ public class RNTrackPlayer: RCTEventEmitter {
+             try? AVAudioSession.sharedInstance().setCategory(sessionCategory, mode: sessionCategoryMode, options: sessionCategoryOptions)
+         }
+ 
++        // lx-ci patch: 会话配置完成后重建 AVPlayer（见 rebuildPlayer 说明）
++        rebuildPlayer()
++
+         // setup event listeners
+         player.remoteCommandController.handleChangePlaybackPositionCommand = { [weak self] event in
+             if let event = event as? MPChangePlaybackPositionCommandEvent {
+@@ -651,8 +674,15 @@ public class RNTrackPlayer: RCTEventEmitter {
+         // Load isLiveStream option for track
+         var isTrackLiveStream = false
+         if let nextIndex = nextIndex {
+-            let track = player.items[nextIndex]
+-            isTrackLiveStream = (track as? Track)?.isLiveStream ?? false
++            // lx-ci patch: 队列事件经 SwiftAudioEx 异步队列投递，与队列裁剪
++            // （handlePlayMusic 去重、remove 等）存在竞态——事件到达时
++            // items 可能已收缩，越界即崩进程（run 33021891043 崩溃栈：
++            // Swift Index out of range）。越界时跳过 liveStream 标记，
++            // 事件照常派发
++            if nextIndex >= 0 && nextIndex < player.items.count {
++                let track = player.items[nextIndex]
++                isTrackLiveStream = (track as? Track)?.isLiveStream ?? false
++            }
+         }
+ 
+         if player.automaticallyUpdateNowPlayingInfo {

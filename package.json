@@ -5,6 +5,7 @@
   "private": true,
   "scripts": {
     "test": "vitest run",
+    "postinstall": "patch-package",
     "dev": "react-native run-android --active-arch-only",
     "ios": "react-native run-ios",
     "start": "react-native start",
@@ -90,6 +91,7 @@
     "eslint-config-standard-with-typescript": "^43.0.1",
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^5.2.0",
+    "patch-package": "^8.0.1",
     "typescript": "^5.9.3",
     "vitest": "^4.1.11"
   },
