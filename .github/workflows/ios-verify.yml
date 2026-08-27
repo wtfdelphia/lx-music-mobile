@@ -191,9 +191,24 @@ jobs:
       - name: 启动模拟器并安装（写入自测标记）
         working-directory: ios/build/Build/Products/Release-iphonesimulator
         run: |
-          UDID=$(xcrun simctl list devices available | grep -E 'iPhone' | head -1 | grep -oE '\([0-9A-F-]{36}\)' | tr -d '()')
-          echo "Simulator: $UDID"
+          # 钉死模拟器 runtime：head -1 跟随镜像预装列表，镜像更换时 25 项
+          # 自测的绿灯含义会静默漂移（见 docs/ios-multi-version-plan.md §2.1）。
+          # 找不到目标 runtime 必须失败退出——静默回退等于把洞换个地方开
+          RUNTIME="18.5"
+          UDID=$(xcrun simctl list devices available -j | node -e '
+            const d = JSON.parse(require("fs").readFileSync(0, "utf8")).devices
+            const want = process.argv[1]
+            const key = Object.keys(d).find(k => k.includes(want.replace(/\./g, "-")))
+            if (!key) { console.error("FATAL: simulator runtime not found: " + want); process.exit(1) }
+            const dev = d[key].find(x => x.name.startsWith("iPhone") && x.isAvailable)
+            if (!dev) { console.error("FATAL: no available iPhone in runtime " + key); process.exit(1) }
+            console.error("selected runtime: " + key + " device: " + dev.name)
+            process.stdout.write(dev.udid)
+          ' "$RUNTIME")
+          [ -n "$UDID" ] || { echo "FATAL: simulator selection failed"; exit 1; }
+          echo "Simulator: $UDID (iOS $RUNTIME)"
           echo "UDID=$UDID" >> "$GITHUB_ENV"
+          echo "IOS_RUNTIME=$RUNTIME" >> "$GITHUB_ENV"
           xcrun simctl boot "$UDID"
           xcrun simctl bootstatus "$UDID" -b
           xcrun simctl install "$UDID" LxMusicMobile.app
@@ -201,6 +216,9 @@ jobs:
           CONTAINER=$(xcrun simctl get_app_container "$UDID" cn.toside.music.mobile data)
           echo "CONTAINER=$CONTAINER" >> "$GITHUB_ENV"
           mkdir -p "$CONTAINER/tmp"
+          # runtime 标识投递应用沙箱：自测报告 env.ciRuntime 回带，
+          # 宿主断言端核对「钉死目标 == 实际执行环境」
+          echo "iOS $RUNTIME" > "$CONTAINER/tmp/lx-ci-runtime"
           touch "$CONTAINER/tmp/.lx-ci-selftest"
           echo 'lx-ci probe lxmc' > "$CONTAINER/tmp/lx-ci-probe.lxmc"
           # 任务 2.3 一键入口：回归脚本 + 断言清单投递沙箱，

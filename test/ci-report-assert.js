@@ -30,6 +30,21 @@ for (const r of report.results) {
   if (!r.ok) failures.push(`${r.id}: ${typeof r.detail === 'string' ? r.detail : JSON.stringify(r.detail)}`)
 }
 
+// 验证矩阵 runtime 钉死：报告自报执行环境（env.ciRuntime）必须与宿主
+// 钉死目标一致——镜像换预装 runtime 时，绿灯含义不得静默漂移。
+// 未传 IOS_RUNTIME 时不做核对（本地手跑报告场景）
+const EXPECTED_RUNTIME = process.env.IOS_RUNTIME
+if (EXPECTED_RUNTIME) {
+  const got = report.env && report.env.ciRuntime
+  if (!got) {
+    failures.push(`ci_runtime_missing: 报告无 env.ciRuntime（宿主 runtime 标识未投递或应用未回读）`)
+  } else if (!String(got).includes(EXPECTED_RUNTIME)) {
+    failures.push(`ci_runtime_mismatch: 钉死目标 iOS ${EXPECTED_RUNTIME}，报告自报 ${got}`)
+  } else {
+    console.log(`  [PASS] ci_runtime_pinned (${got})`)
+  }
+}
+
 // gzip 交叉验证：设备端 gzipString 产物必须能被宿主标准 gunzip 解压（iOS→Android 互操作）
 const gzipResult = report.results.find(r => r.id === 'gzip_contract')
 if (gzipResult && gzipResult.ok && gzipResult.detail && gzipResult.detail.gzipOutB64) {

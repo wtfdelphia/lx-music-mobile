@@ -1134,6 +1134,13 @@ const collectEnv = async() => {
     const { getBootLog } = await import('@/utils/bootLog')
     bootLogText = getBootLog()
   } catch { /* 忽略 */ }
+  // 宿主钉死的模拟器 runtime 标识（ios-verify.yml 投递到沙箱），
+  // 报告回带后由宿主断言端核对「钉死目标 == 实际执行环境」
+  let ciRuntime: string | null = null
+  try {
+    const runtimeMarker = `${tmpDir()}/lx-ci-runtime`
+    if (await RNFS.exists(runtimeMarker)) ciRuntime = (await RNFS.readFile(runtimeMarker, 'utf8')).trim()
+  } catch { /* 无标识不阻断套件 */ }
   let storageKeys: string[] = []
   let cheatTipValue: unknown = null
   let settingValue: { 'common.isAgreePact'?: boolean, 'common.langId'?: string } | null = null
@@ -1144,6 +1151,7 @@ const collectEnv = async() => {
   } catch { /* 忽略 */ }
   return {
     bootLog: bootLogText,
+    ciRuntime,
     storageKeys,
     cheatTipValue,
     isAgreePact: settingValue?.['common.isAgreePact'] ?? null,
