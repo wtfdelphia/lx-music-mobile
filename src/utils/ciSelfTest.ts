@@ -76,11 +76,25 @@ const bgSleep = (ms: number) => new Promise<void>(resolve => {
   BackgroundTimer.setTimeout(() => resolve(), ms)
 })
 
+// 超时护栏用 BackgroundTimer 而非 setTimeout：RN 的 JS 计时器在应用非
+// active 时可能被挂起，护栏本身随之失效。run 33061631407 实锤——套件在
+// landscape 之后停止产出增量报告，durationMs(352.5s) 比用例耗时之和
+// (242.4s) 多出 110s 且无任何用例超时触发，宿主 288×5s 轮询跑满 24 分钟
+// 也没等到 lx-ci-done（同一构建的 run 33032283378 该差值仅 0.1s）。
+// 停摆的确切位置尚未定位，但护栏必须在应用非 active 时仍能开火，
+// 否则任何一处卡住都表现为整套无声挂死、且不产出可判读的失败。
 const withTimeout = async<T>(p: Promise<T>, ms: number, label: string): Promise<T> => {
-  return Promise.race([
-    p,
-    sleep(ms).then(() => { throw new Error(`timeout after ${ms}ms: ${label}`) }),
-  ])
+  let timer: number | null = null
+  try {
+    return await Promise.race([
+      p,
+      new Promise<never>((_resolve, reject) => {
+        timer = BackgroundTimer.setTimeout(() => reject(new Error(`timeout after ${ms}ms: ${label}`)), ms)
+      }),
+    ])
+  } finally {
+    if (timer != null) BackgroundTimer.clearTimeout(timer)
+  }
 }
 
 const assert = (cond: unknown, message: string) => {
@@ -96,10 +110,23 @@ const errText = (err: unknown) => {
 
 const DISMISSABLE_OVERLAYS = new Set(['lxm.VersionModal', 'lxm.PactModal', 'lxm.SyncModeModal', 'lxm.Toast'])
 
+// 猴子补丁：记录所有原生弹窗以定位 CI 中出现的对话框来源，并就地按下
+// 首个按钮后**不呈现**弹窗。
+//
+// 必须不呈现：无头 runner 上没有任何东西会去点按钮，而 confirmDialog
+// （utils/tools.ts）把 Alert 包在 Promise 里、只有 onPress/onDismiss 能
+// resolve。run 33061631407 实锤——深链 file:// 探针触发导入确认框后
+// Promise 永挂、弹窗常驻，场景被压成 inactive（appStates 在 +79.0s 转
+// inactive 后再未回 active），连带 background_play 等不到唤回、landscape
+// 的 scene 停在 UIWindowScene(inactive)。RN 的 Alert 无程控关闭 API，
+// 「先呈现再补按 onPress」只能 resolve Promise 而关不掉弹窗，故直接跳过呈现。
+//
+// 按首个按钮：confirmDialog 的 buttons[0] 是取消（resolve(false)，不落
+// 实际导入副作用），tipDialog 等单按钮弹窗的唯一按钮也在 0 位。
 const installAlertSpy = () => {
-  const original = Alert.alert.bind(Alert)
-  // @ts-expect-error 猴子补丁：记录所有原生弹窗以定位 CI 中出现的对话框来源
-  Alert.alert = (title: string, message?: string, buttons?: Array<{ text?: string }>, ...rest: unknown[]) => {
+  interface AlertButton { text?: string, onPress?: () => void }
+  interface AlertOptions { onDismiss?: () => void }
+  Alert.alert = (title: string, message?: string, buttons?: AlertButton[], options?: AlertOptions) => {
     try {
       state.alerts.push({
         at: Date.now(),
@@ -107,8 +134,13 @@ const installAlertSpy = () => {
         message: String(message ?? '').slice(0, 300),
         buttons: (buttons ?? []).map(b => String(b?.text ?? '')),
       })
-    } catch { /* 记录失败不影响弹窗 */ }
-    return original(title, message, buttons, ...rest)
+    } catch { /* 记录失败不影响下面的自动应答 */ }
+    // 自动应答：有按钮按首个，无按钮走 onDismiss，保证调用方的 Promise 落地
+    try {
+      const first = buttons?.[0]
+      if (first?.onPress) first.onPress()
+      else options?.onDismiss?.()
+    } catch { /* 应答链自身报错不拖累自测 */ }
   }
 }
 
@@ -194,8 +226,10 @@ const runTest = async(id: string, fn: () => Promise<unknown>, timeoutMs = 120_00
     state.results.push({ id, ok: false, ms: Date.now() - t0, detail: errText(err) })
   }
   // 增量落盘：用例级持久化，进程中途崩溃也不丢已完成结果（部分报告
-  // 无 lx-ci-done 标记，宿主仍判失败但能读到崩溃前全部取证）
-  try { await writeReport(false) } catch { /* 增量写失败不影响套件 */ }
+  // 无 lx-ci-done 标记，宿主仍判失败但能读到崩溃前全部取证）。
+  // 自带超时：落盘走 collectEnv（AsyncStorage.getAllKeys 等原生往返），
+  // 卡在这里等于卡在用例超时护栏之外——套件无声挂死的候选位置之一
+  try { await withTimeout(writeReport(false), 30_000, `${id} writeReport`) } catch { /* 增量写失败不影响套件 */ }
 }
 
 // 1.3 UtilsModule
@@ -813,10 +847,14 @@ const testPlayback = async() => {
   assert(await RNFS.exists(ciSongPath()), 'fixture lx-ci-song.wav not delivered by host')
   assert(await RNFS.exists(ciPicPath()), 'fixture lx-ci-pic.png not delivered by host')
   // 音频时钟探针（套件期一次）：裸 AVPlayer 判「媒体时钟能否推进」。
-  // run 32982319768/33012088667 实锤：无头 runner 两轮不同采样率夹具
-  // 位置都冻结在 ~0.027s（AVPlayer 报 playing 但时钟不走）——疑似无
-  // 音频输出设备。时钟不走则位置类断言不可测（D6 式软门禁，探针取证
-  // 进报告）；探针失败不降级，维持硬断言
+  //
+  // run 33061631407 已证伪「无头 runner 无音频输出设备」这一旧前提：
+  // 同一 session 内裸 AVPlayer 对照组 clockAdvances=1、两相位分别推进
+  // 2.527s/2.842s、outputs=[Speaker]、category=Playback。即环境音频时钟
+  // 正常，位置冻结是 track-player 栈自身的缺陷。
+  //
+  // 因此 clockFrozen 在当前环境恒为 false，位置类断言维持硬门禁——
+  // 该分支只保留作「环境真的没有时钟」时的判别口，不再是冻结的解释。
   if (state.audioClockProbe === null) {
     try { state.audioClockProbe = await utilsNative.audioClockProbe(`file://${ciSongPath()}`) } catch { /* 保持 null = 硬门禁 */ }
   }
@@ -848,8 +886,21 @@ const testPlayback = async() => {
     await sleep(500)
   }
   const stateTail = state.playbackStates.slice(-8).map(s => `${s.state}@${s.t}`).join(',')
+  // 冻结取证：位置以 ~1/1000 速率爬升（run 33021891043/33061631407 两轮
+  // 复现值几乎相同：0.02652 / 0.02788），裸 AVPlayer 对照组同 session 内
+  // 1x 正常 —— 指向 track-player 栈上某个确定性时基/速率设置而非竞态。
+  // 直取播放器 rate/volume/duration，把判据带进失败文本
+  const playerDiag = await (async() => {
+    try {
+      const { default: TrackPlayer } = await import('react-native-track-player')
+      const [rate, volume, duration] = await Promise.all([
+        TrackPlayer.getRate(), TrackPlayer.getVolume(), TrackPlayer.getDuration(),
+      ])
+      return { rate, volume, duration }
+    } catch (err) { return { error: errText(err) } }
+  })()
   assert(clockFrozen ? playingSeen : pos > 0.5,
-    `playback never started (pos=${pos}, retried=${retried}, playingSeen=${playingSeen}, states=[${stateTail}])${probeDigest}`)
+    `playback never started (pos=${pos}, retried=${retried}, playingSeen=${playingSeen}, player=${JSON.stringify(playerDiag)}, states=[${stateTail}])${probeDigest}`)
   await putils.setPause()
   await sleep(1500)
   const pausedPos1 = await putils.getPosition()
@@ -903,8 +954,8 @@ const testPlayback = async() => {
 // 设置），应用内采样「后台期间位置持续推进」，随后宿主唤回前台
 const testBackgroundPlay = async() => {
   const putils = await import('@/plugins/player/utils')
-  // 承接 testPlayback 的音频时钟判据：时钟冻结（无头环境无输出设备）
-  // 时位置类断言不可测，改走「播放状态机 + 宿主阶段握手」软门禁
+  // 承接 testPlayback 的音频时钟判据。注意：GH runner 上探针实测时钟正常
+  // （见 testPlayback 注释），该分支恒不进——位置类断言是硬门禁
   const clockFrozen = state.audioClockProbe?.clockAdvances === false
   // 承接 playback 用例暂停的同一首夹具直接恢复。注意：夹具实际 90s
   // （8kHz 时代注释误写 180s），中间用例（tab_switch 等）可能耗时数分钟，
@@ -1230,6 +1281,33 @@ const runSuite = async() => {
   }
 }
 
+// 套件级兜底：无论 runSuite 卡在哪，到点都落一次终局报告 + lx-ci-done，
+// 把「无声挂死 + 宿主轮询跑满」换成「带 suite_watchdog 结果的可判读失败」。
+// 上限取 20min——宿主报告采集轮询是 288×5s=24min，watchdog 须在其之内开火
+const SUITE_WATCHDOG_MS = 20 * 60 * 1000
+const runSuiteGuarded = async() => {
+  let settled = false
+  const watchdog = BackgroundTimer.setTimeout(() => {
+    if (settled) return
+    const ran = state.results.map(r => r.id).join(',')
+    state.results.push({
+      id: 'suite_watchdog',
+      ok: false,
+      ms: Date.now() - state.startedAt,
+      detail: `suite did not finish within ${SUITE_WATCHDOG_MS}ms (completed=[${ran}])`,
+    })
+    // 写 finished=true 落 lx-ci-done：让宿主立刻拿到报告去断言，
+    // 而不是把整个 job 拖到轮询上限
+    void writeReport(true).catch(() => {})
+  }, SUITE_WATCHDOG_MS)
+  try {
+    await runSuite()
+  } finally {
+    settled = true
+    BackgroundTimer.clearTimeout(watchdog)
+  }
+}
+
 // 由 src/app.ts 启动期调用。无标记文件 / 非 iOS 时立即返回。
 export const ciSelfTestBoot = () => {
   if (Platform.OS !== 'ios') return
@@ -1244,7 +1322,7 @@ export const ciSelfTestBoot = () => {
       void installPlaybackStateLogger()
       await prewriteStorage()
       // 等待 core/init 与首页推送完成（模拟器冷启动约 10s 内）
-      setTimeout(() => { void runSuite() }, 25_000)
+      setTimeout(() => { void runSuiteGuarded() }, 25_000)
     } catch { /* 自测机制自身故障绝不拖累应用 */ }
   })()
 }

@@ -37,7 +37,7 @@ const EXPECTED_RUNTIME = process.env.IOS_RUNTIME
 if (EXPECTED_RUNTIME) {
   const got = report.env && report.env.ciRuntime
   if (!got) {
-    failures.push(`ci_runtime_missing: 报告无 env.ciRuntime（宿主 runtime 标识未投递或应用未回读）`)
+    failures.push('ci_runtime_missing: 报告无 env.ciRuntime（宿主 runtime 标识未投递或应用未回读）')
   } else if (!String(got).includes(EXPECTED_RUNTIME)) {
     failures.push(`ci_runtime_mismatch: 钉死目标 iOS ${EXPECTED_RUNTIME}，报告自报 ${got}`)
   } else {
