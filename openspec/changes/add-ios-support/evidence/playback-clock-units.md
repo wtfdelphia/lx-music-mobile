@@ -51,7 +51,27 @@ non-goal。
 「会话先于播放器」本身是更稳妥的顺序，移除需另跑一轮 CI 验证无回归。patch
 内注释已记录这点。
 
+## 验证结果（run 33157696254）
+
+`playback` 用例 PASS，读数量级全部恢复：
+
+```
+duration: 90        （修复前 0.09）
+startedAt: 0.980
+pausedPos1/2: 0.982100355 / 0.982100355   暂停后位置不动
+resumedPos: 2.995   恢复后推进
+clockFrozen: false
+```
+
+锁屏元数据同轮取到：`title` / `album` / `artist` / `hasArtwork: true`，
+歌词行 `lx-ci lyric line`。
+
+下游连带解开：`bg-ready` 由 TIMEOUT 变 READY，后台阶段不再早退，
+`bg-done` DONE，后台采样段跑完。25 个用例失败数从 4 降到 2，剩余 2 项
+（`background_play` / `landscape`）均为宿主前台切换缺陷，与本单位问题无关，
+见 [landscape-inactive-scene.md](landscape-inactive-scene.md)。
+
 ## 判读边界
 
-单位修复经 CI 编译验证，**播放位置读数是否恢复正确量级尚待下一轮 run
-实测**。真机后台出声（5.2）与锁屏控制（5.3）不在模拟器可验范围，仍留手测。
+真机后台出声（5.2）与锁屏控制（5.3）不在模拟器可验范围，仍留手测——
+模拟器只证明了元数据写入与位置推进，未证明真机扬声器出声与锁屏可操作。

@@ -50,7 +50,28 @@ launch 对已在前台的应用是幂等激活，不重启进程，自测状态�
 未转时也报 landscape，用它当判据会得到假通过。7.4 的门槛是布局不错位，
 窗口尺寸翻转是其必要条件，断言口径不放宽。
 
+## 第二轮：唤回 launch 不切前台（run 33157696254）
+
+单位修复后后台阶段跑完全程（`bg-ready` READY、`bg-done` DONE），末尾的
+唤回 launch 也执行了，但应用没回前台：
+
+```
+appStates:  -25.1s inactive → -25.1s active → +53.5s inactive → +79.7s background
+background_play: host never returned app to foreground
+landscape:  window size did not flip (402x874) appState=background
+```
+
+`bg-phase.log` 两次 launch 都返回同一 pid 63664。`landscape.png` 显示前台
+是 iOS 设置页。
+
+根因：`simctl launch` 对已在运行的挂起进程只返回原 pid，不做前台切换。
+占着前台的 `com.apple.Preferences` 没被终掉，应用就一直留在 background。
+
+修法：两处唤回前都先 `simctl terminate com.apple.Preferences`，再 launch。
+横屏阶段保留这一步作兜底——后台阶段若在 TIMEOUT 处早退，设置页会一路占着
+前台带进横屏阶段。`terminate` 对未运行的 bundle 报错无害。
+
 ## 判读边界
 
-修复经 YAML 语法与 lint 校验，**横屏是否实际翻转尚待下一轮 CI 实测**。
-iPad 布局与真机横屏行为不在模拟器单机型可验范围，仍留手测。
+第二轮修复经 YAML 语法与 lint 校验，**横屏是否实际翻转仍待下一轮 CI
+实测**。iPad 布局与真机横屏行为不在模拟器单机型可验范围，仍留手测。

@@ -1023,7 +1023,10 @@ const testBackgroundPlay = async() => {
     if (AppState.currentState === 'active') { backFg = true; break }
     await sleep(1000)
   }
-  assert(backFg, 'host never returned app to foreground')
+  // 失败时带上完整状态序列：宿主唤回失效表现为停在 background 再无
+  // active（run 33157696254：simctl launch 对挂起进程只返回原 pid，
+  // 占前台的 Preferences 未终掉，前台切换不发生）
+  assert(backFg, `host never returned app to foreground (states=${state.appStates.map(e => e.s).join(',')} current=${AppState.currentState})`)
   await putils.setPause()
   return {
     bgPos1, bgPos2,
