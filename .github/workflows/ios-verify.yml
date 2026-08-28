@@ -320,6 +320,17 @@ jobs:
           rotate_phase="$CONTAINER/tmp/lx-ci-rotate-phase"
           shot="$CONTAINER/tmp/lx-ci-landscape-shot"
           { echo "--- landscape phase ---"
+            # 先无条件唤回前台：横屏用例断言的是窗口尺寸翻转，而 RN 不会
+            # 给非 active 的场景重排版——scene 停在 inactive 时旋转请求会被
+            # 接受（interfaceOrientation 已报 landscape、geoErrors 为空）但
+            # 画面不转，Dimensions 不发变更、onLayout 不触发，断言必失败
+            # （run 33144095295：rot.ok=1 且 interfaceOrientationAfter2s
+            # =landscape，windowSizeTools 仍是 402x874，截图 1206x2622 竖屏）。
+            # 上游的后台阶段在 bg-ready TIMEOUT 时 exit 0 早退，其末尾的唤回
+            # launch 不执行，场景就一路 inactive 带进本阶段。此处 launch 幂等：
+            # 应用已在前台时仅激活，不重启进程（自测状态与报告不丢）
+            xcrun simctl launch "$UDID" cn.toside.music.mobile 2>&1 || echo "ROTATE_WAKE_FAILED"
+            sleep 3
             echo "landscape $(date +%s)" > "$rotate_phase"
             ok=0
             for i in $(seq 1 90); do [ -f "$shot" ] && { ok=1; break; }; sleep 2; done

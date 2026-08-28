@@ -81,8 +81,10 @@ const bgSleep = (ms: number) => new Promise<void>(resolve => {
 // landscape 之后停止产出增量报告，durationMs(352.5s) 比用例耗时之和
 // (242.4s) 多出 110s 且无任何用例超时触发，宿主 288×5s 轮询跑满 24 分钟
 // 也没等到 lx-ci-done（同一构建的 run 33032283378 该差值仅 0.1s）。
-// 停摆的确切位置尚未定位，但护栏必须在应用非 active 时仍能开火，
-// 否则任何一处卡住都表现为整套无声挂死、且不产出可判读的失败。
+// 停摆位置后经 run 33144095295 定位为深链导入确认框的永挂 Promise（见
+// installAlertSpy），但护栏本身照旧必要：应用在 deeplink 之后长期停在
+// inactive，用 setTimeout 的护栏在该状态下可能不开火，任何一处卡住都会
+// 表现为整套无声挂死、且不产出可判读的失败。
 const withTimeout = async<T>(p: Promise<T>, ms: number, label: string): Promise<T> => {
   let timer: number | null = null
   try {
@@ -116,10 +118,15 @@ const DISMISSABLE_OVERLAYS = new Set(['lxm.VersionModal', 'lxm.PactModal', 'lxm.
 // 必须不呈现：无头 runner 上没有任何东西会去点按钮，而 confirmDialog
 // （utils/tools.ts）把 Alert 包在 Promise 里、只有 onPress/onDismiss 能
 // resolve。run 33061631407 实锤——深链 file:// 探针触发导入确认框后
-// Promise 永挂、弹窗常驻，场景被压成 inactive（appStates 在 +79.0s 转
-// inactive 后再未回 active），连带 background_play 等不到唤回、landscape
-// 的 scene 停在 UIWindowScene(inactive)。RN 的 Alert 无程控关闭 API，
-// 「先呈现再补按 onPress」只能 resolve Promise 而关不掉弹窗，故直接跳过呈现。
+// Promise 永挂，整套自测在该处停摆、不再产出增量报告。RN 的 Alert 无程控
+// 关闭 API，「先呈现再补按 onPress」只能 resolve Promise 而关不掉弹窗，
+// 故直接跳过呈现。
+//
+// 注意：本注释原先还把「场景被压成 inactive」归因于常驻弹窗，**那部分已被
+// run 33144095295 证伪**——该轮弹窗只记录未呈现，场景仍在 +81.2s 转
+// inactive，比弹窗（+87.0s）早 5.8s；真正的触发点是 testDeeplink 里
+// +79.55s 的 Linking.openURL 走 SpringBoard 往返（openurl-native.log
+// 时间戳 1787895995123）。inactive 的后果由横屏阶段的宿主唤回处理。
 //
 // 按首个按钮：confirmDialog 的 buttons[0] 是取消（resolve(false)，不落
 // 实际导入副作用），tipDialog 等单按钮弹窗的唯一按钮也在 0 位。
@@ -1042,6 +1049,16 @@ const testLandscape = async() => {
     await sleep(2000)
   }
   assert(phaseSeen, 'host never entered rotate phase')
+  // 等场景回到 active 再旋转：RN 不给非 active 场景重排版，此时旋转请求
+  // 会被系统接受（interfaceOrientation 变了、geoErrors 为空）但画面不转，
+  // 尺寸断言必失败（run 33144095295）。宿主在本阶段开头已 launch 唤回，
+  // 这里只等其生效；等不到则原样继续，让失败文本带上真实场景状态
+  const tActive = Date.now()
+  while (Date.now() - tActive < 30_000) {
+    if (AppState.currentState === 'active') break
+    await sleep(1000)
+  }
+  const appStateAtRotate = AppState.currentState
   const rotL = await utilsNative.setDeviceOrientation('landscape')
   const tRot = Date.now()
   let landscapeSize = before
@@ -1051,7 +1068,7 @@ const testLandscape = async() => {
     await sleep(500)
   }
   assert(landscapeSize.width > landscapeSize.height,
-    `window size did not flip to landscape (${landscapeSize.width}x${landscapeSize.height}) rot=${JSON.stringify(rotL)}`)
+    `window size did not flip to landscape (${landscapeSize.width}x${landscapeSize.height}) appState=${appStateAtRotate} rot=${JSON.stringify(rotL)}`)
   assert(isHorizontalMode(landscapeSize.width, landscapeSize.height), 'isHorizontalMode false in landscape')
   // 请宿主截图（宿主截图后删除 shot 标记）
   await RNFS.writeFile(landscapeShotMarker(), `${landscapeSize.width}x${landscapeSize.height}`, 'utf8')

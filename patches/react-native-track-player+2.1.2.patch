@@ -1,5 +1,5 @@
 diff --git a/node_modules/react-native-track-player/ios/RNTrackPlayer/RNTrackPlayer.swift b/node_modules/react-native-track-player/ios/RNTrackPlayer/RNTrackPlayer.swift
-index 6ad6d92..0e0b8c6 100644
+index 6ad6d92..93e44a9 100644
 --- a/node_modules/react-native-track-player/ios/RNTrackPlayer/RNTrackPlayer.swift
 +++ b/node_modules/react-native-track-player/ios/RNTrackPlayer/RNTrackPlayer.swift
 @@ -16,13 +16,21 @@ public class RNTrackPlayer: RCTEventEmitter {
@@ -25,19 +25,22 @@ index 6ad6d92..0e0b8c6 100644
          player.event.playbackEnd.addListener(self, handleAudioPlayerPlaybackEnded)
          player.event.receiveMetadata.addListener(self, handleAudioPlayerMetadataReceived)
          player.event.stateChange.addListener(self, handleAudioPlayerStateChange)
-@@ -30,8 +38,20 @@ public class RNTrackPlayer: RCTEventEmitter {
+@@ -30,8 +38,23 @@ public class RNTrackPlayer: RCTEventEmitter {
          player.event.queueIndex.addListener(self, handleAudioPlayerQueueIndexChange)
      }
  
 -    deinit {
 -        reset(resolve: { _ in }, reject: { _, _, _  in })
-+    // lx-ci patch: AVPlayer 绑定 AVAudioSession/路由的时机敏感。模块属性初始化
-+    // 创建的 AVPlayer 早于 setupPlayer 的会话配置/激活，在 iOS 模拟器上出现
-+    // 播放状态 playing 但媒体时钟以 ~1/1000 速率爬升（run 33021891043：30s
-+    // 仅推进 0.028s）。裸 AVPlayer 对照组（会话就绪后创建）以 1x 正常。
-+    // setupPlayer 完成会话配置后重建播放器实例。此时尚未加载任何曲目，
++    // lx-ci patch: 在 setupPlayer 完成会话配置后重建播放器实例，让 AVPlayer
++    // 的创建晚于 AVAudioSession 的 category 配置。此时尚未加载任何曲目，
 +    // 重建无副作用；新实例自带命令/信息控制器（audioPlayer 弱引用指向
-+    // 自身），后续「事件监听设置」段的闭包将赋给新控制器，不能复制旧控制器
++    // 自身），后续「事件监听设置」段的闭包将赋给新控制器，不能复制旧控制器。
++    //
++    // 注意：本函数最初是为修「播放状态 playing 但媒体时钟以 ~1/1000 速率
++    // 爬升」而加的，**那个前提已被 run 33144095295 证伪**——真因是
++    // getPosition/getDuration 的秒/毫秒单位错配（见下方三个 getter 的说明），
++    // 位置一直在正常推进。本函数因此不解决任何已知缺陷，保留仅因「会话先于
++    // 播放器」本身是更稳妥的顺序，且移除需另跑一轮 CI 验证无回归。
 +    private func rebuildPlayer() {
 +        let newPlayer = QueuedAudioPlayer()
 +        newPlayer.automaticallyWaitsToMinimizeStalling = player.automaticallyWaitsToMinimizeStalling
@@ -48,7 +51,7 @@ index 6ad6d92..0e0b8c6 100644
      }
  
      // MARK: - RCTEventEmitter
-@@ -202,6 +222,9 @@ public class RNTrackPlayer: RCTEventEmitter {
+@@ -202,6 +225,9 @@ public class RNTrackPlayer: RCTEventEmitter {
              try? AVAudioSession.sharedInstance().setCategory(sessionCategory, mode: sessionCategoryMode, options: sessionCategoryOptions)
          }
  
@@ -58,7 +61,39 @@ index 6ad6d92..0e0b8c6 100644
          // setup event listeners
          player.remoteCommandController.handleChangePlaybackPositionCommand = { [weak self] event in
              if let event = event as? MPChangePlaybackPositionCommandEvent {
-@@ -651,8 +674,15 @@ public class RNTrackPlayer: RCTEventEmitter {
+@@ -504,17 +530,28 @@ public class RNTrackPlayer: RCTEventEmitter {
+ 
+     @objc(getDuration:rejecter:)
+     public func getDuration(resolve: RCTPromiseResolveBlock, reject: RCTPromiseRejectBlock) {
+-        resolve(player.duration)
++        // lx-ci patch: 单位对齐。fork 的 JS 层（lib/trackPlayer.js:350/363/376）
++        // 对这三个 getter 一律 /1000，因为 Android 侧返回 ExoPlayer 毫秒
++        // （MusicModule.java:479/506 的 long）。iOS 侧原样返回的是 SwiftAudioEx
++        // 的 CMTime.seconds（AVPlayerWrapper.swift:93-110），已是秒，被 JS 层
++        // 多除一次 → 全部读数缩小 1000 倍。
++        // run 33144095295 实锤：90.0000s 的夹具（7938000÷88200，header 精确核过）
++        // getDuration 报 0.09；playback 位置报 0.0284 实为 28.4s，于是
++        // `pos > 0.5` 永不成立，被误判为「位置冻结 / ~1/1000 速率爬升」。
++        // 在原生侧乘 1000 而非改 JS 层——改 JS 会连带变更 Android 行为，
++        // 撞 dev-ios 分支的 non-goal。seekTo 两端本就都按秒（Android
++        // MusicModule.java:398 自行 toMillis），不在此列，勿动。
++        resolve(player.duration * 1000)
+     }
+ 
+     @objc(getBufferedPosition:rejecter:)
+     public func getBufferedPosition(resolve: RCTPromiseResolveBlock, reject: RCTPromiseRejectBlock) {
+-        resolve(player.bufferedPosition)
++        resolve(player.bufferedPosition * 1000)
+     }
+ 
+     @objc(getPosition:rejecter:)
+     public func getPosition(resolve: RCTPromiseResolveBlock, reject: RCTPromiseRejectBlock) {
+-        resolve(player.currentTime)
++        resolve(player.currentTime * 1000)
+     }
+ 
+     @objc(getState:rejecter:)
+@@ -651,8 +688,15 @@ public class RNTrackPlayer: RCTEventEmitter {
          // Load isLiveStream option for track
          var isTrackLiveStream = false
          if let nextIndex = nextIndex {
