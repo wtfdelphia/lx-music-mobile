@@ -71,7 +71,13 @@ clockFrozen: false
 （`background_play` / `landscape`）均为宿主前台切换缺陷，与本单位问题无关，
 见 [landscape-inactive-scene.md](landscape-inactive-scene.md)。
 
+run 33160865120 复现同一结果（`duration: 90`、`resumedPos: 3.000`、
+`pausedPos1/2` 一致），两轮独立 run 一致，排除偶发。
+
 ## 判读边界
 
 真机后台出声（5.2）与锁屏控制（5.3）不在模拟器可验范围，仍留手测——
 模拟器只证明了元数据写入与位置推进，未证明真机扬声器出声与锁屏可操作。
+
+`background_play` 的后台采样段（`bgPos1` → `bgPos2`）两轮均未取到：用例在
+其后的唤回等待处失败，后台位置推进这一项因此仍无 CI 取证。

@@ -71,7 +71,31 @@ landscape:  window size did not flip (402x874) appState=background
 横屏阶段保留这一步作兜底——后台阶段若在 TIMEOUT 处早退，设置页会一路占着
 前台带进横屏阶段。`terminate` 对未运行的 bundle 报错无害。
 
+## 第三轮：terminate 生效但应用仍不回前台（run 33160865120）
+
+`terminate com.apple.Preferences` 确实执行了——横屏阶段的兜底 terminate 报
+`found nothing to terminate`，证明后台阶段那次已把设置页终掉。但应用还是
+没回前台：
+
+```
+appStates:  -25.0s inactive → -25.0s active → +77.7s inactive → +107.8s background
+background_play: host never returned app to foreground
+             (states=inactive,active,inactive,background current=background)
+```
+
+`bg-phase.log` 中 launch 返回 pid 51308，与首次启动同一进程。
+
+所以「Preferences 占前台」只是表层：终掉它之后，`simctl launch` 对已挂起的
+进程依旧不做前台切换。前台推进需要另找通道，尚未定位。
+
+同轮套件未跑完：`finished: false`，21 个用例（应为 25），`durationMs`
+809.6s 对用例耗时之和 393.2s。停在 `background_play` 之后，`landscape` 及
+其后 4 个用例（`user_api_import` / `mainflow_local` / `user_api_regression`）
+未执行。`background_play` 本身耗时 296.8s，含 180s 的唤回空等。
+
+横屏用例本轮没有取到新数据，前一轮的 inactive 结论未被推进也未被推翻。
+
 ## 判读边界
 
-第二轮修复经 YAML 语法与 lint 校验，**横屏是否实际翻转仍待下一轮 CI
-实测**。iPad 布局与真机横屏行为不在模拟器单机型可验范围，仍留手测。
+`landscape` 在 run 33160865120 中未执行，7.4 无 CI 取证。宿主前台切换通道
+待查。iPad 布局与真机横屏行为不在模拟器单机型可验范围，仍留手测。
