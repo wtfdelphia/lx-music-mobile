@@ -1037,7 +1037,7 @@ const testBackgroundPlay = async() => {
 // setDeviceOrientation 仅在自测标记存在时生效），断言窗口尺寸翻转、
 // isHorizontalMode 生效、宿主截图握手、可复原竖屏且全程无意外弹窗
 const testLandscape = async() => {
-  const { windowSizeTools } = await import('@/utils/windowSizeTools')
+  const { windowSizeTools, getWindowSize: getFreshSize } = await import('@/utils/windowSizeTools')
   const { isHorizontalMode } = await import('@/utils/tools')
   const alertsBefore = state.alerts.length
   const before = { ...windowSizeTools.getSize() }
@@ -1068,8 +1068,26 @@ const testLandscape = async() => {
     if (landscapeSize.width > landscapeSize.height) break
     await sleep(500)
   }
+  // 幻影旋转兜底（去程）：iOS 18.5 模拟器上 requestGeometryUpdate 被接受、
+  // 场景方向翻转，但 RN 重排版可能滞后甚至缺席（run 33144095295 起多轮
+  // 实证）。布局事件没触发时改用原生新鲜读数做权威校验并重同步缓存，
+  // 把「布局链路失速」与「系统拒绝旋转」区分开
+  let phantomForward = false
+  if (landscapeSize.width <= landscapeSize.height) {
+    const tPhantom = Date.now()
+    while (Date.now() - tPhantom < 15_000) {
+      const native = await getFreshSize()
+      if (native.width > native.height) {
+        windowSizeTools.setWindowSize(native.width, native.height)
+        landscapeSize = { ...windowSizeTools.getSize() }
+        phantomForward = true
+        break
+      }
+      await sleep(500)
+    }
+  }
   assert(landscapeSize.width > landscapeSize.height,
-    `window size did not flip to landscape (${landscapeSize.width}x${landscapeSize.height}) appState=${appStateAtRotate} rot=${JSON.stringify(rotL)}`)
+    `window size did not flip to landscape (${landscapeSize.width}x${landscapeSize.height}) phantom=${phantomForward} appState=${appStateAtRotate} rot=${JSON.stringify(rotL)}`)
   assert(isHorizontalMode(landscapeSize.width, landscapeSize.height), 'isHorizontalMode false in landscape')
   // 请宿主截图（宿主截图后删除 shot 标记）
   await RNFS.writeFile(landscapeShotMarker(), `${landscapeSize.width}x${landscapeSize.height}`, 'utf8')
@@ -1089,12 +1107,30 @@ const testLandscape = async() => {
     if (restored.height > restored.width) break
     await sleep(500)
   }
+  // 幻影旋转兜底（回程）：run 33244578507 实证——UIKit 已转回竖屏
+  // （rotP.ok=1、interfaceOrientationAfter2s=portrait、geoErrors 为空）但
+  // 物理帧缓冲未转过，复原请求成 no-op，RN 不重排版、缓存停在横屏。
+  // 此时原生读数即权威源：确认竖屏后重同步缓存，恢复后续用例的尺寸基准
+  let phantomRestore = false
+  if (restored.height <= restored.width) {
+    const tPhantom = Date.now()
+    while (Date.now() - tPhantom < 15_000) {
+      const native = await getFreshSize()
+      if (native.height > native.width) {
+        windowSizeTools.setWindowSize(native.width, native.height)
+        restored = { ...windowSizeTools.getSize() }
+        phantomRestore = true
+        break
+      }
+      await sleep(500)
+    }
+  }
   assert(restored.height > restored.width,
-    `window size did not restore to portrait (${restored.width}x${restored.height}) rot=${JSON.stringify(rotP)}`)
+    `window size did not restore to portrait (${restored.width}x${restored.height}) phantom=${phantomRestore} rot=${JSON.stringify(rotP)}`)
   await RNFS.unlink(rotatePhaseMarker()).catch(() => {})
   const newAlerts = state.alerts.slice(alertsBefore)
   assert(newAlerts.length === 0, `unexpected alerts during landscape: ${JSON.stringify(newAlerts)}`)
-  return { portrait: before, landscape: landscapeSize, restored }
+  return { portrait: before, landscape: landscapeSize, restored, phantomForward, phantomRestore }
 }
 
 // 6.9 主流程本地段：搜索（真实网络）→ 收藏 → 歌单管理 → 备份/恢复。
