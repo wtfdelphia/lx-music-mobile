@@ -66,7 +66,7 @@ const utilsNative = NativeModules.UtilsModule as unknown as {
     error: string | null,
   }>,
   // 后台续播原生探针：裸 AVPlayer 循环播夹具，原生记录切后台时刻并采样
-  startBgAudioProbe: (path: string) => Promise<{ started: boolean, posAfterStart: number, timeControlStatus: number, error: string | null }>,
+  startBgAudioProbe: (path: string) => Promise<{ started: boolean | number, posAfterStart: number, timeControlStatus: number, error: string | null }>,
   getBgAudioProbeResult: () => Promise<{
     startedAt: number | null, backgroundedAt: number | null,
     samples: Array<{ delay: number, at: number, pos: number, rate: number }>,
@@ -996,7 +996,10 @@ const testBackgroundPlay = async() => {
   // 音频后台模式保活的前提
   await putils.setPause()
   const startRes = await utilsNative.startBgAudioProbe(`file://${ciSongPath()}`)
-  assert(startRes.started === true, `bg probe failed to start: ${JSON.stringify(startRes)}`)
+  // RN 把原生 @(error==nil) 序列化成数字 1 而非 true（run 33242711976），
+  // 两种形态都判成功
+  const probeStarted = startRes.started === true || startRes.started === 1
+  assert(probeStarted, `bg probe failed to start: ${JSON.stringify(startRes)}`)
   await RNFS.writeFile(bgReadyMarker(), String(Date.now()), 'utf8')
   // 等原生探针记录到切后台：宿主见 bg-ready 即切前台到系统设置，原生
   // 观察者即时记录。JS 切后台后被节流（sleep 会拉长到分钟级），窗口放宽
