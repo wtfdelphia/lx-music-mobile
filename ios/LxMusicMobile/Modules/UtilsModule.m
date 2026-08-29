@@ -426,7 +426,7 @@ RCT_EXPORT_METHOD(startBgAudioProbe:(NSString *)path
           sample(2.0);
           sample(14.0);
         });
-      });
+      }];
       [player play];
       usleep(300 * 1000);
       posAfterStart = CMTimeGetSeconds(player.currentTime);
