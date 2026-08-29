@@ -358,6 +358,114 @@ RCT_EXPORT_METHOD(audioClockProbe:(NSString *)path
   });
 }
 
+// CI 自测（任务 5.2 后台续播）：原生后台采样探针。
+// run 33233955428 实锤：应用切后台后 RN JS 线程被重度节流——AppState
+// 事件晚到 178s，JS 轮询等待与 JS 侧采样都不可靠。采样下沉到原生：
+// 裸 AVPlayer 接管夹具并循环播放（音频后台模式保活要求全程有声），
+// UIApplicationDidEnterBackground 观察者记录切后台时刻，并在其后
+// +2s/+14s 原生采样播放器位置。JS 何时醒来何时读，判据不依赖 JS 时序。
+static AVPlayer *lxciBgProbePlayer = nil;
+static NSMutableDictionary *lxciBgProbeState = nil;
+
+RCT_EXPORT_METHOD(startBgAudioProbe:(NSString *)path
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSString *tmp = NSTemporaryDirectory();
+  NSString *marker = [tmp stringByAppendingPathComponent:@".lx-ci-selftest"];
+  if (![[NSFileManager defaultManager] fileExistsAtPath:marker]) {
+    reject(@"not_allowed", @"bg audio probe requires the CI self-test marker", nil);
+    return;
+  }
+  NSURL *fileURL = [NSURL URLWithString:path];
+  if (fileURL == nil) {
+    fileURL = [NSURL fileURLWithPath:(path ?: @"")];
+  }
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    NSString *error = nil;
+    double posAfterStart = -1.0;
+    NSInteger timeControlStatus = -1;
+    @try {
+      // 状态先于观察者就位：后台事件可能在观察者注册后立即到达，
+      // 状态未就位会被观察者当作未启动丢弃
+      lxciBgProbeState = [NSMutableDictionary dictionary];
+      lxciBgProbeState[@"startedAt"] = @((long long)([[NSDate date] timeIntervalSince1970] * 1000.0));
+      lxciBgProbeState[@"samples"] = [NSMutableArray array];
+      AVURLAsset *asset = [AVURLAsset assetWithURL:fileURL];
+      AVPlayerItem *item = [AVPlayerItem playerItemWithAsset:asset];
+      AVPlayer *player = [AVPlayer playerWithPlayerItem:item];
+      lxciBgProbePlayer = player;
+      // 播完即回卷重播：夹具 90s，套件后台段可能持续数十分钟，
+      // 音频一停应用就可能被系统回收
+      [[NSNotificationCenter defaultCenter] addObserverForName:AVPlayerItemDidPlayToEndTimeNotification
+                                                        object:item
+                                                         queue:[NSOperationQueue mainQueue]
+                                                    usingBlock:^(NSNotification *note) {
+        [player seekToTime:kCMTimeZero];
+        [player play];
+      }];
+      [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidEnterBackgroundNotification
+                                                        object:nil
+                                                         queue:[NSOperationQueue mainQueue]
+                                                    usingBlock:^(NSNotification *note) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+          if (lxciBgProbeState == nil) return;
+          lxciBgProbeState[@"backgroundedAt"] = @((long long)([[NSDate date] timeIntervalSince1970] * 1000.0));
+          void (^sample)(double) = ^(double delay) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+              if (lxciBgProbeState == nil) return;
+              double seconds = CMTimeGetSeconds(player.currentTime);
+              [(NSMutableArray *)lxciBgProbeState[@"samples"] addObject:@{
+                @"delay": @(delay),
+                @"at": @((long long)([[NSDate date] timeIntervalSince1970] * 1000.0)),
+                @"pos": @(isnan(seconds) ? -1.0 : seconds),
+                @"rate": @(player.rate),
+              }];
+            });
+          };
+          sample(2.0);
+          sample(14.0);
+        });
+      });
+      [player play];
+      usleep(300 * 1000);
+      posAfterStart = CMTimeGetSeconds(player.currentTime);
+      timeControlStatus = player.timeControlStatus;
+    } @catch (NSException *exception) {
+      error = [NSString stringWithFormat:@"%@: %@", exception.name, exception.reason];
+    }
+    resolve(@{
+      @"started": @(error == nil),
+      @"posAfterStart": @(isnan(posAfterStart) ? -1.0 : posAfterStart),
+      @"timeControlStatus": @(timeControlStatus),
+      @"error": error ?: (id)[NSNull null],
+    });
+  });
+}
+
+// CI 自测：读取后台探针结果。未启动（或初始化尚未落到主队列）返回
+// null；已启动则带回切后台时刻与原生采样（可能尚未采完，长度 0-2）。
+// 状态创建在后台队列、后续读写均在主队列，与观察者/采样块同队列免竞态。
+RCT_EXPORT_METHOD(getBgAudioProbeResult:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (lxciBgProbeState == nil) {
+      resolve([NSNull null]);
+      return;
+    }
+    double seconds = CMTimeGetSeconds(lxciBgProbePlayer.currentTime);
+    resolve(@{
+      @"startedAt": lxciBgProbeState[@"startedAt"] ?: [NSNull null],
+      @"backgroundedAt": lxciBgProbeState[@"backgroundedAt"] ?: [NSNull null],
+      @"samples": [(NSMutableArray *)lxciBgProbeState[@"samples"] copy],
+      @"posNow": @(isnan(seconds) ? -1.0 : seconds),
+      @"rateNow": @(lxciBgProbePlayer.rate),
+      @"playingNow": @(lxciBgProbePlayer.timeControlStatus == AVPlayerTimeControlStatusPlaying),
+    });
+  });
+}
+
 // CI 自测：锁屏/控制中心 Now Playing 面板内容（任务 5.3/5.4）。
 // 返回 MPNowPlayingInfoCenter 当前信息的可读子集；无内容时 resolve(null)。
 RCT_EXPORT_METHOD(getNowPlayingInfo:(RCTPromiseResolveBlock)resolve

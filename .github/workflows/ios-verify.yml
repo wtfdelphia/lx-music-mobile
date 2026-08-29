@@ -260,13 +260,47 @@ jobs:
             rm -f "$marker"
           done
 
+      - name: 横屏阶段（标记握手：应用内驱动旋转，宿主截图取证）
+        working-directory: ios/build/Build/Products/Release-iphonesimulator
+        run: |
+          rotate_phase="$CONTAINER/tmp/lx-ci-rotate-phase"
+          shot="$CONTAINER/tmp/lx-ci-landscape-shot"
+          { echo "--- landscape phase ---"
+            # 横屏在深链探针之前：深链的 SpringBoard 往返会把场景压成
+            # inactive，RN 不给非 active 场景重排版——旋转请求会被接受
+            # （interfaceOrientation 报 landscape、geoErrors 为空）但画面不转
+            # （run 33144095295/33233955428）。此刻应用仍在前台且场景
+            # active，launch 仅幂等激活兜底。本阶段还须赶在深链探针前：
+            # file:// 探针的导入弹窗会撞横屏用例的无弹窗断言
+            xcrun simctl launch "$UDID" cn.toside.music.mobile 2>&1 || echo "ROTATE_WAKE_FAILED"
+            sleep 3
+            echo "landscape $(date +%s)" > "$rotate_phase"
+            ok=0
+            for i in $(seq 1 90); do [ -f "$shot" ] && { ok=1; break; }; sleep 2; done
+            echo "landscape-shot marker: $([ "$ok" = 1 ] && echo READY || echo TIMEOUT)"
+            echo "shot content: $(cat "$shot" 2>/dev/null || echo '<none>')"
+            xcrun simctl io "$UDID" screenshot landscape.png || echo "LANDSCAPE_SHOT_FAILED"
+            rm -f "$shot"
+            if [ "$ok" = 1 ]; then
+              # 等应用复原竖屏（应用复原后删除 rotate-phase）
+              ok=0
+              for i in $(seq 1 45); do [ ! -f "$rotate_phase" ] && { ok=1; break; }; sleep 2; done
+              echo "portrait restored: $([ "$ok" = 1 ] && echo YES || echo TIMEOUT)"
+            else
+              # 截图未至（横屏用例已提前失败）：不复原等待，清相位标记，
+              # 避免失败尾延迟后续阶段（run 33233955428：270s 尾部
+              # 压缩后台握手窗口直至失配）
+              rm -f "$rotate_phase"
+              echo "portrait restored: SKIPPED (shot timeout)"
+            fi; } | tee landscape-phase.log
+
       - name: 深链探针（等待 Tab 阶段结束后发送）
         working-directory: ios/build/Build/Products/Release-iphonesimulator
         run: |
           tabs_done="$CONTAINER/tmp/lx-ci-tabs-done"
           for i in $(seq 1 30); do [ -f "$tabs_done" ] && break; sleep 2; done
           echo "tabs-done marker: $([ -f "$tabs_done" ] && echo YES || echo NO)"
-          # 任务 6.8 深色跟随：Tab 阶段结束后切设备外观为 dark，
+          # 任务 6.8 深色跟随：横屏阶段结束后切设备外观为 dark，
           # 应用内 auto_theme 用例轮询 Appearance 翻转与主题 isDark
           xcrun simctl ui "$UDID" appearance dark 2>&1 || echo "APPEARANCE_SWITCH_FAILED"
           APP_PID=$(cat app-pid.txt 2>/dev/null || true)
@@ -292,48 +326,17 @@ jobs:
           # 通知应用内自测：探针已发送，可进入报告阶段
           touch "$CONTAINER/tmp/.lx-ci-probe-sent"
 
-      - name: 横屏阶段（标记握手：应用内驱动旋转，宿主截图取证）
-        working-directory: ios/build/Build/Products/Release-iphonesimulator
-        run: |
-          rotate_phase="$CONTAINER/tmp/lx-ci-rotate-phase"
-          shot="$CONTAINER/tmp/lx-ci-landscape-shot"
-          { echo "--- landscape phase ---"
-            # 先确保应用在前台：横屏用例断言窗口尺寸翻转，而 RN 不会给非
-            # active 的场景重排版——scene 停在 inactive/background 时旋转请求
-            # 会被接受（interfaceOrientation 已报 landscape、geoErrors 为空）
-            # 但画面不转，Dimensions 不发变更、onLayout 不触发，断言必失败
-            # （run 33144095295：rot.ok=1 且 interfaceOrientationAfter2s
-            # =landscape，windowSizeTools 仍是 402x874，截图 1206x2622 竖屏）。
-            # 此时后台阶段尚未跑、应用仍在前台，launch 是幂等激活，用于恢复
-            # 深链 SpringBoard 往返后可能停在 inactive 的场景（不能指望后台
-            # 唤回：simctl launch 对挂起进程不做前台切换，判读见
-            # evidence/landscape-inactive-scene.md）
-            xcrun simctl launch "$UDID" cn.toside.music.mobile 2>&1 || echo "ROTATE_WAKE_FAILED"
-            sleep 3
-            echo "landscape $(date +%s)" > "$rotate_phase"
-            ok=0
-            for i in $(seq 1 90); do [ -f "$shot" ] && { ok=1; break; }; sleep 2; done
-            echo "landscape-shot marker: $([ "$ok" = 1 ] && echo READY || echo TIMEOUT)"
-            echo "shot content: $(cat "$shot" 2>/dev/null || echo '<none>')"
-            xcrun simctl io "$UDID" screenshot landscape.png || echo "LANDSCAPE_SHOT_FAILED"
-            rm -f "$shot"
-            # 等应用复原竖屏（应用复原后删除 rotate-phase）
-            ok=0
-            for i in $(seq 1 45); do [ ! -f "$rotate_phase" ] && { ok=1; break; }; sleep 2; done
-            echo "portrait restored: $([ "$ok" = 1 ] && echo YES || echo TIMEOUT)"; } | tee landscape-phase.log
-
-      - name: 后台续播阶段（标记握手：起播就绪→切后台→采样；无需唤回）
+      - name: 后台续播阶段（起播就绪→切后台；采样在原生探针）
         working-directory: ios/build/Build/Products/Release-iphonesimulator
         run: |
           bg_ready="$CONTAINER/tmp/lx-ci-bg-ready"
-          bg_done="$CONTAINER/tmp/lx-ci-bg-done"
           suite_done="$CONTAINER/tmp/lx-ci-done"
           { echo "--- background phase ---"
             ok=0
-            # 后台续播是套件最后一个用例（模拟器无可靠通道把挂起进程唤回
-            # 前台，套件切后台后就地写报告收尾），bg-ready 要等横屏/导入/
-            # 主流程/回归集全跑完才出现，等待窗口放宽到 25 分钟；套件已
-            # 写完终局报告而 bg-ready 始终未出现（后台用例未跑到）则早退
+            # 后台续播是套件最后一个用例（切后台后 JS 被重度节流，套件就地
+            # 写报告收尾），bg-ready 要等横屏/深链/导入/主流程/回归集全跑完
+            # 才出现，等待窗口 25 分钟；套件已写完终局报告而 bg-ready 始终
+            # 未出现（后台用例未跑到）则早退
             for i in $(seq 1 750); do
               [ -f "$bg_ready" ] && { ok=1; break; }
               [ -f "$suite_done" ] && break
@@ -342,12 +345,10 @@ jobs:
             echo "bg-ready marker: $([ "$ok" = 1 ] && echo READY || echo TIMEOUT)"
             [ "$ok" = 1 ] || exit 0
             # 把前台切到系统设置，应用进入后台（音频后台模式应续播）。
-            # 采样完成（bg-done）后不再唤回：套件在后台写终局报告 +
-            # lx-ci-done 收尾，音频播放保持进程存活到落盘
-            xcrun simctl launch "$UDID" com.apple.Preferences 2>&1 || echo "BG_LAUNCH_FAILED"
-            ok=0
-            for i in $(seq 1 90); do [ -f "$bg_done" ] && { ok=1; break; }; sleep 2; done
-            echo "bg-done marker: $([ "$ok" = 1 ] && echo DONE || echo TIMEOUT)"; } | tee bg-phase.log
+            # 切后台时刻与位置采样由原生探针记录（run 33233955428 实锤
+            # JS 侧采样不可靠），宿主无回握标记可等，切完即走；套件在后台
+            # 写完终局报告 + lx-ci-done，由报告采集步骤收口
+            xcrun simctl launch "$UDID" com.apple.Preferences 2>&1 || echo "BG_LAUNCH_FAILED"; } | tee bg-phase.log
 
       - name: 采集自测报告并断言
         working-directory: ios/build/Build/Products/Release-iphonesimulator
@@ -358,8 +359,10 @@ jobs:
           ok=0
           # 等套件完成标记（应用每用例增量落盘部分报告，报告文件存在
           # 不再是完成信号；lx-ci-done 仅在套件跑完时写）。应用进程
-          # 崩溃则提前退出轮询——部分报告 + 崩溃文件即完整取证面
-          for i in $(seq 1 288); do
+          # 崩溃则提前退出轮询——部分报告 + 崩溃文件即完整取证面。
+          # 窗口 60min：后台用例受 JS 节流影响，探针等待 + 报告落盘
+          # 全套最坏 ~45min（应用侧 watchdog 45min 须先于本窗口开火）
+          for i in $(seq 1 720); do
             [ -f "$DONE" ] && { ok=1; break; }
             if [ -n "$APP_PID" ] && ! kill -0 "$APP_PID" 2>/dev/null; then
               echo "app PID $APP_PID died at poll $i - breaking wait"

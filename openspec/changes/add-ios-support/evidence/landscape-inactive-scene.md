@@ -127,3 +127,43 @@ background_play: host never returned app to foreground
 - 模拟器侧「把挂起应用唤回前台」的能力缺口保持未解决，但套件内已无
   其他用例需要它。真机后台出声（5.2）与锁屏控制（5.3）不在模拟器可验
   范围，仍留手测。
+
+## 第五轮：套件跑整，暴露后台 JS 节流（run 33233955428，2026-08-29）
+
+策略转向生效：25 个用例全部执行（`finished: true`，23 PASS），不再停在
+后台用例。剩余 2 项失败的根因链：
+
+1. `landscape`：深链用例（套件序在其前）的 SpringBoard 往返把场景压成
+   inactive（appStates +55.4s inactive），其后旋转被接受但不重排版——
+   与第一轮同型（失败文本 `appState=inactive`）。宿主 launch 没能把前台
+   但 inactive 的场景激活回 active，上一轮「幂等激活足以恢复」的设想
+   证伪：inactive 出现在深链用例内、早于横屏阶段的唤回动作。
+2. `background_play`：宿主切 Preferences 后 ~2s 应用已真进后台，但
+   AppState 事件晚到 178s（`states=inactive,active,inactive,background`
+   的 background 恰在 180s 等待出窗后 ~0.2s 才被 JS 处理）——切后台后
+   RN JS 线程被重度节流。终局报告同样拖到套件起始 +1434s 才落盘
+   （用例耗时之和仅 ~594s），后台段 JS 收尾按分钟级爬行。
+3. 宿主横屏阶段失败尾 270s（shot 等待 180s + 复原等待 90s）级联压缩
+   后台阶段窗口，与 2 叠加成 0.2s 失配。
+
+修复（不与节流对抗，绕开它）：
+
+- 后台采样下沉原生：UtilsModule 新增 `startBgAudioProbe` /
+  `getBgAudioProbeResult`（自测标记门控）。裸 AVPlayer 接管夹具循环
+  播放（音频一停进程就可能被回收），`UIApplicationDidEnterBackground`
+  原生记录切后台时刻，+2s/+14s 原生 `dispatch_after` 采样位置。JS 何时
+  醒来何时读，判据不依赖 JS 时序；探针结果同时进 `collectEnv`，用例没
+  读完也随报告落盘。
+- 用例序改 `…tab_switch → landscape → auto_theme → deeplink → … →
+  background_play`：横屏趁场景还 active、赶在深链探针之前（file://
+  探针的导入弹窗会撞横屏无弹窗断言）；宿主阶段序同步（横屏 → 深链
+  探针 → 后台）。深色切换随深链探针步骤后移，auto_theme 窗口（180s）
+  覆盖该偏移。
+- 宿主横屏阶段 shot TIMEOUT 时不再等复原（清相位标记即走），失败尾
+  270s → 180s。
+- 预算：后台用例 30min、套件 watchdog 45min、宿主报告轮询 60min，
+  覆盖节流后的分钟级爬行。
+
+判读边界：本轮证明「切后台后 JS 不可靠」，未证明节流的确切机制
+（定时器合并 / 优先级压低 / 场景态耦合，候选未区分）。原生探针绕过该
+问题，不解释它。

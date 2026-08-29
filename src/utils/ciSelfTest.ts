@@ -37,10 +37,9 @@ const nativeOpenUrlLog = () => `${tmpDir()}/lx-ci-openurl.log`
 // CI 音频夹具：宿主在 install 后投递到沙箱 tmp（后台续播用例的确定性音源，零外网依赖）
 const ciSongPath = () => `${tmpDir()}/lx-ci-song.wav`
 const ciPicPath = () => `${tmpDir()}/lx-ci-pic.png`
-// 后台续播握手标记：应用起播就绪后写 bg-ready，宿主把前台切到系统设置
-// （应用进入后台），采样完成后应用写 bg-done，宿主把应用唤回前台
+// 后台续播握手标记：原生探针起播就绪后写 bg-ready，宿主把前台切到系统
+// 设置（应用进入后台）；切后台时刻与位置采样由原生探针记录，无回握标记
 const bgReadyMarker = () => `${tmpDir()}/lx-ci-bg-ready`
-const bgDoneMarker = () => `${tmpDir()}/lx-ci-bg-done`
 // 横屏握手标记：宿主写 rotate-phase 进入横屏阶段，应用确认尺寸翻转后写
 // landscape-shot 请宿主截图
 const rotatePhaseMarker = () => `${tmpDir()}/lx-ci-rotate-phase`
@@ -66,15 +65,16 @@ const utilsNative = NativeModules.UtilsModule as unknown as {
     clockAdvances: boolean,
     error: string | null,
   }>,
+  // 后台续播原生探针：裸 AVPlayer 循环播夹具，原生记录切后台时刻并采样
+  startBgAudioProbe: (path: string) => Promise<{ started: boolean, posAfterStart: number, timeControlStatus: number, error: string | null }>,
+  getBgAudioProbeResult: () => Promise<{
+    startedAt: number | null, backgroundedAt: number | null,
+    samples: Array<{ delay: number, at: number, pos: number, rate: number }>,
+    posNow: number, rateNow: number, playingNow: boolean,
+  } | null>,
 }
 
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
-
-// 后台安全睡眠：普通 setTimeout 在应用切后台后可能被挂起，
-// 后台续播采样必须用 BackgroundTimer（后台音频模式下仍持续触发）
-const bgSleep = (ms: number) => new Promise<void>(resolve => {
-  BackgroundTimer.setTimeout(() => resolve(), ms)
-})
 
 // 超时护栏用 BackgroundTimer 而非 setTimeout：RN 的 JS 计时器在应用非
 // active 时可能被挂起，护栏本身随之失效。run 33061631407 实锤——套件在
@@ -957,11 +957,12 @@ const testPlayback = async() => {
   return { startedAt: pos, playingSeen, clockFrozen, pausedPos1, pausedPos2, resumedPos, nowPlaying: np, lyricTitle: np2?.title }
 }
 
-// 5.2/5.3 后台播放：宿主收到 bg-ready 标记后把前台切到系统设置，应用内
-// 采样「后台期间位置持续推进」。本用例是套件最后一个用例，断言过后套件
-// 就在后台写报告收尾——模拟器上无可靠通道把挂起进程唤回前台（simctl
-// launch 只返回原 pid、openurl 对自定义 scheme 吞件），不再依赖唤回，
-// 判读见 evidence/landscape-inactive-scene.md
+// 5.2/5.3 后台播放：前台恢复播放断言推进后，切原生探针接管音频（裸
+// AVPlayer 循环播夹具），写 bg-ready，宿主把前台切到系统设置。切后台时
+// 刻与位置采样全部在原生记录——run 33233955428 实锤切后台后 RN JS 被
+// 重度节流（AppState 事件晚到 178s、终局报告拖 ~20 分钟才落盘），
+// AppState 轮询与 JS 侧采样都不可靠。JS 何时醒来何时读探针结果。
+// 本用例是套件最后一项，断言过后套件在后台写报告收尾。
 const testBackgroundPlay = async() => {
   const putils = await import('@/plugins/player/utils')
   // 承接 testPlayback 的音频时钟判据。注意：GH runner 上探针实测时钟正常
@@ -988,45 +989,45 @@ const testBackgroundPlay = async() => {
       await sleep(500)
     }
   }
-  if (clockFrozen) {
-    // 位置不可判：改断言播放状态机进入 playing（起播确实发生）
-    const tState = Date.now()
-    const beforeLen = state.playbackStates.length
-    let playingResumed = false
-    while (Date.now() - tState < 15_000) {
-      playingResumed = state.playbackStates.slice(beforeLen).some(e => e.state === 'playing')
-      if (playingResumed) break
-      await sleep(500)
-    }
-    assert(playingResumed, `resume did not re-enter playing state (before=${posBefore} after=${posAfter})`)
-  } else {
-    assert(restartSeeked ? posAfter > 0.5 : posAfter > posBefore + 0.5,
-      `resume did not advance position (before=${posBefore} after=${posAfter} restartSeeked=${restartSeeked})`)
-  }
+  assert(clockFrozen || (restartSeeked ? posAfter > 0.5 : posAfter > posBefore + 0.5),
+    `resume did not advance position (before=${posBefore} after=${posAfter} restartSeeked=${restartSeeked})`)
+  // 原生探针接管音频：先停 track-player 再起裸 AVPlayer（循环播放），
+  // 探针起播后才写 bg-ready——宿主见标记 2s 内切后台，全程有声是
+  // 音频后台模式保活的前提
+  await putils.setPause()
+  const startRes = await utilsNative.startBgAudioProbe(`file://${ciSongPath()}`)
+  assert(startRes.started === true, `bg probe failed to start: ${JSON.stringify(startRes)}`)
   await RNFS.writeFile(bgReadyMarker(), String(Date.now()), 'utf8')
-  // 等待进入后台（宿主切前台到系统设置）
+  // 等原生探针记录到切后台：宿主见 bg-ready 即切前台到系统设置，原生
+  // 观察者即时记录。JS 切后台后被节流（sleep 会拉长到分钟级），窗口放宽
+  // 到 6 分钟；每轮醒来先读探针再判超时，超时后才到的切后台也不丢
+  let probe: Awaited<ReturnType<typeof utilsNative.getBgAudioProbeResult>> = null
   const tBg = Date.now()
-  let enteredBg = false
-  while (Date.now() - tBg < 180_000) {
-    if (state.appStates.some(e => e.s === 'background')) { enteredBg = true; break }
-    await sleep(1000)
+  for (;;) {
+    probe = await utilsNative.getBgAudioProbeResult()
+    if (probe?.backgroundedAt) break
+    if (Date.now() - tBg > 360_000) break
+    await sleep(2000)
   }
-  assert(enteredBg, `app never backgrounded (states=${state.appStates.map(e => e.s).join(',')})`)
-  const bgPos1 = await putils.getPosition()
-  await bgSleep(12_000)
-  const bgPos2 = await putils.getPosition()
-  await RNFS.writeFile(bgDoneMarker(), String(Date.now()), 'utf8')
+  assert(probe?.backgroundedAt, `app never backgrounded per native probe (${JSON.stringify(probe)})`)
+  // 等 +2s/+14s 原生采样完成（原生 dispatch_after 定时，不受 JS 节流影响）
+  const tSample = Date.now()
+  for (;;) {
+    probe = await utilsNative.getBgAudioProbeResult()
+    if ((probe?.samples.length ?? 0) >= 2) break
+    if (Date.now() - tSample > 1_200_000) break
+    await sleep(2000)
+  }
+  const samples = probe?.samples ?? []
+  assert(samples.length >= 2, `bg sampling incomplete: ${JSON.stringify(probe)}`)
   // 后台续播硬断言仅在时钟可测时成立；时钟冻结时位置恒不走，
-  // 续播证据降为「后台期间会话未断开 + 宿主阶段握手完成」
-  if (!clockFrozen) assert(bgPos2 > bgPos1 + 5, `audio did not continue in background (${bgPos1} -> ${bgPos2})`)
-  // 不等唤回：本用例是套件最后一项，断言过后套件在后台写报告 + done 标记
-  // 收尾（秒级），夹具剩余时长足够覆盖。不 setPause——音频后台模式保持
-  // 进程存活到报告落盘；进程随后随模拟器销毁被回收，无前台恢复需求
-  return {
-    bgPos1, bgPos2,
-    bgProgress: bgPos2 - bgPos1,
-    states: state.appStates.map(e => e.s),
+  // 续播证据降为「切后台发生 + 会话未断开」
+  if (!clockFrozen) {
+    const [s1, s2] = samples
+    assert(s2.pos - s1.pos > 5,
+      `audio did not continue in background (${s1.pos} -> ${s2.pos}, rates=${s1.rate},${s2.rate})`)
   }
+  return { probe }
 }
 
 // 7.4 横屏：应用内驱动旋转（宿主无可靠无头旋转通道，原生侧
@@ -1214,6 +1215,9 @@ const collectEnv = async() => {
     cheatTipValue = JSON.parse(String(await AsyncStorage.getItem(storageDataPrefix.cheatTip)))
     settingValue = JSON.parse(String(await AsyncStorage.getItem(storageDataPrefix.setting)))
   } catch { /* 忽略 */ }
+  // 原生后台探针取证：即使后台用例未读完采样也随报告落盘
+  let bgAudioProbe: Awaited<ReturnType<typeof utilsNative.getBgAudioProbeResult>> = null
+  try { bgAudioProbe = await utilsNative.getBgAudioProbeResult() } catch { /* 缺取证不阻断报告 */ }
   return {
     bootLog: bootLogText,
     ciRuntime,
@@ -1223,6 +1227,7 @@ const collectEnv = async() => {
     langId: settingValue?.['common.langId'] ?? null,
     playerStatus: global.lx?.playerStatus ?? null,
     linkingListeners: state.linkingListeners,
+    bgAudioProbe,
   }
 }
 
@@ -1280,17 +1285,20 @@ const runSuite = async() => {
     await runTest('toast_overlay', testToast)
     await runTest('version_update_release', testVersionUpdate)
     await runTest('tab_switch', testTabs, 300_000)
+    // 横屏在深链之前：深链的 SpringBoard 往返会把场景压成 inactive
+    // （run 33233955428：旋转被接受但不重排版），旋转必须趁场景还 active；
+    // 也须赶在宿主深链探针之前（file:// 探针的导入弹窗会撞横屏用例的
+    // 无弹窗断言）。宿主耦合顺序与 ios-verify.yml 一致
+    // （横屏阶段 → 深链探针 → 后台阶段）
+    await runTest('landscape', testLandscape, 300_000)
     await runTest('auto_theme', testAutoTheme, 180_000)
     await runTest('deeplink', testDeeplink)
-    // 宿主耦合段：横屏依赖宿主按标记握手截图，顺序必须与 ios-verify.yml
-    // 的阶段顺序一致（横屏阶段 → 后台阶段）
-    await runTest('landscape', testLandscape, 300_000)
     await runTest('user_api_import', testUserApiImport)
     await runTest('mainflow_local', testMainflowLocal, 300_000)
     await runTest('user_api_regression', testScriptsRegression, 300_000)
-    // 后台续播放最后：模拟器无可靠通道把挂起进程唤回前台，套件切后台后
-    // 就地写完报告收尾（判读见 evidence/landscape-inactive-scene.md）
-    await runTest('background_play', testBackgroundPlay, 300_000)
+    // 后台续播放最后：套件切后台后就地写完报告收尾；判据走原生探针
+    // （切后台后 JS 被重度节流，run 33233955428），预算含节流恢复时间
+    await runTest('background_play', testBackgroundPlay, 1_800_000)
   } finally {
     try { await writeReport() } catch { /* 报告写失败不崩应用 */ }
   }
@@ -1298,8 +1306,9 @@ const runSuite = async() => {
 
 // 套件级兜底：无论 runSuite 卡在哪，到点都落一次终局报告 + lx-ci-done，
 // 把「无声挂死 + 宿主轮询跑满」换成「带 suite_watchdog 结果的可判读失败」。
-// 上限取 20min——宿主报告采集轮询是 288×5s=24min，watchdog 须在其之内开火
-const SUITE_WATCHDOG_MS = 20 * 60 * 1000
+// 上限取 45min——后台用例受 JS 节流影响预算 30min，全套最坏 ~41min；
+// 宿主报告采集轮询 720×5s=60min，watchdog 须在其之内开火
+const SUITE_WATCHDOG_MS = 45 * 60 * 1000
 const runSuiteGuarded = async() => {
   let settled = false
   const watchdog = BackgroundTimer.setTimeout(() => {
