@@ -957,8 +957,11 @@ const testPlayback = async() => {
   return { startedAt: pos, playingSeen, clockFrozen, pausedPos1, pausedPos2, resumedPos, nowPlaying: np, lyricTitle: np2?.title }
 }
 
-// 5.2/5.3 后台播放：宿主收到 lock-ready 标记后把应用切后台（启动系统
-// 设置），应用内采样「后台期间位置持续推进」，随后宿主唤回前台
+// 5.2/5.3 后台播放：宿主收到 bg-ready 标记后把前台切到系统设置，应用内
+// 采样「后台期间位置持续推进」。本用例是套件最后一个用例，断言过后套件
+// 就在后台写报告收尾——模拟器上无可靠通道把挂起进程唤回前台（simctl
+// launch 只返回原 pid、openurl 对自定义 scheme 吞件），不再依赖唤回，
+// 判读见 evidence/landscape-inactive-scene.md
 const testBackgroundPlay = async() => {
   const putils = await import('@/plugins/player/utils')
   // 承接 testPlayback 的音频时钟判据。注意：GH runner 上探针实测时钟正常
@@ -1016,18 +1019,9 @@ const testBackgroundPlay = async() => {
   // 后台续播硬断言仅在时钟可测时成立；时钟冻结时位置恒不走，
   // 续播证据降为「后台期间会话未断开 + 宿主阶段握手完成」
   if (!clockFrozen) assert(bgPos2 > bgPos1 + 5, `audio did not continue in background (${bgPos1} -> ${bgPos2})`)
-  // 等待宿主唤回前台
-  const tFg = Date.now()
-  let backFg = false
-  while (Date.now() - tFg < 180_000) {
-    if (AppState.currentState === 'active') { backFg = true; break }
-    await sleep(1000)
-  }
-  // 失败时带上完整状态序列：宿主唤回失效表现为停在 background 再无
-  // active（run 33157696254：simctl launch 对挂起进程只返回原 pid，
-  // 占前台的 Preferences 未终掉，前台切换不发生）
-  assert(backFg, `host never returned app to foreground (states=${state.appStates.map(e => e.s).join(',')} current=${AppState.currentState})`)
-  await putils.setPause()
+  // 不等唤回：本用例是套件最后一项，断言过后套件在后台写报告 + done 标记
+  // 收尾（秒级），夹具剩余时长足够覆盖。不 setPause——音频后台模式保持
+  // 进程存活到报告落盘；进程随后随模拟器销毁被回收，无前台恢复需求
   return {
     bgPos1, bgPos2,
     bgProgress: bgPos2 - bgPos1,
@@ -1288,14 +1282,15 @@ const runSuite = async() => {
     await runTest('tab_switch', testTabs, 300_000)
     await runTest('auto_theme', testAutoTheme, 180_000)
     await runTest('deeplink', testDeeplink)
-    // 宿主耦合段：后台续播与横屏依赖宿主按标记握手切换前台/截图，
-    // 顺序必须与 ios-verify.yml 的阶段顺序一致（后台阶段 → 横屏阶段）
-    await runTest('background_play', testBackgroundPlay, 300_000)
+    // 宿主耦合段：横屏依赖宿主按标记握手截图，顺序必须与 ios-verify.yml
+    // 的阶段顺序一致（横屏阶段 → 后台阶段）
     await runTest('landscape', testLandscape, 300_000)
     await runTest('user_api_import', testUserApiImport)
     await runTest('mainflow_local', testMainflowLocal, 300_000)
-    // 回归集耗时最长且无宿主时序依赖，放最后跑
     await runTest('user_api_regression', testScriptsRegression, 300_000)
+    // 后台续播放最后：模拟器无可靠通道把挂起进程唤回前台，套件切后台后
+    // 就地写完报告收尾（判读见 evidence/landscape-inactive-scene.md）
+    await runTest('background_play', testBackgroundPlay, 300_000)
   } finally {
     try { await writeReport() } catch { /* 报告写失败不崩应用 */ }
   }

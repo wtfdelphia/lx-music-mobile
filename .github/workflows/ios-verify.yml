@@ -292,33 +292,6 @@ jobs:
           # 通知应用内自测：探针已发送，可进入报告阶段
           touch "$CONTAINER/tmp/.lx-ci-probe-sent"
 
-      - name: 后台续播阶段（标记握手：起播就绪→切后台→采样→唤回）
-        working-directory: ios/build/Build/Products/Release-iphonesimulator
-        run: |
-          bg_ready="$CONTAINER/tmp/lx-ci-bg-ready"
-          bg_done="$CONTAINER/tmp/lx-ci-bg-done"
-          { echo "--- background phase ---"
-            ok=0
-            # bg-ready 在播放恢复后数秒内写出；60s 未出现即永远不会出现。
-            # 轮询窗口必须短于应用侧横屏用例的等相位窗口（180s），
-            # 否则后台用例提前失败时横屏相位失步（run 32982319768 实证）
-            for i in $(seq 1 30); do [ -f "$bg_ready" ] && { ok=1; break; }; sleep 2; done
-            echo "bg-ready marker: $([ "$ok" = 1 ] && echo READY || echo TIMEOUT)"
-            [ "$ok" = 1 ] || exit 0
-            # 把前台切到系统设置，应用进入后台（音频后台模式应续播）
-            xcrun simctl launch "$UDID" com.apple.Preferences 2>&1 || echo "BG_LAUNCH_FAILED"
-            ok=0
-            for i in $(seq 1 90); do [ -f "$bg_done" ] && { ok=1; break; }; sleep 2; done
-            echo "bg-done marker: $([ "$ok" = 1 ] && echo DONE || echo TIMEOUT)"
-            # 唤回前台：必须先终掉占前台的 Preferences。`simctl launch` 对
-            # 已在运行的挂起进程只返回原 pid、不做前台切换（run 33157696254
-            # 实锤：两次 launch 都回同一 pid 63664，AppState 停在 background
-            # 再无 active，横屏截图前台仍是设置页）
-            xcrun simctl terminate "$UDID" com.apple.Preferences 2>&1 || echo "PREFS_TERMINATE_FAILED"
-            sleep 2
-            xcrun simctl launch "$UDID" cn.toside.music.mobile | tee launch-bg.txt
-            grep -oE '[0-9]+' launch-bg.txt | head -1 > app-pid.txt || true; } | tee bg-phase.log
-
       - name: 横屏阶段（标记握手：应用内驱动旋转，宿主截图取证）
         working-directory: ios/build/Build/Products/Release-iphonesimulator
         run: |
@@ -331,12 +304,10 @@ jobs:
             # 但画面不转，Dimensions 不发变更、onLayout 不触发，断言必失败
             # （run 33144095295：rot.ok=1 且 interfaceOrientationAfter2s
             # =landscape，windowSizeTools 仍是 402x874，截图 1206x2622 竖屏）。
-            # 兜底再终一次 Preferences：后台阶段若在 bg-ready/bg-done TIMEOUT
-            # 处 exit 0 早退，其唤回不执行，设置页会一路占着前台带进本阶段
-            # （run 33157696254：landscape.png 前台是设置页）。terminate 对
-            # 未运行的 bundle 报错无害，launch 对已在前台的应用仅激活
-            xcrun simctl terminate "$UDID" com.apple.Preferences 2>&1 || echo "PREFS_NOT_RUNNING"
-            sleep 2
+            # 此时后台阶段尚未跑、应用仍在前台，launch 是幂等激活，用于恢复
+            # 深链 SpringBoard 往返后可能停在 inactive 的场景（不能指望后台
+            # 唤回：simctl launch 对挂起进程不做前台切换，判读见
+            # evidence/landscape-inactive-scene.md）
             xcrun simctl launch "$UDID" cn.toside.music.mobile 2>&1 || echo "ROTATE_WAKE_FAILED"
             sleep 3
             echo "landscape $(date +%s)" > "$rotate_phase"
@@ -350,6 +321,33 @@ jobs:
             ok=0
             for i in $(seq 1 45); do [ ! -f "$rotate_phase" ] && { ok=1; break; }; sleep 2; done
             echo "portrait restored: $([ "$ok" = 1 ] && echo YES || echo TIMEOUT)"; } | tee landscape-phase.log
+
+      - name: 后台续播阶段（标记握手：起播就绪→切后台→采样；无需唤回）
+        working-directory: ios/build/Build/Products/Release-iphonesimulator
+        run: |
+          bg_ready="$CONTAINER/tmp/lx-ci-bg-ready"
+          bg_done="$CONTAINER/tmp/lx-ci-bg-done"
+          suite_done="$CONTAINER/tmp/lx-ci-done"
+          { echo "--- background phase ---"
+            ok=0
+            # 后台续播是套件最后一个用例（模拟器无可靠通道把挂起进程唤回
+            # 前台，套件切后台后就地写报告收尾），bg-ready 要等横屏/导入/
+            # 主流程/回归集全跑完才出现，等待窗口放宽到 25 分钟；套件已
+            # 写完终局报告而 bg-ready 始终未出现（后台用例未跑到）则早退
+            for i in $(seq 1 750); do
+              [ -f "$bg_ready" ] && { ok=1; break; }
+              [ -f "$suite_done" ] && break
+              sleep 2
+            done
+            echo "bg-ready marker: $([ "$ok" = 1 ] && echo READY || echo TIMEOUT)"
+            [ "$ok" = 1 ] || exit 0
+            # 把前台切到系统设置，应用进入后台（音频后台模式应续播）。
+            # 采样完成（bg-done）后不再唤回：套件在后台写终局报告 +
+            # lx-ci-done 收尾，音频播放保持进程存活到落盘
+            xcrun simctl launch "$UDID" com.apple.Preferences 2>&1 || echo "BG_LAUNCH_FAILED"
+            ok=0
+            for i in $(seq 1 90); do [ -f "$bg_done" ] && { ok=1; break; }; sleep 2; done
+            echo "bg-done marker: $([ "$ok" = 1 ] && echo DONE || echo TIMEOUT)"; } | tee bg-phase.log
 
       - name: 采集自测报告并断言
         working-directory: ios/build/Build/Products/Release-iphonesimulator
@@ -403,7 +401,6 @@ jobs:
             ios/build/Build/Products/Release-iphonesimulator/landscape.png
             ios/build/Build/Products/Release-iphonesimulator/bg-phase.log
             ios/build/Build/Products/Release-iphonesimulator/landscape-phase.log
-            ios/build/Build/Products/Release-iphonesimulator/launch-bg.txt
             ios/build/Build/Products/Release-iphonesimulator/ci-report.json
             ios/build/Build/Products/Release-iphonesimulator/openurl-probe.log
             ios/build/Build/Products/Release-iphonesimulator/openurl-native.log
