@@ -701,6 +701,8 @@ StatusBar.currentHeight ?? 0     // iOS 上 currentHeight 是 undefined → 恒�
 
 处置：改用 `react-native-safe-area-context` 的 `useSafeAreaInsets().top`（该库已随 RNN 生态存在，需确认是否在依赖内），或在 UtilsModule 加一个方法返回 `windowScene.statusBarManager.statusBarFrame.height`。`windowSizeTools.ts:51` 不在组件内、拿不到 hook，倾向后者以保持三处实现一致。
 
+已落地（2026-08-31，`add-ios-support` 任务 9.2）：未引入新依赖，改为平台扩展 `src/utils/statusbarHeight.ios.ts`，经 RN 自带 `StatusBarManager.getHeight` 读 `statusBarFrame` 真实高度；`SizeView` 是唯一消费点，Android 语义走基名文件保持不变。真机复测待做（iPhone 17 Pro / iOS 26.6）。
+
 **`utils/hooks/useBackHandler.ts` —— 整个 hook 无对应概念**
 
 该 hook 完全建立在 `BackHandler`（Android 硬件返回键）之上。iOS 桩化为空 hook 即可，返回操作由 RNN 的原生手势/导航栏承担。
@@ -1132,7 +1134,6 @@ Flutter 版的价值在于它证明了"iOS 上用 JSC 跑自定义源是可行�
 | `src/plugins/player/index.ts` | — | §4.3, §6.4 |
 | `ios/LxMusicMobile/AppDelegate.mm` | — | §5.4 |
 | `android/app/src/main/AndroidManifest.xml` | 34-91 | §5.1 |
-
 
 
 

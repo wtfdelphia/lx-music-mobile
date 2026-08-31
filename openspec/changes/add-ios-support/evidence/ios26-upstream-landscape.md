@@ -23,6 +23,7 @@ iOS 26 上的已知问题摸了一遍，对照本仓库代码路径判断影响�
 | 7 | `wix/react-native-navigation#8203` | open（25 评论） | iOS 26 上 bottomTabs 的 backgroundColor / drawBehind 全部失效。RNN 8.7.0 + RN 0.83.1 + Fabric 最新版仍复现 |
 | 8 | `react-native-track-player` releases | v5.0.0（2026-05-06） | v5 基于新架构完全重写并转商业授权（个人/教育用途免费，商用付费）。v4 冻结在 `v4` 分支，不再更新 |
 | 9 | `reactwg/react-native-releases#1258-1263` | 多数 closed | Xcode 26.4 构建修复官方 backport 到 0.81-0.85。RN 主线当前最新 0.87.1（2026-08-26） |
+| 10 | `markclausing/vibecoach` PR #26（merged）、`Wulfgardr/mediflow#141`（open）、`isledecomp/isle-portable` PR #857 | 修复已合并 / 实锤 | iPhone 17 Pro 上，只声明 `UILaunchStoryboardName`（无 `UILaunchScreen` 键）的旧构建被 iOS 26 判为不支持现代屏幕尺寸，进 legacy 兼容模式：窗口按旧比例缩放，上下黑边、内容整体放大。修法统一为 Info.plist 补空 `UILaunchScreen` 字典 |
 
 ## 与本仓库的对照（逐条核过代码路径）
 
@@ -57,6 +58,14 @@ RN `0.73.11`。
 Xcode 26 SDK 构建）的 RN 版本下限有依据了：官方修复最远到 0.81，
 当前 0.73.11 距离更远。该文档「需升 RN 大版本」的判断可以具体化为
 「至少 0.81」。
+
+案例 10（legacy 兼容模式 letterbox）：本仓库 `Info.plist` 只有
+`UILaunchStoryboardName = LaunchScreen`，无 `UILaunchScreen` 键
+（RN 0.73 模板同款写法）。iPhone 17 Pro 真机反馈「竖屏宽窄都不对」
+与此机制吻合：窗口被缩放到旧屏幕比例并居中，上下留黑边，RN 布局
+按缩放后的窗口尺寸排版。修法：补空 `UILaunchScreen` 字典，已落地
+（tasks.md 9.2）。注意该修复需经真机或 iOS 26 runtime 模拟器才能
+验证，18.5 模拟器无此行为，CI 冒烟只能防回归不能证明修复。
 
 ## 结论
 
