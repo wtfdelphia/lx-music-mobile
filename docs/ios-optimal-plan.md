@@ -166,6 +166,10 @@ JS 业务层（61,667 行，零改动）
 
 G1 数据 = Phase 1.0 收集的回归集在 iOS JSC 上的通过率。判读：
 
+实测结果（2026-08-29，run 33248314363）：加载→inited 通过率 21/23，
+2 个失败均为远端依赖型而非引擎兼容性缺陷，核心加载链无系统性失败。
+按上表第一行判读：留 JSC，Rust 二期不启动。
+
 | 结果 | 动作 |
 |---|---|
 | 核心音源（日常使用的源）全部可用，个别脚本失败 | 留 ①。失败脚本按 iOS 方案 R1 缓解措施逐个 shim；Rust 二期**不启动** |
@@ -240,12 +244,13 @@ Windows / Linux ──git push──► GitHub ──► GitHub Actions
 | → `.app`（模拟器） | 任务 7.5 / R8 硬门槛（首验形态） | ✅ 已通（run 32705189097） |
 | → IPA（设备 unsigned）+ Artifact | `-sdk iphoneos` + Payload 打包 + 上传（保留 30 天） | ✅ 已通（run 32707901201，11 MB） |
 | → 重签侧载 | §6 主推"用户自编译/自签"的免账号降级形态；合规责任在用户侧 | 文档已入 README |
-| Rust 进 App | 任务 3.1 桥调通 / 3.4 薄封装 | 进行中（CI 现为独立编译验证） |
+| Rust 进 App | 任务 3.1 桥调通 / 3.4 薄封装 | ✅ 已通（`crypto_golden` 经桥实证，run 32838388685） |
 
 结构备注：首版曾拆"模拟器门槛 + 设备 IPA"两个并行 job，前置
 （npm ci / pod install）重复。设备切片与分发物一致、编译级信号
-覆盖重合，已归并为单 job（门禁 = 产物），模拟器运行时验证归
-macOS交互式阶段。
+覆盖重合，已归并为单 job（门禁 = 产物）。模拟器运行时验证后来
+由应用内 25 项自测 + `ci-report-assert.js` 在冒烟 job 内完成，
+运行时钉死 iOS 18.5（run 33248314363 全绿），不再依赖交互阶段。
 
 固有约束（写进 README 提示用户）：免费 Apple ID 签名 7 天过期、
 最多 3 个活跃应用、需电脑端定期刷新。
@@ -270,7 +275,7 @@ src/utils/nativeModules/lyricDesktop.ios.ts   ~40 行（全桩）
 src/utils/toast.ios.tsx / version.ios.js / hooks/useBackHandler.ios.ts
 assets/script/user-api-preload.js             （从 android/ 移动，R7 注意）
 test/crypto-golden-vectors.json + 脚本回归集 harness
-.github/workflows/release.yml                 新增 build_ios job（unsigned 编译回归 + Rust 步骤）
+.github/workflows/ios-verify.yml              独立工作流：5 个并行门禁（JS 单测打包 / Rust 交叉编译 / 设备构建 / 模拟器冒烟 / Android 回归）
 ```
 
 **修改 / 不动**：与 iOS 方案 §12 完全一致（Info.plist 7+2、AppDelegate 深链与 AVAudioSession、Podfile 关 Flipper、pbxproj、fs.ts 拆分、tools.ts、StatusBar/SizeView/windowSizeTools、player iosCategory、sync gzip 走 pako、ChoosePath 4 文件、core/common.ts SAF 恒真；其余 ~60,000 行与全部音源实现不动）。
