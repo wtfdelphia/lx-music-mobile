@@ -248,7 +248,14 @@ const testUtils = async() => {
   const deviceName = await utils.getDeviceName()
   const locales = await utils.getSystemLocales()
   const notif = await utils.isNotificationsEnabled()
-  return { size, deviceName, locales, notif }
+  // iOS 状态栏高度回归：RN StatusBar.currentHeight 在 iOS 恒为
+  // undefined（Android-only），此前被 ?? 0 静默吞掉，头部顶进灵动岛。
+  // 平台扩展 statusbarHeight.ios.ts 改走 StatusBarManager.getHeight，
+  // 此用例钉死「读到的高度必须为正」，防止回归
+  const { getStatusbarHeight } = await import('@/utils/statusbarHeight')
+  const sbh = await getStatusbarHeight(size.height, size.height)
+  assert(typeof sbh === 'number' && sbh > 0, `ios statusbar height must be > 0, got ${sbh}`)
+  return { size, deviceName, locales, notif, statusbarHeight: sbh }
 }
 
 // 1.4 fs 导出面

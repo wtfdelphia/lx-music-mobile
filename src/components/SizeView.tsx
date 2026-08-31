@@ -1,18 +1,9 @@
 import { memo, useCallback, useRef, useEffect } from 'react'
-import { type LayoutChangeEvent, StyleSheet, View, StatusBar, Dimensions } from 'react-native'
+import { type LayoutChangeEvent, StyleSheet, View, Dimensions } from 'react-native'
 import commonState from '@/store/common/state'
-import settingState from '@/store/setting/state'
 import { setStatusbarHeight } from '@/core/common'
 import { windowSizeTools, getWindowSize } from '@/utils/windowSizeTools'
-
-const getStatusbarHeight = (winHeight: number, layoutHeight: number) => {
-  const height = (!settingState.setting['common.alwaysKeepStatusbarHeight'] &&
-          parseFloat(winHeight.toFixed(2)) >= parseFloat(layoutHeight.toFixed(2)))
-    ? 0
-    : (StatusBar.currentHeight ?? 0)
-
-  return height
-}
+import { getStatusbarHeight } from '@/utils/statusbarHeight'
 
 export default memo(() => {
   const currentHeightRef = useRef(commonState.statusbarHeight)
@@ -25,12 +16,12 @@ export default memo(() => {
       dimensionsChangedRef.current = false
       // console.log(layout, size)
       sizeRef.current = [size.height, layout.height]
-      const height = getStatusbarHeight(size.height, layout.height)
-
-      if (currentHeightRef.current != height) {
-        currentHeightRef.current = height
-        setStatusbarHeight(height)
-      }
+      void getStatusbarHeight(size.height, layout.height).then(height => {
+        if (currentHeightRef.current != height) {
+          currentHeightRef.current = height
+          setStatusbarHeight(height)
+        }
+      })
       // console.log(layout, size)
       const currentSize = windowSizeTools.getSize()
       if (currentSize.width != layout.width || currentSize.height != layout.height) {
@@ -53,12 +44,12 @@ export default memo(() => {
 
     const handleSettingUpdate = (keys: Array<keyof LX.AppSetting>) => {
       if (!keys.includes('common.alwaysKeepStatusbarHeight') || !sizeRef.current[1]) return
-      const height = getStatusbarHeight(sizeRef.current[0], sizeRef.current[1])
-
-      if (currentHeightRef.current != height) {
-        currentHeightRef.current = height
-        setStatusbarHeight(height)
-      }
+      void getStatusbarHeight(sizeRef.current[0], sizeRef.current[1]).then(height => {
+        if (currentHeightRef.current != height) {
+          currentHeightRef.current = height
+          setStatusbarHeight(height)
+        }
+      })
     }
     global.state_event.on('configUpdated', handleSettingUpdate)
 
@@ -69,4 +60,3 @@ export default memo(() => {
   }, [])
   return (<View style={StyleSheet.absoluteFill} onLayout={handleLayout} />)
 }, () => true)
-
