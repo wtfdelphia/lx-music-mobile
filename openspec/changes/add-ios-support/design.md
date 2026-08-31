@@ -38,6 +38,8 @@
 
 `iosCategory: 'playback'` + `UIBackgroundModes: audio`。SwiftAudioEx 0.14.7 与 RN 0.73 不兼容时，1 天内切上游 4.x，不做更多纠缠。缓存三方法（getCacheSize/clearCache/isCached）首版降级 0/false。
 
+供给链现状（2026-08-31 核实）：上游 `doublesymmetry/react-native-track-player` v5.0.0 起转商业授权，v4 冻结在 `v4` 分支不再更新，免费修复通道已断。「切上游 4.x」的退路仍在（v4 分支留存），但上游已不会为它出补丁。本仓库播放栈（fork v2.1.2 + SwiftAudioEx 0.14.7）的后续修复只能自行 cherry-pick 或自写补丁。iOS 26 上已报出的相关上游问题（SwiftAudioEx 主线程同步属性查询、getArtwork 崩溃等）逐条对照记录在 `evidence/ios26-upstream-landscape.md`。
+
 ### D6 G1 闸门（Phase 1 末）
 
 回归集：≥10 个社区自定义源脚本，覆盖 6 大音源，断言 加载→inited→搜索→取播放链接。判读：
