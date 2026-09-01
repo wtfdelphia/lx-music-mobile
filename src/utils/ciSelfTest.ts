@@ -72,13 +72,13 @@ const utilsNative = NativeModules.UtilsModule as unknown as {
     samples: Array<{ delay: number, at: number, pos: number, rate: number }>,
     posNow: number, rateNow: number, playingNow: boolean,
   } | null>,
-  // 文件选择竞态探针（任务 9.4）：无头复现「下拉退场与 selectFile 呈现同拍」
-  // 时序，返回修复后管线能否在层级稳定后把选择器呈现出来
-  selectFileRaceProbe: (options: { extTypes: string[], toPath?: string }) => Promise<{
+  // 文件选择竞态探针（任务 9.4）：无头复现「下拉退场与呈现命令同拍」时序。
+  // 探针用普通 VC 走与生产同一套「等稳定→呈现→存活校验→重试」管线，
+  // 判活后立即退场，返回是否呈现成功（真选择器不实例化，绕开无头环境
+  // 上 DocumentProvider XPC 的崩溃路径）
+  selectFileRaceProbe: (options: Record<string, never> | {}) => Promise<{
     presented: boolean, attempts: number, elapsedMs: number, error: string | null,
   }>,
-  // 竞态探针判活后关闭选择器（等价用户取消，走 resolve(null) 通道）
-  cancelDocumentPicker: () => Promise<{ hadPicker: boolean, resolved: boolean }>,
 }
 
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
@@ -586,26 +586,18 @@ const testDrawerMenu = async() => {
 // 根因：导入下拉（RN Modal）的 menuPress 先触发 onPress（selectFile）再
 // onHide()，两条命令同拍进入原生主队列；旧实现把 UIDocumentPicker present
 // 到正在退场的菜单 VC 上，UIKit 静默吞掉呈现，无回调无报错、Promise 永挂。
-// 探针（原生侧标记门控）无头复现同一时序：退场临时 VC 的同一拍内启动生产
-// 呈现管线，判修复后的管线能否等层级稳定再呈现。旧实现在此时序上必然
-// 判负（presented=false）。判活后用 cancelDocumentPicker 走取消通道收尾。
+// 探针（原生侧标记门控）无头复现同一时序：退场临时 VC 的同一拍内启动呈现
+// 管线，管线用普通 VC 走与生产同一套「等稳定→呈现→存活校验→重试」逻辑，
+// 判修复后能否等层级稳定再呈现。旧实现在此时序上必然判负（presented=
+// false）。探针判活后即退场，不留模态残留、不碰 DocumentProvider XPC
+// （run 33498023646 实锤：无头模拟器上真选择器残留连接会崩进程）。
 const testFilePickerRace = async() => {
-  const dir = `${tmpDir()}/lx-ci-picker`
-  try { await RNFS.mkdir(dir) } catch { /* 已存在 */ }
   const probe = await withTimeout(
-    utilsNative.selectFileRaceProbe({ extTypes: ['js'], toPath: dir }),
+    utilsNative.selectFileRaceProbe({}),
     20_000, 'selectFileRaceProbe')
-  // 先清场：无论判活与否都尝试关闭可能存在的选择器并收回 selectFile 状态，
-  // 避免残留的模态选择器挡住后续用例（横屏等需要独占交互）
-  let cancel: { hadPicker: boolean, resolved: boolean } = { hadPicker: false, resolved: false }
-  try {
-    cancel = await withTimeout(utilsNative.cancelDocumentPicker(), 10_000, 'cancelDocumentPicker')
-  } catch { /* 清场失败由下方 hadPicker 断言呈现 */ }
   assert(probe.presented === true,
     `picker never survived the dismissal race: attempts=${probe.attempts} elapsedMs=${probe.elapsedMs} error=${probe.error ?? 'null'}`)
-  assert(cancel.hadPicker === true, `cancel saw no live picker: ${JSON.stringify(cancel)}`)
-  assert(cancel.resolved === true, `selectFile promise was never resolved on cancel: ${JSON.stringify(cancel)}`)
-  return { presented: probe.presented, attempts: probe.attempts, elapsedMs: probe.elapsedMs, cancel }
+  return { presented: probe.presented, attempts: probe.attempts, elapsedMs: probe.elapsedMs }
 }
 
 // 6.3/6.4 深链：等待宿主探针标记，校验监听注册与处理痕迹

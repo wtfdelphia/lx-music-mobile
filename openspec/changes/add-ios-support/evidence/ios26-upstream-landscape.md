@@ -24,7 +24,7 @@ iOS 26 上的已知问题摸了一遍，对照本仓库代码路径判断影响�
 | 8 | `react-native-track-player` releases | v5.0.0（2026-05-06） | v5 基于新架构完全重写并转商业授权（个人/教育用途免费，商用付费）。v4 冻结在 `v4` 分支，不再更新 |
 | 9 | `reactwg/react-native-releases#1258-1263` | 多数 closed | Xcode 26.4 构建修复官方 backport 到 0.81-0.85。RN 主线当前最新 0.87.1（2026-08-26） |
 | 10 | `markclausing/vibecoach` PR #26（merged）、`Wulfgardr/mediflow#141`（open）、`isledecomp/isle-portable` PR #857 | 修复已合并 / 实锤 | iPhone 17 Pro 上，只声明 `UILaunchStoryboardName`（无 `UILaunchScreen` 键）的旧构建被 iOS 26 判为不支持现代屏幕尺寸，进 legacy 兼容模式：窗口按旧比例缩放，上下黑边、内容整体放大。修法统一为 Info.plist 补空 `UILaunchScreen` 字典 |
-| 11 | 本仓库真机反馈（2026-09-01，iPhone 17 Pro / iOS 26.6） | 已修复（任务 9.4） | 自定义源本地导入无反应。根因与系统版本无关，是 UIKit 呈现时序缺陷：导入下拉（RN Modal）关闭命令与 `selectFile` 呈现命令同拍进入原生主队列，`UIDocumentPickerViewController` 被 present 到正在退场的 VC 上，UIKit 静默吞掉呈现，无回调无报错、Promise 永挂。修法：原生侧等视图层级稳定再呈现 + 存活校验重试 + 预算耗尽走 reject，配标记门控竞态探针（`file_picker_race` 自测）。同类时序问题对所有「弹窗内触发系统选择器」入口通用 |
+| 11 | 本仓库真机反馈（2026-09-01，iPhone 17 Pro / iOS 26.6） | 已修复（任务 9.4） | 自定义源本地导入无反应。根因与系统版本无关，是 UIKit 呈现时序缺陷：导入下拉（RN Modal）关闭命令与 `selectFile` 呈现命令同拍进入原生主队列，`UIDocumentPickerViewController` 被 present 到正在退场的 VC 上，UIKit 静默吞掉呈现，无回调无报错、Promise 永挂。修法：原生侧等视图层级稳定再呈现 + 存活校验重试 + 预算耗尽走 reject，配标记门控竞态探针（`file_picker_race` 自测）。同类时序问题对所有「弹窗内触发系统选择器」入口通用。附记：无头模拟器上不能真呈现 `UIDocumentPickerViewController`（run 33498023646 实锤：DocumentProvider XPC 通道不可靠，呈现 completion 不回调，残留连接在横屏旋转时经 `DOCWeakProxy` 崩进程），竞态探针改用普通 VC 走同一呈现管线验证修复机制，真选择器行为留给真机复测 |
 
 ## 与本仓库的对照（逐条核过代码路径）
 
