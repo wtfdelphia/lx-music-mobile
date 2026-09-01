@@ -21,13 +21,13 @@ export default memo(() => {
           currentHeightRef.current = height
           setStatusbarHeight(height)
         }
-      })
+      }).catch(() => { /* 状态栏读数失败不得中断布局 */ })
       // console.log(layout, size)
       const currentSize = windowSizeTools.getSize()
       if (currentSize.width != layout.width || currentSize.height != layout.height) {
         windowSizeTools.setWindowSize(layout.width, layout.height)
       }
-    })
+    }).catch(() => { /* 窗口读数失败不得中断布局 */ })
   }, [])
   useEffect(() => {
     // let timeout: NodeJS.Timeout | null = null
@@ -49,7 +49,7 @@ export default memo(() => {
           currentHeightRef.current = height
           setStatusbarHeight(height)
         }
-      })
+      }).catch(() => { /* 状态栏读数失败不得中断布局 */ })
     }
     global.state_event.on('configUpdated', handleSettingUpdate)
 
