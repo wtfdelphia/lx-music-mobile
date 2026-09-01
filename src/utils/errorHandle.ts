@@ -12,6 +12,9 @@ const errorHandler = (e: Error, isFatal: boolean) => {
     if (excludedErrors.includes(e.message)) {
       toast('应用遇到了错误，如果你有固定的重现方式，请截图并在 GitHub 反馈（并附上刚才你进行了什么操作，以及“设置-错误日志”的内容）')
     } else {
+      // 启动即崩时进不了「设置-错误日志」，弹窗内直接带堆栈
+      // （截断 600 字符防 Alert 超长），截图即可定位崩溃点
+      const stack = typeof e.stack === 'string' ? e.stack.slice(0, 600) : ''
       Alert.alert(
         '💥Unexpected error occurred💥',
         `
@@ -19,6 +22,7 @@ const errorHandler = (e: Error, isFatal: boolean) => {
 
   Error:
   ${isFatal ? 'Fatal:' : ''} ${e.name} ${e.message}
+  ${stack}
   `,
         [{
           text: '关闭 (Close)',
