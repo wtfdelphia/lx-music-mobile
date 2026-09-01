@@ -249,7 +249,7 @@ Windows / Linux ──git push──► GitHub ──► GitHub Actions
 结构备注：首版曾拆"模拟器门槛 + 设备 IPA"两个并行 job，前置
 （npm ci / pod install）重复。设备切片与分发物一致、编译级信号
 覆盖重合，已归并为单 job（门禁 = 产物）。模拟器运行时验证后来
-由应用内 25 项自测 + `ci-report-assert.js` 在冒烟 job 内完成，
+由应用内 27 项自测 + `ci-report-assert.js` 在冒烟 job 内完成，
 运行时钉死 iOS 18.5（run 33248314363 全绿），不再依赖交互阶段。
 
 固有约束（写进 README 提示用户）：免费 Apple ID 签名 7 天过期、

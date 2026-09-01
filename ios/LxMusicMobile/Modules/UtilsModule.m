@@ -14,6 +14,10 @@
 @interface UtilsModule () <UIDocumentPickerDelegate>
 @property (nonatomic, copy, nullable) RCTPromiseResolveBlock selectFileResolve;
 @property (nonatomic, copy, nullable) NSString *selectFileToPath;
+@property (nonatomic, strong, nullable) UIDocumentPickerViewController *selectFilePicker;
+@property (nonatomic, assign) NSInteger selectFilePresentAttempts;
+// 竞态探针（任务 9.4）：管线在预算内未能呈现时的报错原因，供轮询分支读走
+@property (nonatomic, copy, nullable) NSString *raceProbeRejectReason;
 @end
 
 @implementation UtilsModule {
@@ -628,19 +632,36 @@ RCT_EXPORT_METHOD(requestIgnoreBatteryOptimization:(RCTPromiseResolveBlock)resol
   return mime != nil ? mime : @"application/octet-stream";
 }
 
+// 转场稳定参数（任务 9.4）：预算需覆盖 RN Modal fade 退场（约 0.3s）加数轮重试
+static const NSTimeInterval kLXPickerWaitInterval = 0.15;
+static const NSTimeInterval kLXPickerPresentBudget = 3.0;
+static const NSTimeInterval kLXPickerAliveDelay = 0.25;
+static const NSTimeInterval kLXPickerCompletionWatchdog = 0.8;
+
 // 与 Android 契约对齐：取消时 resolve(null)；给定 toPath 时拷贝到 toPath/原文件名，
-// 返回 { data: 目标路径, ...文件信息 }
+// 返回 { data: 目标路径, ...文件信息 }。
+// 任务 9.4：真机（iPhone 17 Pro / iOS 26.6）自定义源本地导入无反应——
+// Menu.tsx menuPress 先触发 onPress（selectFile）再 onHide()（菜单 Modal
+// 退场），两条命令同拍到达原生主队列；旧实现把选择器直接 present 到正在
+// 退场的 VC 上，UIKit 静默吞掉呈现：无 delegate 回调、无报错，Promise 永挂。
+// 改为等视图层级稳定后再呈现 + 呈现后存活校验 + 被吞重试，预算耗尽必须
+// 走 reject 通道（JS 侧 ChoosePath 已有回退内置浏览器弹窗），不许静默挂起。
 RCT_EXPORT_METHOD(selectFile:(NSDictionary *)options
                   resolver:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 {
-  NSArray *extTypes = nil;
+  NSArray<NSString *> *documentTypes = [self documentTypesFromOptions:options];
   NSString *toPath = nil;
-  if ([options isKindOfClass:[NSDictionary class]]) {
-    if ([options[@"extTypes"] isKindOfClass:[NSArray class]]) extTypes = options[@"extTypes"];
-    if ([options[@"toPath"] isKindOfClass:[NSString class]]) toPath = options[@"toPath"];
-  }
+  if ([options isKindOfClass:[NSDictionary class]] && [options[@"toPath"] isKindOfClass:[NSString class]]) toPath = options[@"toPath"];
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [self presentDocumentPickerWithTypes:documentTypes toPath:toPath resolver:resolve rejecter:reject];
+  });
+}
 
+- (NSArray<NSString *> *)documentTypesFromOptions:(NSDictionary *)options
+{
+  NSArray *extTypes = nil;
+  if ([options isKindOfClass:[NSDictionary class]] && [options[@"extTypes"] isKindOfClass:[NSArray class]]) extTypes = options[@"extTypes"];
   NSMutableArray<NSString *> *documentTypes = [NSMutableArray array];
   for (id ext in extTypes) {
     if ([ext isKindOfClass:[NSString class]] && [ext length] > 0) {
@@ -649,23 +670,101 @@ RCT_EXPORT_METHOD(selectFile:(NSDictionary *)options
     }
   }
   if (documentTypes.count == 0) [documentTypes addObject:(__bridge NSString *)kUTTypeItem];
+  return documentTypes;
+}
 
-  dispatch_async(dispatch_get_main_queue(), ^{
-    UIViewController *root = [UIApplication sharedApplication].delegate.window.rootViewController;
-    while (root.presentedViewController != nil) root = root.presentedViewController;
-    if (root == nil) {
-      reject(@"no_root_vc", @"No view controller to present document picker", nil);
+// 稳定顶层 VC：presentedViewController 链上任一节点处于转场中（呈现/退场
+// 动画未结束）即返回 nil，由调用方重试；keyWindow 优先（RNN legacy 生命
+// 周期下 delegate.window 仍在），逐层上溯到最顶层
+- (UIViewController *)lx_stableTopViewController
+{
+  UIWindow *window = nil;
+  for (UIWindow *w in [UIApplication sharedApplication].windows) {
+    if (w.isKeyWindow) { window = w; break; }
+  }
+  if (window == nil) window = [UIApplication sharedApplication].delegate.window;
+  UIViewController *vc = window.rootViewController;
+  while (vc != nil) {
+    if (vc.isBeingPresented || vc.isBeingDismissed || vc.isMovingFromParentViewController || vc.isMovingToParentViewController) return nil;
+    if (vc.presentedViewController == nil) return vc;
+    vc = vc.presentedViewController;
+  }
+  return nil;
+}
+
+- (void)presentDocumentPickerWithTypes:(NSArray<NSString *> *)documentTypes
+                                toPath:(NSString *)toPath
+                              resolver:(RCTPromiseResolveBlock)resolve
+                              rejecter:(RCTPromiseRejectBlock)reject
+{
+  if (self.selectFileResolve != nil) {
+    // 上一个选择器仍在显示，按取消处理
+    self.selectFileResolve([NSNull null]);
+  }
+  self.selectFileResolve = resolve;
+  self.selectFileToPath = toPath;
+  self.selectFilePicker = nil;
+  self.selectFilePresentAttempts = 0;
+  NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:kLXPickerPresentBudget];
+  [self attemptPresentPickerWithTypes:documentTypes deadline:deadline onFinish:^(NSString *error) {
+    if (error == nil) return;
+    // 预算耗尽：清状态并走 reject；JS 侧 ChoosePath 已有回退弹窗，不许静默挂起
+    [self clearSelectFileState];
+    reject(@"picker_present_failed", error, nil);
+  }];
+}
+
+- (void)attemptPresentPickerWithTypes:(NSArray<NSString *> *)documentTypes
+                             deadline:(NSDate *)deadline
+                             onFinish:(void (^)(NSString *error))onFinish
+{
+  self.selectFilePresentAttempts += 1;
+  UIViewController *top = [self lx_stableTopViewController];
+  if (top == nil) {
+    if ([deadline timeIntervalSinceNow] <= 0) {
+      onFinish(@"no stable view controller within budget (modal transition never settled)");
       return;
     }
-    if (self.selectFileResolve != nil) {
-      // 上一个选择器仍在显示，按取消处理
-      self.selectFileResolve([NSNull null]);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kLXPickerWaitInterval * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      [self attemptPresentPickerWithTypes:documentTypes deadline:deadline onFinish:onFinish];
+    });
+    return;
+  }
+  UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initWithDocumentTypes:documentTypes inMode:UIDocumentPickerModeImport];
+  picker.delegate = self;
+  self.selectFilePicker = picker;
+  __block BOOL completionFired = NO;
+  __weak typeof(self) weakSelf = self;
+  [top presentViewController:picker animated:YES completion:^{
+    completionFired = YES;
+    // completion 不等于存活：被并发退场吞掉时 completion 照样回调，picker 随后被收走
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kLXPickerAliveDelay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      __strong typeof(weakSelf) self = weakSelf;
+      if (self == nil) return;
+      BOOL alive = picker.presentingViewController != nil && picker.view.window != nil;
+      if (alive) {
+        onFinish(nil);
+        return;
+      }
+      if ([deadline timeIntervalSinceNow] <= 0) {
+        onFinish(@"picker presented but swallowed by concurrent dismiss");
+        return;
+      }
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kLXPickerWaitInterval * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [self attemptPresentPickerWithTypes:documentTypes deadline:deadline onFinish:onFinish];
+      });
+    });
+  }];
+  // completion 看门狗：目标 VC 已不在窗口层级时 UIKit 根本不回调 completion，
+  // 没有看门狗重试链会停在这里，成为另一处静默挂起
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kLXPickerCompletionWatchdog * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    __strong typeof(weakSelf) self = weakSelf;
+    if (self == nil || completionFired) return;
+    if ([deadline timeIntervalSinceNow] <= 0) {
+      onFinish(@"present completion never fired within watchdog");
+      return;
     }
-    self.selectFileResolve = resolve;
-    self.selectFileToPath = toPath;
-    UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initWithDocumentTypes:documentTypes inMode:UIDocumentPickerModeImport];
-    picker.delegate = self;
-    [root presentViewController:picker animated:YES completion:nil];
+    [self attemptPresentPickerWithTypes:documentTypes deadline:deadline onFinish:onFinish];
   });
 }
 
@@ -673,6 +772,105 @@ RCT_EXPORT_METHOD(selectFile:(NSDictionary *)options
 {
   self.selectFileResolve = nil;
   self.selectFileToPath = nil;
+  self.selectFilePicker = nil;
+}
+
+// CI 自测（任务 9.4）：无头复现「下拉退场与 selectFile 呈现同拍」。从稳定
+// 顶层 VC 呈现临时 VC，动画完成后同一主队列拍内先退场、再走生产入口
+// selectFile（退场先行是确定性时序，等价两条命令同拍到达主队列时退场先
+// 被处理的一支；JS 侧 Menu.tsx menuPress 的 onPress → onHide 即此结构）。
+// 旧式直接呈现会把选择器落在正在退场的临时 VC 上被 UIKit 吞掉：无回调、
+// Promise 永挂，轮询到截止判负；修复后的管线等层级稳定再呈现，必须判活。
+// 探针走生产入口 selectFile 而非内部管线，回退旧实现时必然红。
+// 双保险门控：仅沙箱存在 .lx-ci-selftest 标记时生效，正式包恒拒绝。
+RCT_EXPORT_METHOD(selectFileRaceProbe:(NSDictionary *)options
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSString *tmp = NSTemporaryDirectory();
+  NSString *marker = [tmp stringByAppendingPathComponent:@".lx-ci-selftest"];
+  if (![[NSFileManager defaultManager] fileExistsAtPath:marker]) {
+    reject(@"not_allowed", @"selectFileRaceProbe requires the CI self-test marker", nil);
+    return;
+  }
+  dispatch_async(dispatch_get_main_queue(), ^{
+    UIViewController *top = [self lx_stableTopViewController];
+    if (top == nil) {
+      resolve(@{ @"presented": @(NO), @"attempts": @0, @"elapsedMs": @0, @"error": @"no stable top view controller to stage race" });
+      return;
+    }
+    NSTimeInterval t0 = [NSDate date].timeIntervalSince1970;
+    UIViewController *transient = [[UIViewController alloc] init];
+    transient.modalPresentationStyle = UIModalPresentationFullScreen;
+    transient.view.backgroundColor = [UIColor clearColor];
+    __weak typeof(self) weakSelf = self;
+    [top presentViewController:transient animated:YES completion:^{
+      __strong typeof(weakSelf) self = weakSelf;
+      if (self == nil) return;
+      // 同一拍：先退场临时 VC，再走生产入口（复刻 onPress 与 onHide 同拍）
+      [transient dismissViewControllerAnimated:YES completion:nil];
+      self.raceProbeRejectReason = nil;
+      RCTPromiseResolveBlock swallowResolve = ^(id result) {
+        // cancelDocumentPicker 等价用户取消时走这里；探针只判「是否呈现过」
+      };
+      RCTPromiseRejectBlock swallowReject = ^(NSString *code, NSString *message, NSError *err) {
+        // 预算耗尽：记下原因，轮询分支读走判负
+        self.raceProbeRejectReason = message ?: code;
+      };
+      [self selectFile:options resolver:swallowResolve rejecter:swallowReject];
+      [self pollRaceProbeResultFrom:t0 resolve:resolve];
+    }];
+  });
+}
+
+- (void)pollRaceProbeResultFrom:(NSTimeInterval)t0 resolve:(RCTPromiseResolveBlock)resolve
+{
+  NSTimeInterval deadline = t0 + kLXPickerPresentBudget + 1.5;
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    UIDocumentPickerViewController *picker = self.selectFilePicker;
+    BOOL alive = picker != nil && picker.presentingViewController != nil && picker.view.window != nil;
+    NSTimeInterval elapsedMs = ([NSDate date].timeIntervalSince1970 - t0) * 1000.0;
+    if (alive) {
+      resolve(@{ @"presented": @(YES), @"attempts": @(self.selectFilePresentAttempts), @"elapsedMs": @(elapsedMs), @"error": [NSNull null] });
+      return;
+    }
+    if (self.raceProbeRejectReason != nil) {
+      resolve(@{ @"presented": @(NO), @"attempts": @(self.selectFilePresentAttempts), @"elapsedMs": @(elapsedMs), @"error": self.raceProbeRejectReason });
+      self.raceProbeRejectReason = nil;
+      return;
+    }
+    if ([NSDate date].timeIntervalSince1970 >= deadline) {
+      resolve(@{ @"presented": @(NO), @"attempts": @(self.selectFilePresentAttempts), @"elapsedMs": @(elapsedMs), @"error": @"poll deadline reached without alive picker or reject" });
+      return;
+    }
+    [self pollRaceProbeResultFrom:t0 resolve:resolve];
+  });
+}
+
+// CI 自测（任务 9.4）：无头环境没有用户点选文件，竞态探针判活后用本方法
+// 关闭选择器（等价用户取消：resolve(null)，与 documentPickerWasCancelled
+// 同一通道）。双保险门控：仅沙箱存在 .lx-ci-selftest 标记时生效。
+RCT_EXPORT_METHOD(cancelDocumentPicker:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSString *tmp = NSTemporaryDirectory();
+  NSString *marker = [tmp stringByAppendingPathComponent:@".lx-ci-selftest"];
+  if (![[NSFileManager defaultManager] fileExistsAtPath:marker]) {
+    reject(@"not_allowed", @"cancelDocumentPicker requires the CI self-test marker", nil);
+    return;
+  }
+  dispatch_async(dispatch_get_main_queue(), ^{
+    UIDocumentPickerViewController *picker = self.selectFilePicker;
+    BOOL hadPicker = picker != nil && (picker.presentingViewController != nil || picker.view.window != nil);
+    if (picker != nil && picker.presentingViewController != nil) {
+      picker.delegate = nil; // 程序化关闭不应再触发 delegate 回调
+      [picker dismissViewControllerAnimated:NO completion:nil];
+    }
+    RCTPromiseResolveBlock stored = self.selectFileResolve;
+    [self clearSelectFileState];
+    if (stored != nil) stored([NSNull null]);
+    resolve(@{ @"hadPicker": @(hadPicker), @"resolved": @(stored != nil) });
+  });
 }
 
 - (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls

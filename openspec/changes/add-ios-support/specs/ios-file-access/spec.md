@@ -35,3 +35,8 @@ iOS 上 SHALL 通过 DocumentPicker 完成文件选择，替代 Android SAF； m
 
 - **WHEN** 在 iOS 上通过选择器选中一个歌单文件
 - **THEN** 文件拷贝进沙箱并完成导入
+
+#### Scenario: 嵌套弹窗关闭竞态不吞选择器
+
+- **WHEN** 文件选择在正在关闭的 RN Modal 内被触发（自定义源导入下拉、歌单列表菜单等）
+- **THEN** 选择器 SHALL 最终呈现在稳定的视图控制器上；无法呈现时 SHALL 显式报错，不得静默挂起
