@@ -557,6 +557,24 @@ const testTabs = async() => {
   return { switched }
 }
 
+// 抽屉菜单：复刻点击左上角菜单图标打开抽屉的完整调用链
+// （app_event.changeMenuVisible(true) → Content 的 drawer.openDrawer()）。
+// 旧实现里 DrawerLayoutAndroid 在 iOS 解析为 UnimplementedView 桩，实例
+// 没有 openDrawer 方法，调用即抛 TypeError undefined is not a function
+// （2026-09-01 iPhone 17 Pro 真机）。本用例在旧实现上必然抛错判失败，
+// 在 iOS 抽屉实现上必须静默通过、且不产生任何弹窗
+const testDrawerMenu = async() => {
+  const alertsBefore = state.alerts.length
+  // 与菜单按钮（Header openMenu）完全同一入口；旧实现在此同步抛错
+  global.app_event.changeMenuVisible(true)
+  await sleep(1200)
+  global.app_event.changeMenuVisible(false)
+  await sleep(800)
+  assert(state.alerts.length === alertsBefore,
+    `drawer open/close raised ${state.alerts.length - alertsBefore} alert(s)`)
+  return { opened: true }
+}
+
 // 6.3/6.4 深链：等待宿主探针标记，校验监听注册与处理痕迹
 const testDeeplink = async() => {
   const t0 = Date.now()
@@ -1331,6 +1349,10 @@ const runSuite = async() => {
     await runTest('toast_overlay', testToast)
     await runTest('version_update_release', testVersionUpdate)
     await runTest('tab_switch', testTabs, 300_000)
+    // 抽屉在横屏之前：抽屉开关纯应用内事件，不走 SpringBoard，
+    // 不影响后续场景状态；与菜单按钮同链，旧实现在此抛
+    // TypeError undefined is not a function（iPhone 17 Pro 真机）
+    await runTest('drawer_menu', testDrawerMenu)
     // 横屏在深链之前：深链的 SpringBoard 往返会把场景压成 inactive
     // （run 33233955428：旋转被接受但不重排版），旋转必须趁场景还 active；
     // 也须赶在宿主深链探针之前（file:// 探针的导入弹窗会撞横屏用例的
