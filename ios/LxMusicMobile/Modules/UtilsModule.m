@@ -861,6 +861,62 @@ RCT_EXPORT_METHOD(selectFileRaceProbe:(NSDictionary *)options
   });
 }
 
+// 网络原生探针（任务 9.6）：绕过 RN fetch 栈，用原生 NSURLSession
+// 直接打同一个 URL，返回 NSError 的 domain/code/description。
+// RN 的 Networking 把原生错误吞成 "Network request failed"，这个
+// 探针负责把真实错误文本带出来：交叉对照「RN 失败 / 原生通」可把
+// 故障收敛到 RN 网络栈配置层（ATS、session 配置、拦截器），而非
+// 系统网络能力。无标记门控：正式包也可用，供真机复测取证。
+RCT_EXPORT_METHOD(httpProbe:(NSString *)url
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSURL *target = [NSURL URLWithString:url];
+  if (target == nil || target.scheme == nil) {
+    reject(@"bad_url", @"invalid probe url", nil);
+    return;
+  }
+  NSTimeInterval t0 = [NSDate date].timeIntervalSince1970;
+  NSURLSessionConfiguration *config = [NSURLSessionConfiguration defaultSessionConfiguration];
+  config.timeoutIntervalForRequest = 12;
+  NSURLSession *session = [NSURLSession sessionWithConfiguration:config];
+  NSURLSessionDataTask *task = [session dataTaskWithURL:target
+      completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+    NSTimeInterval elapsedMs = ([NSDate date].timeIntervalSince1970 - t0) * 1000.0;
+    [session finishTasksAndInvalidate];
+    if (error != nil) {
+      // description 而非 localizedDescription：后者常只是一句
+      // 「网络连接似乎已断开」，归因价值低；description 带完整
+      // userInfo（含 NSUnderlyingError），DNS / ATS / 连接层差异可读
+      NSString *desc = error.description ?: @"";
+      resolve(@{
+        @"ok": @(NO),
+        @"domain": error.domain ?: @"",
+        @"code": @(error.code),
+        @"desc": [desc substringToIndex:MIN((NSUInteger)500, desc.length)],
+        @"bytes": @0,
+        @"status": @0,
+        @"elapsedMs": @(elapsedMs),
+      });
+      return;
+    }
+    NSInteger status = 0;
+    if ([response isKindOfClass:[NSHTTPURLResponse class]]) {
+      status = ((NSHTTPURLResponse *)response).statusCode;
+    }
+    resolve(@{
+      @"ok": @(YES),
+      @"domain": @"",
+      @"code": @0,
+      @"desc": @"",
+      @"bytes": @(data.length),
+      @"status": @(status),
+      @"elapsedMs": @(elapsedMs),
+    });
+  }];
+  [task resume];
+}
+
 - (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls
 {
   RCTPromiseResolveBlock resolve = self.selectFileResolve;

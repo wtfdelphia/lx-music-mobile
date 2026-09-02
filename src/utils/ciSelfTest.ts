@@ -79,6 +79,13 @@ const utilsNative = NativeModules.UtilsModule as unknown as {
   selectFileRaceProbe: (options: Record<string, never> | {}) => Promise<{
     presented: boolean, attempts: number, elapsedMs: number, error: string | null,
   }>,
+  // 网络原生探针（任务 9.6）：绕过 RN fetch 栈，原生 NSURLSession 直打
+  // 同一 URL。RN Networking 把 NSError 吞成 "Network request failed"，
+  // 交叉对照「RN 失败 / 原生通」可把故障收敛到 RN 网络栈配置层
+  httpProbe: (url: string) => Promise<{
+    ok: boolean, domain: string, code: number, desc: string,
+    bytes: number, status: number, elapsedMs: number,
+  }>,
 }
 
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
@@ -354,18 +361,40 @@ const testNetworkProbe = async() => {
   // 外网软记录（不作断言）：真实排行榜端点经同一条 fetch 管线。
   // CI 出口到音源域名不可达（run 32982319768），此处只记录结果供
   // 报告判读；真机复测时该项直接回答「音源请求是否出得去」
-  let external: { ok?: boolean, status?: number, error?: string, ms: number } | null = null
-  {
+  // 任务 9.6 增强：http + https 双目标。http qukudata 是排行榜族端点
+  // （首个 74ms 即时失败实例，run 33609327722）；https yy.zddyr.top 是
+  // 星海自定义源后端——真机失败的搜索/播放请求全是 https。
+  // apple.com 是系统级对照组：如果它也在应用内失败而原生探针通，说明
+  // 不是特定域名问题，而是应用网络栈被整体掐断（进程级限制 / 代理配置）。
+  // RN fetch 失败时同步跑原生 NSURLSession 探针打同一 URL（交叉对照）。
+  // RN 侧只吐 "Network request failed"，原生侧带回 NSError
+  // domain/code/description——能分清「系统网络不通」还是「RN 网络栈
+  // 配置问题」
+  const EXTERNAL_PROBE_URLS = [
+    'http://qukudata.kuwo.cn/q.k?op=query&cont=tree&node=2&pn=0&rn=1&fmt=json&level=2',
+    'https://yy.zddyr.top/ip.php',
+    'https://www.apple.com/',
+  ]
+  type ExternalProbe = { url: string, scheme?: string, ok?: boolean, status?: number, error?: string, ms: number, nativeProbe?: unknown }
+  const external: ExternalProbe[] = []
+  for (const probeUrl of EXTERNAL_PROBE_URLS) {
+    const scheme = probeUrl.startsWith('https://') ? 'https' : 'http'
     const t1 = Date.now()
     try {
       const r = await withTimeout(
-        global.fetch('http://qukudata.kuwo.cn/q.k?op=query&cont=tree&node=2&pn=0&rn=1&fmt=json&level=2'),
+        global.fetch(probeUrl),
         8_000,
         'external fetch',
       )
-      external = { ok: r.ok, status: r.status, ms: Date.now() - t1 }
+      external.push({ url: probeUrl, scheme, ok: r.ok, status: r.status, ms: Date.now() - t1 })
     } catch (err) {
-      external = { error: errText(err), ms: Date.now() - t1 }
+      let nativeProbe: unknown = null
+      try {
+        nativeProbe = await withTimeout(utilsNative.httpProbe(probeUrl), 15_000, 'native http probe')
+      } catch (probeErr) {
+        nativeProbe = { error: errText(probeErr) }
+      }
+      external.push({ url: probeUrl, scheme, error: errText(err), ms: Date.now() - t1, nativeProbe })
     }
   }
   return { md5, b64, fetchMs: Date.now() - t0, status: resp.status, external }

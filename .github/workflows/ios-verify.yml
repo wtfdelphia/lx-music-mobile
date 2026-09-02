@@ -387,6 +387,25 @@ jobs:
           done
           echo "crash reports collected: $crash_count"
           ls -la ~/Library/Logs/DiagnosticReports/ 2>/dev/null | grep -i lxmusic || echo "NO_CRASH_REPORTS"
+          # 宿主侧外网三角定位（任务 9.6）：应用内自测的网络探针失败时，
+          # 判据依赖「同一外网端点经宿主系统网络是否可达」来分清
+          # 「系统网络不通」与「RN 网络栈配置问题」。宿主侧用 curl 直接
+          # 打探针同一组 URL（http qukudata 排行榜族 + https yy.zddyr.top
+          # 星海后端 + https apple.com 系统级对照组），结果落日志并进
+          # artifact。curl 通而应用内探针失败即收敛到应用网络栈；两边都
+          # 不通则出口网络本身不通，报告判读不得归因应用。不阻断：外网
+          # 端点非门禁，失败只记录
+          {
+            echo '--- host curl triangulation (task 9.6) ---'
+            for probe_url in \
+              'http://qukudata.kuwo.cn/q.k?op=query&cont=tree&node=2&pn=0&rn=1&fmt=json&level=2' \
+              'https://yy.zddyr.top/ip.php' \
+              'https://www.apple.com/'; do
+              echo "probe: $probe_url"
+              curl -sS -m 12 -o /dev/null -w '  status=%{http_code} total=%{time_total}s dns=%{time_namelookup}s\n' "$probe_url" \
+                || echo '  curl_failed'
+            done
+          } | tee host-curl-triangulation.txt
           node "$GITHUB_WORKSPACE/test/ci-report-assert.js" ci-report.json \
             tab-nav_search.png tab-nav_songlist.png tab-nav_love.png tab-nav_setting.png
 
@@ -407,6 +426,7 @@ jobs:
             ios/build/Build/Products/Release-iphonesimulator/ci-report.json
             ios/build/Build/Products/Release-iphonesimulator/openurl-probe.log
             ios/build/Build/Products/Release-iphonesimulator/openurl-native.log
+            ios/build/Build/Products/Release-iphonesimulator/host-curl-triangulation.txt
             ios/build/Build/Products/Release-iphonesimulator/crash-*.ips
           retention-days: 30
 

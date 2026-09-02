@@ -2,6 +2,7 @@
 // import progress from 'request-progress'
 import BackgroundTimer from 'react-native-background-timer'
 import { requestMsg } from './message'
+import { DeviceEventEmitter, Platform } from 'react-native'
 import { bHh } from './musicSdk/options'
 import { deflateRaw } from 'pako'
 import { log } from './log'
@@ -11,6 +12,25 @@ const defaultHeaders = {
 }
 // var proxyUrl = "http://" + user + ":" + password + "@" + host + ":" + port;
 // var proxiedRequest = request.defaults({'proxy': proxyUrl});
+
+// RN Networking 把 NSError 吞成 "Network request failed"，真正的原生
+// 错误文本（DNS 解析 / ATS 拦截 / 连接重置）在 didCompleteNetworkResponse
+// 事件负载里。订阅并落错误日志，供真机归因（「设置-错误日志」可见
+// [native network] 行）；成功请求零输出。仅 iOS 启用——Android 侧
+// 请求错误本就可读，无需重复记录
+if (Platform.OS === 'ios') {
+  const requestUrls = new Map()
+  DeviceEventEmitter.addListener('didReceiveNetworkResponse', (args) => {
+    const [requestId, , , responseURL] = args
+    if (typeof responseURL === 'string') requestUrls.set(requestId, responseURL)
+  })
+  DeviceEventEmitter.addListener('didCompleteNetworkResponse', (args) => {
+    const [requestId, error] = args
+    const url = requestUrls.get(requestId) ?? '<no-response>'
+    requestUrls.delete(requestId)
+    if (error) log.error(`[native network] ${url} -> ${error}`)
+  })
+}
 
 
 /**
