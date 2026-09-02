@@ -501,10 +501,12 @@ await TrackPlayer.setupPlayer({
 <key>NSAppTransportSecurity</key>
 <dict>
   <key>NSAllowsArbitraryLoads</key>
-  <true/>              <!-- 当前是 false，必须改 true -->
-  <key>NSAllowsLocalNetworking</key>
   <true/>
 </dict>
+<!-- 已改。注意：NSAllowsLocalNetworking 键必须移除——它与
+     NSAllowsArbitraryLoads 并存时，后者被系统忽略（Apple 文档
+     明确）。2026-09-02 真机排查实锤：两键并存导致全部内置源
+     http 请求被 -1022 拦截（run 33626382403 原生探针证据） -->
 
 <!-- 【P0】深链。对应 AndroidManifest.xml:34-91 的 lxmusic:// scheme -->
 <key>CFBundleURLTypes</key>
@@ -1134,7 +1136,6 @@ Flutter 版的价值在于它证明了"iOS 上用 JSC 跑自定义源是可行�
 | `src/plugins/player/index.ts` | — | §4.3, §6.4 |
 | `ios/LxMusicMobile/AppDelegate.mm` | — | §5.4 |
 | `android/app/src/main/AndroidManifest.xml` | 34-91 | §5.1 |
-
 
 
 
