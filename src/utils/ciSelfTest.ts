@@ -397,6 +397,18 @@ const testNetworkProbe = async() => {
       external.push({ url: probeUrl, scheme, error: errText(err), ms: Date.now() - t1, nativeProbe })
     }
   }
+  // ATS 回归硬门禁（任务 9.7）：-1022 是 App Transport Security 的
+  // 确定性本地信号——ATS 评估发生在 DNS/连接之前，与外网可达性无关，
+  // 拿到它即配置层故障，可以直接判死。run 33626382403 实锤：
+  // NSAllowsArbitraryLoads=true 与 NSAllowsLocalNetworking 并存时前者
+  // 被系统忽略，全部内置源 http 请求被拦。此断言保证该配置缺陷
+  // 复发时冒烟直接红，而不是再被软记录淹没
+  for (const probe of external) {
+    if (probe.scheme !== 'http') continue
+    const np = probe.nativeProbe as { code?: number, domain?: string } | null | undefined
+    if (!np || typeof np.code !== 'number') continue
+    assert(np.code !== -1022, `ATS blocked http probe (NSAllowsArbitraryLoads ineffective): ${np.domain ?? ''}/${np.code}`)
+  }
   return { md5, b64, fetchMs: Date.now() - t0, status: resp.status, external }
 }
 

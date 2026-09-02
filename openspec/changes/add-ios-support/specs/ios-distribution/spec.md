@@ -21,3 +21,12 @@ CI SHALL 包含 iOS unsigned 编译回归 job，代码合入即验证可编译�
 
 - **WHEN** 准备分发一个 iOS 构建
 - **THEN** 分发方式属于上述三种之一，构建不携带任何上架意图的配置
+
+### Requirement: ATS 明文请求放行
+
+内置音源的搜索、榜单、取链与大量音频直链为明文 `http`，App Transport Security 的 `NSAllowsArbitraryLoads` SHALL 在最终构建中实际生效。`Info.plist` 的 `NSAppTransportSecurity` 中不得出现使 `NSAllowsArbitraryLoads` 被系统忽略的并存键（`NSAllowsLocalNetworking`、`NSAllowsArbitraryLoadsForMedia`、`NSAllowsArbitraryLoadsInWebContent` 及任何例外字典）。
+
+#### Scenario: 明文请求不被本地策略拦截
+
+- **WHEN** 应用发起明文 `http` 请求（原生 `NSURLSession` 或 RN fetch 任一通道）
+- **THEN** 失败原因不得是 `NSURLErrorDomain` code `-1022`（App Transport Security 拦截）；冒烟自测的 `network_probe` SHALL 对 `http` 探针的原生侧错误码做 `-1022` 硬断言
