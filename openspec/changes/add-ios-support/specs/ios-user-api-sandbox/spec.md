@@ -35,3 +35,12 @@ iOS 沙箱 SHALL 原样加载 `user-api-preload.js`，注入 7 个 `__lx_native_
 
 - **WHEN** 某核心音源在回归中系统性失败且 shim 不可行
 - **THEN** 记录判读结论，触发后续引擎统一评估（另立变更）
+
+### Requirement: 请求桥往返
+
+沙箱脚本的 `lx.request` SHALL 经 `request`/`response` 事件通道，由宿主侧生产请求链（`src/core/init/userApi`）完成出站请求并把响应送回脚本回调；该往返 SHALL 有运行时自测覆盖，不得只验证加载到 `inited`。
+
+#### Scenario: 请求往返成立
+
+- **WHEN** 沙箱内脚本调用 `lx.request` 发起请求
+- **THEN** 宿主生产链完成请求，`response` 事件带回状态码与响应体，脚本回调被触发

@@ -312,6 +312,114 @@ const testFsRoundtrip = async() => {
   return { md5 }
 }
 
+// 网络管线探针（真机 2026-09-02 反馈：排行榜加载失败 + 取链接失败导致
+// 循环切歌。两条链路的公共底层是 global.fetch，在 iOS 上从未被运行时
+// 验证过——CI 出口到音源域名不可达，冒烟报告里唯一一次真实请求以
+// 「无法连接到服务器」告终）。探针不依赖外网：
+// 1) quick-md5 的 stringMd5：内置源签名（kw wbdCrypto.createSign、
+//    wy eapi）的依赖，走 JSI 注入，CI 用例从未覆盖
+// 2) quick-base64 的 btoa：网易 weapi 加密链的依赖，同为 JSI
+// 3) file:// fetch 往返：与在线请求同一条 whatwg-fetch → RN XHR →
+//    原生 handler 管线，能走通则传输层与 polyfill 无恙，失败则故障
+//    收敛在响应构造或事件桥（报告 detail 自带 errText 供归因）
+const NET_PROBE_BODY = '{"lxci":"net-probe","n":42}'
+const testNetworkProbe = async() => {
+  const md5Mod = await import('react-native-quick-md5')
+  const md5 = md5Mod.stringMd5('lx-ci-net')
+  assert(typeof md5 === 'string' && /^[0-9a-f]{32}$/.test(md5), `stringMd5 golden shape, got ${String(md5)}`)
+  assert(md5 === '537f98d81957cc7091cd0dc84a24d3c1', `stringMd5 golden value, got ${md5}`)
+
+  const b64Mod = await import('react-native-quick-base64')
+  const b64 = b64Mod.btoa('lx-ci')
+  assert(b64 === 'bHgtY2k=', `btoa golden, got ${String(b64)}`)
+
+  // 生产 fetchData 每次请求同步 new global.AbortController()：该全局
+  // 缺失会让所有出站请求即时抛 TypeError，与两个真机症状同形，必查
+  const globals = globalThis as unknown as { AbortController?: unknown, FileReader?: unknown }
+  assert(typeof globals.AbortController === 'function', `AbortController missing, got ${typeof globals.AbortController}`)
+  assert(typeof globals.FileReader === 'function', `FileReader missing, got ${typeof globals.FileReader}`)
+
+  const probePath = `${tmpDir()}/lx-ci-net-probe.json`
+  await RNFS.writeFile(probePath, NET_PROBE_BODY, 'utf8')
+  const t0 = Date.now()
+  const resp = await withTimeout(
+    global.fetch(`file://${probePath}`),
+    10_000,
+    'file:// fetch',
+  )
+  assert(resp.status === 200, `file:// fetch status, got ${resp.status}`)
+  const text = await resp.text()
+  assert(text === NET_PROBE_BODY, `file:// body roundtrip, got ${text.slice(0, 60)}`)
+  await RNFS.unlink(probePath).catch(() => {})
+  // 外网软记录（不作断言）：真实排行榜端点经同一条 fetch 管线。
+  // CI 出口到音源域名不可达（run 32982319768），此处只记录结果供
+  // 报告判读；真机复测时该项直接回答「音源请求是否出得去」
+  let external: { ok?: boolean, status?: number, error?: string, ms: number } | null = null
+  {
+    const t1 = Date.now()
+    try {
+      const r = await withTimeout(
+        global.fetch('http://qukudata.kuwo.cn/q.k?op=query&cont=tree&node=2&pn=0&rn=1&fmt=json&level=2'),
+        8_000,
+        'external fetch',
+      )
+      external = { ok: r.ok, status: r.status, ms: Date.now() - t1 }
+    } catch (err) {
+      external = { error: errText(err), ms: Date.now() - t1 }
+    }
+  }
+  return { md5, b64, fetchMs: Date.now() - t0, status: resp.status, external }
+}
+
+// 自定义源取链桥往返探针：播放链路「沙箱脚本 → 原生事件 →
+// src/core/init/userApi 生产处理器 → global.fetch → 响应回沙箱」
+// 从未被运行时验证（回归集只测加载→inited，取链留手测）。
+// 探针走 file:// 零外网：沙箱内调 lx.request，断言生产链路把响应
+// 完整送回脚本回调。真机「无法播放、快速循环切歌」症状的直接取证点
+const ciBridgeRequestScript = (filePath: string) => [
+  '\'use strict\';',
+  'try {',
+  `  globalThis.lx.request('file://${filePath}', { method: 'get' }, (err, resp) => {`,
+  '    if (err) { console.log(\'LXCI_BRIDGE_ERR \' + err.message); return; }',
+  '    console.log(\'LXCI_BRIDGE_OK \' + resp.statusCode);',
+  '  });',
+  '} catch (err) { console.log(\'LXCI_BRIDGE_THROW \' + (err && err.message)); }',
+].join('\n')
+const testUserApiRequestBridge = async() => {
+  const userApi = await import('@/utils/nativeModules/userApi')
+  const probePath = `${tmpDir()}/lx-ci-bridge-probe.json`
+  await RNFS.writeFile(probePath, '{"lxci":"bridge-probe"}', 'utf8')
+  const logs: string[] = []
+  const off = userApi.onScriptAction((event) => {
+    const raw = event as unknown as { action: string, log?: string }
+    if (event.action === 'log' && typeof raw.log === 'string') logs.push(raw.log)
+  })
+  try {
+    userApi.loadScript({
+      id: 'lx-ci-bridge',
+      name: 'lx-ci-bridge',
+      description: 'sandbox request bridge probe',
+      version: '1.0.0',
+      author: 'lx-ci',
+      homepage: '',
+      script: ciBridgeRequestScript(probePath),
+    } as never)
+    const t0 = Date.now()
+    while (Date.now() - t0 < 20_000) {
+      if (logs.some(l => l.startsWith('LXCI_BRIDGE_'))) break
+      await sleep(250)
+    }
+    const line = logs.find(l => l.startsWith('LXCI_BRIDGE_'))
+    assert(line != null, `no bridge result in 20s; logs: ${logs.slice(-5).join(' | ')}`)
+    assert(String(line).startsWith('LXCI_BRIDGE_OK 200'), `bridge round-trip, got: ${String(line)}`)
+  } finally {
+    off()
+    try { userApi.destroy() } catch { /* 忽略 */ }
+    await RNFS.unlink(probePath).catch(() => {})
+  }
+  return { result: 'round-trip ok' }
+}
+
 // 3.1 桥 + 3.4 CryptoModule：复跑黄金基准。
 // 契约（对齐 Android / rust lxcore-crypto）：encrypt 入出参均 base64；
 // decrypt 入参 base64、出参 UTF-8 明文（Java `new String(bytes, UTF_8)`）。
@@ -1360,6 +1468,12 @@ const runSuite = async() => {
     await runTest('utils_window_size', testUtils)
     await runTest('fs_exports', testFsExports)
     await runTest('fs_roundtrip', testFsRoundtrip)
+    // 网络管线探针：无外网依赖，失败即「排行榜失败 + 循环切歌」两类
+    // 真机症状的公共底层（JSI md5/base64 + fetch/XHR polyfill）有实证
+    await runTest('network_probe', testNetworkProbe)
+    // 沙箱取链桥往返：播放取链的生产链路（沙箱→RN fetch→回沙箱），
+    // 与 network_probe 相邻，同样不碰外网与 SpringBoard
+    await runTest('user_api_request_bridge', testUserApiRequestBridge)
     await runTest('crypto_golden', testCryptoGolden)
     await runTest('gzip_contract', testGzip)
     await runTest('cache_module', testCache)
