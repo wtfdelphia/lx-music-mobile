@@ -2,6 +2,7 @@
 // import progress from 'request-progress'
 import BackgroundTimer from 'react-native-background-timer'
 import { log } from '@/utils/log'
+import { fireNativeNetworkProbe } from '@/utils/nativeNetworkProbe'
 
 const defaultHeaders = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/69.0.3497.100 Safari/537.36',
@@ -111,6 +112,10 @@ export const fetchData = (url, { timeout = 13_000, ...options }) => {
       }).catch(err => {
         // console.log(err, err.code, err.message)
         log.error(`[userApi request] ${(options.method ?? 'get').toUpperCase()} ${url} failed: ${err?.name ? `${err.name}: ` : ''}${err?.message ?? String(err)}`)
+        // RN Networking 把 NSError 吞成无文本消息，原生探针重打同一
+        // URL 把真实错误文本追加进同一份日志（任务 9.6）。自定义源
+        // 搜索/播放/排行榜全走这里，真机归因的主取证点
+        fireNativeNetworkProbe(url, msg => log.error(msg))
         return Promise.reject(err)
       }).finally(() => {
         if (id == null) return

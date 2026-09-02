@@ -6,6 +6,7 @@ import { DeviceEventEmitter, Platform } from 'react-native'
 import { bHh } from './musicSdk/options'
 import { deflateRaw } from 'pako'
 import { log } from './log'
+import { fireNativeNetworkProbe } from './nativeNetworkProbe'
 
 const defaultHeaders = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/69.0.3497.100 Safari/537.36',
@@ -228,6 +229,9 @@ const fetchData = (url, { timeout = 15000, ...options }) => {
         // 失败原因此前无处可见（iOS 真机首次真实出站请求只能靠猜），
         // 写入错误日志供「设置-错误日志」反馈；仅失败路径，成功零开销
         log.error(`[request] ${(options.method ?? 'get').toUpperCase()} ${url} failed: ${err?.name ? `${err.name}: ` : ''}${err?.message ?? String(err)}`)
+        // RN Networking 把 NSError 吞成无文本消息，原生探针重打同一
+        // URL 把真实错误文本追加进同一份日志（任务 9.6）
+        fireNativeNetworkProbe(url, msg => log.error(msg))
         return Promise.reject(err)
       }).finally(() => {
         if (id == null) return
