@@ -53,6 +53,9 @@ export default async(setting: LX.AppSetting) => {
           const target = userApiRequestMap.get(data.requestKey)
           if (!target) return
           userApiRequestMap.delete(data.requestKey)
+          // 超时此前静默只走 reject，真机错误日志无取证面（任务 9.8）：
+          // 自定义源取链失败时这里是最上游归因点，带 action/source 落盘
+          log.r_error(`[userApi] request timeout 20s action=${String(data.data?.action ?? '?')} source=${String(data.data?.source ?? '?')}`)
           target.reject(new Error('request timeout'))
         }, 20_000),
       })
@@ -69,7 +72,12 @@ export default async(setting: LX.AppSetting) => {
     userApiRequestMap.delete(requestKey)
     BackgroundTimer.clearTimeout(target.timeout)
     if (status) target.resolve(result)
-    else target.reject(new Error(errorMessage ?? 'failed'))
+    else {
+      // 脚本侧失败此前只抛无上下文错误（任务 9.8）：带上脚本报回的
+      // 原文落错误日志，区分「脚本抛错」与「链路超时」两类失败
+      log.r_error(`[userApi] request failed: ${errorMessage ?? 'failed'}`)
+      target.reject(new Error(errorMessage ?? 'failed'))
+    }
   }
   const handleStateChange = ({ status, errorMessage, info }: InitParams) => {
     // console.log(status, message, info)

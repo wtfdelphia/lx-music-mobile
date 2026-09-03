@@ -86,6 +86,14 @@ const utilsNative = NativeModules.UtilsModule as unknown as {
     ok: boolean, domain: string, code: number, desc: string,
     bytes: number, status: number, elapsedMs: number,
   }>,
+  // 媒体通道 ATS 判别探针（任务 9.8）：裸 AVPlayer 装载同一 URL 带回
+  // NSError。数据通道（NSURLSession）与媒体通道（AVFoundation）受不同
+  // ATS 辖区治理，数据通道放行不蕴含媒体通道放行；errorCode -1022 是
+  // 媒体通道被 ATS 拦截的确定性本地信号
+  avStreamProbe: (url: string) => Promise<{
+    status: string, errorDomain: string, errorCode: number,
+    errorDesc: string, elapsedMs: number,
+  }>,
 }
 
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
@@ -1156,6 +1164,85 @@ const testPlayback = async() => {
   return { startedAt: pos, playingSeen, clockFrozen, pausedPos1, pausedPos2, resumedPos, nowPlaying: np, lyricTitle: np2?.title }
 }
 
+// 9.8 远程流播放：生产播放链「setResource → TrackPlayer.add(http(s) URL)
+// → AVPlayer 远程流装载」在 iOS 上从无运行时证据——playback/后台用例
+// 只用 file:// 夹具，真机「能搜索不能播放」（2026-09-03）恰好收敛在
+// 这段。端点两级：首选宿主 loopback HTTP 服务（ios-verify.yml 起
+// python http.server 投递夹具，模拟器与宿主共享网络栈，零外网、
+// 确定性硬门禁）；真机/手跑环境无 loopback 时回退外网端点，先
+// fetch 200 再硬断言，两个都不可达才落 skipped 记录——静默跳过
+// 必须可判读，不得无声变绿。注意 loopback 属 ATS 自动豁免区，
+// 本用例验的是流装载管线，媒体通道的 ATS 判别另走 avStreamProbe
+const REMOTE_STREAM_LOCAL = 'http://127.0.0.1:8790/lx-ci-song.wav'
+const REMOTE_STREAM_FALLBACK = 'https://filesamples.com/samples/audio/mp3/sample1.mp3'
+const testRemoteStreamPlayback = async() => {
+  // 媒体通道 ATS 判别（先于播放断言）：AVPlayer 装载与 NSURLSession
+  // 数据路径可能受不同 ATS 规则治理（声明 audio 后台模式的应用，
+  // 媒体通道另由 NSAllowsArbitraryLoadsForMedia 管辖）。-1022 是
+  // 确定性本地信号，与外网可达性无关：ATS 放行时错误只会落在
+  // DNS/连接/解码层。探针目标复用 network_probe 的 http 端点
+  let atsProbe: { status: string, errorDomain: string, errorCode: number, errorDesc: string, elapsedMs: number }
+  try {
+    atsProbe = await utilsNative.avStreamProbe('http://qukudata.kuwo.cn/q.k?op=query&cont=tree&node=2&pn=0&rn=1&fmt=json&level=2')
+  } catch (err) {
+    // 探针方法缺失/桥接失败不得让用例崩：落可判读记录，硬断言只认 -1022
+    atsProbe = { status: 'probe_error', errorDomain: '', errorCode: 0, errorDesc: errText(err), elapsedMs: 0 }
+  }
+  assert(atsProbe.errorCode !== -1022,
+    `ATS blocked AVFoundation media load (media channel exception required): ${JSON.stringify(atsProbe)}`)
+  let url = ''
+  let fetchStatus = 0
+  for (const candidate of [REMOTE_STREAM_LOCAL, REMOTE_STREAM_FALLBACK]) {
+    try {
+      const r = await withTimeout(global.fetch(candidate), 12_000, `reachability ${candidate}`)
+      fetchStatus = r.status
+      if (r.status === 200) { url = candidate; break }
+    } catch { fetchStatus = 0 }
+  }
+  if (!url) return { skipped: true, reason: 'no reachable remote stream endpoint', fetchStatus, atsMediaProbe: atsProbe }
+  const putils = await import('@/plugins/player/utils')
+  const playList = await import('@/plugins/player/playList')
+  const caseStartRel = Date.now() - state.startedAt
+  // 与 testPlayback 同一生产入口：setResource → buildTracks → add → skip → play
+  putils.setResource(ciMusicInfo(url), url)
+  // 等队列切到目标轨道：切换前 getPosition 读到的还是上一用例夹具的
+  // 位置（>0.5），直接断言会假通过
+  const tSwitch = Date.now()
+  let switched = false
+  while (Date.now() - tSwitch < 30_000) {
+    const track = await playList.getCurrentTrack()
+    if (typeof track?.url === 'string' && track.url === url) { switched = true; break }
+    await sleep(300)
+  }
+  assert(switched, `queue did not switch to remote track (${url}) within 30s`)
+  const t0 = Date.now()
+  let pos = 0
+  let retried = false
+  while (Date.now() - t0 < 45_000) {
+    pos = await putils.getPosition()
+    if (pos > 0.5) break
+    // 起播冻结兜底：20s 未推进再推一次 play（AVPlayer 加载竞态自愈面）
+    if (!retried && Date.now() - t0 > 20_000) {
+      retried = true
+      await putils.setPlay()
+    }
+    await sleep(500)
+  }
+  // 状态机判据只认本用例起点之后的事件：playback 用例遗留的
+  // 'playing' 记录会污染 some() 判据
+  const playingSeen = state.playbackStates.some(e => e.t >= caseStartRel && e.state === 'playing')
+  const clockFrozen = state.audioClockProbe?.clockAdvances === false
+  const stateTail = state.playbackStates.slice(-8).map(s => `${s.state}@${s.t}`).join(',')
+  assert(clockFrozen ? playingSeen : pos > 0.5,
+    `remote stream playback never started (url=${url} pos=${pos} retried=${retried} playingSeen=${playingSeen} states=[${stateTail}])`)
+  await putils.setPause()
+  // 恢复夹具队列：后台续播用例承接当前轨道，重启兜底同样适用
+  putils.setResource(ciMusicInfo(ciSongPath()), `file://${ciSongPath()}`)
+  await sleep(2500)
+  await putils.setPause()
+  return { skipped: false, url, fetchStatus, pos, atsMediaProbe: atsProbe }
+}
+
 // 5.2/5.3 后台播放：前台恢复播放断言推进后，切原生探针接管音频（裸
 // AVPlayer 循环播夹具），写 bg-ready，宿主把前台切到系统设置。切后台时
 // 刻与位置采样全部在原生记录——run 33233955428 实锤切后台后 RN JS 被
@@ -1526,6 +1613,9 @@ const runSuite = async() => {
     await runTest('player_cache_degrade', testPlayerCacheDegrade)
     // 播放段：起播/暂停/恢复 + 锁屏元数据 + 歌词标题通道
     await runTest('playback', testPlayback, 300_000)
+    // 远程流播放（任务 9.8）：真机「能搜索不能播放」的收敛段，
+    // file:// 用例覆盖不到的「远程流 → AVPlayer 装载」生产链路
+    await runTest('remote_stream_playback', testRemoteStreamPlayback, 300_000)
     await runTest('toast_overlay', testToast)
     await runTest('version_update_release', testVersionUpdate)
     await runTest('tab_switch', testTabs, 300_000)

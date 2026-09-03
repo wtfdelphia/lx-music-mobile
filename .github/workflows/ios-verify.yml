@@ -191,7 +191,7 @@ jobs:
       - name: 启动模拟器并安装（写入自测标记）
         working-directory: ios/build/Build/Products/Release-iphonesimulator
         run: |
-          # 钉死模拟器 runtime：head -1 跟随镜像预装列表，镜像更换时 29 项
+          # 钉死模拟器 runtime：head -1 跟随镜像预装列表，镜像更换时 30 项
           # 自测的绿灯含义会静默漂移（见 docs/ios-multi-version-plan.md §2.1）。
           # 找不到目标 runtime 必须失败退出——静默回退等于把洞换个地方开
           RUNTIME="18.5"
@@ -228,6 +228,13 @@ jobs:
           # CI 夹具：确定性本地音源（起播/后台续播，零外网依赖）+ 封面图（锁屏元数据）
           cp "$GITHUB_WORKSPACE/test/fixtures/lx-ci-song.wav" "$CONTAINER/tmp/"
           cp "$GITHUB_WORKSPACE/test/fixtures/lx-ci-pic.png" "$CONTAINER/tmp/"
+          # 任务 9.8：loopback 媒体服务。模拟器与宿主共享网络栈，
+          # remote_stream_playback 用例从 127.0.0.1:8790 装载夹具——
+          # 「远程 http URL → AVPlayer 装载」生产链路的确定性运行时
+          # 证据，零外网依赖。AVPlayer 流式装载首包发 Range 请求，
+          # python 自带 http.server 不支持 206，用仓库内 Range 服务
+          python3 "$GITHUB_WORKSPACE/test/range-http-server.py" "$GITHUB_WORKSPACE/test/fixtures" 8790 > range-server.log 2>&1 &
+          echo $! > range-server.pid
           xcrun simctl launch "$UDID" cn.toside.music.mobile | tee launch.txt
           APP_PID=$(grep -oE '[0-9]+' launch.txt | head -1 || true)
           echo "$APP_PID" > app-pid.txt
@@ -405,6 +412,16 @@ jobs:
               curl -sS -m 12 -o /dev/null -w '  status=%{http_code} total=%{time_total}s dns=%{time_namelookup}s\n' "$probe_url" \
                 || echo '  curl_failed'
             done
+            echo '--- loopback media server check (task 9.8) ---'
+            # 宿主侧对照：应用内装载失败时，宿主同端点是否可取
+            curl -sS -m 8 -o /dev/null -w 'loopback 127.0.0.1:8790 status=%{http_code} total=%{time_total}s\n' \
+              'http://127.0.0.1:8790/lx-ci-song.wav' || echo '  loopback_curl_failed'
+            if [ -f range-server.pid ] && kill -0 "$(cat range-server.pid)" 2>/dev/null; then
+              kill "$(cat range-server.pid)" 2>/dev/null || true
+              echo 'range server stopped'
+            else
+              echo 'range server not running (see range-server.log)'
+            fi
           } | tee host-curl-triangulation.txt
           node "$GITHUB_WORKSPACE/test/ci-report-assert.js" ci-report.json \
             tab-nav_search.png tab-nav_songlist.png tab-nav_love.png tab-nav_setting.png
@@ -427,6 +444,7 @@ jobs:
             ios/build/Build/Products/Release-iphonesimulator/openurl-probe.log
             ios/build/Build/Products/Release-iphonesimulator/openurl-native.log
             ios/build/Build/Products/Release-iphonesimulator/host-curl-triangulation.txt
+            ios/build/Build/Products/Release-iphonesimulator/range-server.log
             ios/build/Build/Products/Release-iphonesimulator/crash-*.ips
           retention-days: 30
 

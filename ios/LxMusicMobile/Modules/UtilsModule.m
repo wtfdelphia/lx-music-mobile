@@ -917,6 +917,79 @@ RCT_EXPORT_METHOD(httpProbe:(NSString *)url
   [task resume];
 }
 
+// CI 自测 / 真机归因（任务 9.8）：媒体通道 ATS 判别探针。
+// NSURLSession 数据路径与 AVFoundation 媒体路径受不同 ATS 辖区治理
+// （声明 audio 后台模式时媒体通道另由 NSAllowsArbitraryLoadsForMedia
+// 管辖）：数据通道已放行（任务 9.7 后搜索恢复）不代表媒体通道放行。
+// 探针用裸 AVPlayer 装载目标 URL，等待加载到可播或失败，带回
+// NSError domain/code——code -1022 即媒体通道被 ATS 拦截的确定性
+// 本地信号（评估发生在 DNS/连接之前，与外网可达性无关）。
+// 装载失败（-1022 之外的错误码）与装载成功的对比，把「播放仍失败」
+// 的归因拆成三叉：媒体通道 ATS / 远程流装载管线 / 上游取链。
+// 与 httpProbe 同口径：无标记门控，真机正式包可用
+RCT_EXPORT_METHOD(avStreamProbe:(NSString *)url
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSURL *target = [NSURL URLWithString:url];
+  if (target == nil || target.scheme == nil) {
+    reject(@"bad_url", @"invalid probe url", nil);
+    return;
+  }
+  NSTimeInterval t0 = [NSDate date].timeIntervalSince1970;
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    NSString *status = @"unknown";
+    NSString *errorDomain = @"";
+    NSInteger errorCode = 0;
+    NSString *errorDesc = @"";
+    @try {
+      AVURLAsset *asset = [AVURLAsset assetWithURL:target];
+      AVPlayerItem *item = [AVPlayerItem playerItemWithAsset:asset];
+      AVPlayer *player = [AVPlayer playerWithPlayerItem:item];
+      player.volume = 0.0f; // 探针不出声
+      // ATS 拦截在加载早期即以 failed 状态 + NSError 落地；
+      // 可播与失败都判装载完成，只超时判待定
+      NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:12];
+      while ([deadline timeIntervalSinceNow] > 0) {
+        if (item.status == AVPlayerItemStatusReadyToPlay) { status = @"ready"; break; }
+        if (item.status == AVPlayerItemStatusFailed) {
+          status = @"failed";
+          NSError *err = item.error;
+          if (err != nil) {
+            errorDomain = err.domain ?: @"";
+            errorCode = err.code;
+            NSString *desc = err.description ?: @"";
+            errorDesc = [desc substringToIndex:MIN((NSUInteger)500, desc.length)];
+            // ATS 拦截常以嵌套形式落地：AVFoundationErrorDomain 外层
+            // 包裹 NSURLErrorDomain/-1022，拦截信号在内层。外层域不携带
+            // 该信号时向内层提取，断言端只认 -1022
+            NSError *underlying = (NSError *)err.userInfo[NSUnderlyingErrorKey];
+            if (underlying != nil && errorCode != -1022 && underlying.code == -1022) {
+              errorDomain = [NSString stringWithFormat:@"%@>%@", errorDomain, underlying.domain ?: @""];
+              errorCode = underlying.code;
+            }
+          }
+          break;
+        }
+        [NSThread sleepForTimeInterval:0.2];
+      }
+      if ([status isEqualToString:@"unknown"]) status = @"timeout";
+      player = nil;
+    } @catch (NSException *exception) {
+      status = @"exception";
+      errorDesc = [NSString stringWithFormat:@"%@: %@", exception.name, exception.reason];
+    }
+    NSTimeInterval elapsedMs = ([NSDate date].timeIntervalSince1970 - t0) * 1000.0;
+    resolve(@{
+      @"status": status,
+      @"errorDomain": errorDomain,
+      @"errorCode": @(errorCode),
+      @"errorDesc": errorDesc,
+      @"elapsedMs": @(elapsedMs),
+    });
+  });
+}
+
 - (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls
 {
   RCTPromiseResolveBlock resolve = self.selectFileResolve;

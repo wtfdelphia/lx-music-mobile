@@ -38,10 +38,23 @@ if (EXPECTED_RUNTIME) {
   const got = report.env && report.env.ciRuntime
   if (!got) {
     failures.push('ci_runtime_missing: 报告无 env.ciRuntime（宿主 runtime 标识未投递或应用未回读）')
-  } else if (!String(got).includes(EXPECTED_RUNTIME)) {
+} else if (!String(got).includes(EXPECTED_RUNTIME)) {
     failures.push(`ci_runtime_mismatch: 钉死目标 iOS ${EXPECTED_RUNTIME}，报告自报 ${got}`)
   } else {
     console.log(`  [PASS] ci_runtime_pinned (${got})`)
+  }
+}
+
+// 远程流播放门禁（任务 9.8）：CI 环境宿主恒起 loopback 媒体服务，
+// remote_stream_playback 是硬门禁——skipped 说明 loopback 未起或
+// 应用侧没跑到，绿灯含义出现新漂移口，必须红。本地手跑（未传
+// IOS_RUNTIME）允许 skipped，只打印供判读
+const remoteStream = report.results.find(r => r.id === 'remote_stream_playback')
+if (remoteStream && remoteStream.detail && remoteStream.detail.skipped === true) {
+  if (EXPECTED_RUNTIME) {
+    failures.push(`remote_stream_required: CI 上 remote_stream_playback 被跳过（${JSON.stringify(remoteStream.detail.reason ?? '')}）`)
+  } else {
+    console.log(`  [SKIP] remote_stream_playback (${String(remoteStream.detail.reason)})`)
   }
 }
 
