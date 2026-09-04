@@ -183,7 +183,17 @@ const handlePlayMusic = async(musicInfo: LX.Player.PlayMusic, url: string, time:
   }
 
   if (queue.length > 2) {
-    void TrackPlayer.remove(Array(queue.length - 2).fill(null).map((_, i) => i)).then(() => list.splice(0, list.length - 2))
+    // 降序删除（任务 9.9）：iOS QueueManager.removeItem 每删一个低于
+    // currentIndex 的项就把 currentIndex 减 1。升序 [0,1,...] 删到第二个
+    // 时，原 index 1 已漂移成 currentIndex，命中原生「不许删当前项」守卫
+    // 被静默跳过——原生队列残留旧轨道、JS list 却按删净 splice，从第二首
+    // 歌起索引永久错位：getCurrentTrack 返回 default 静音轨，
+    // PlaybackTrackChanged 误判空队列触发暂停/切歌，正是真机「无法播放 +
+    // 快速循环切歌」的机制（iOS 26.6 反馈）。降序先删高索引，偏移不会
+    // 撞上待删项；Android LocalPlayback.remove 内部本就排序后倒序遍历，
+    // 降序输入等价，双端安全
+    const removeCount = queue.length - 2
+    void TrackPlayer.remove(Array(removeCount).fill(null).map((_, i) => removeCount - 1 - i)).then(() => list.splice(0, removeCount))
   }
 }
 let playPromise = Promise.resolve()

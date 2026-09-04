@@ -1211,6 +1211,63 @@ const testRemoteStreamPlayback = async() => {
   return { skipped: false, fetchStatus, atsMediaProbe: atsProbe, streamProbe }
 }
 
+// 9.9 队列裁剪竞态（真机「不能播放 + 快速循环切歌」与 run 33750828518
+// 冒烟「队列未切换」的共同根因）。CI 此前从未覆盖：全部播放用例都是
+// 空队列上放单首，handlePlayMusic 的 queue.length > 2 裁剪分支零触发。
+// 机制：iOS QueueManager.removeItem 每删一个低于 currentIndex 的项就把
+// currentIndex 减 1；升序 [0,1,...] 删到第二个时索引漂移撞上原生
+// 「不许删当前项」守卫被静默跳过——原生队列残留旧轨、JS list 却按删净
+// splice，从第二首歌起索引永久错位，getCurrentTrack 返回 default 静音
+// 轨，isEmpty 恒真，播放被暂停并触发循环切歌。判据：双曲目切换后原生
+// 队列恰为 2 项、生产 getCurrentTrack 返回目标真实轨（url 与 id 双判，
+// 两首共用同一夹具文件，只判 url 会假通过）、位置推进
+const testQueueTrimSwitch = async() => {
+  const putils = await import('@/plugins/player/utils')
+  const playList = await import('@/plugins/player/playList')
+  const { default: TrackPlayer } = await import('react-native-track-player')
+  const url = `file://${ciSongPath()}`
+  const musicInfoA = ciMusicInfo(ciSongPath())
+  const musicInfoB = { ...ciMusicInfo(ciSongPath()), id: 'lx_ci_local_2', name: 'lx-ci song 2' }
+  const waitUntil = async(cond: () => Promise<boolean>, ms: number) => {
+    const t0 = Date.now()
+    while (Date.now() - t0 < ms) {
+      if (await cond()) return true
+      await sleep(500)
+    }
+    return false
+  }
+  const queueLen = async() => ((await TrackPlayer.getQueue()) as unknown[]).length
+  const currentIdPrefix = async() => {
+    const track = await playList.getCurrentTrack()
+    return typeof track?.id === 'string' ? track.id.split('__//')[0] : String(track?.id ?? 'null')
+  }
+  // 第一首：让队列稳定在 currentTrackIndex != null（复刻生产非首播切歌）
+  putils.setResource(musicInfoA, url)
+  assert(await waitUntil(async() => (await putils.getPosition()) > 0.5, 30_000), 'song A never started')
+  // 第二首：命中裁剪分支（裁剪前原生队列 4 项）。断言顺序即机制顺序：
+  // 先等裁剪完成，再查对齐——旧实现升序删除会被「不许删当前项」守卫
+  // 跳过一项，原生队列恒残留 3 项，第一步即失败；若只先查对齐，裁剪
+  // 完成前的瞬时读数会假通过
+  putils.setResource(musicInfoB, url)
+  const trimmed = await waitUntil(async() => (await queueLen()) === 2, 15_000)
+  const afterLen = await queueLen()
+  assert(trimmed,
+    `queue not trimmed to 2 tracks: got ${afterLen}, current=${await currentIdPrefix()}（升序删除命中原生「不许删当前项」守卫的残留）`)
+  const trackB = await playList.getCurrentTrack()
+  assert(typeof trackB?.id === 'string' && trackB.id.startsWith('lx_ci_local_2') && trackB.url === url,
+    `native/JS queue misaligned after trim: current=${await currentIdPrefix()} url=${String(trackB?.url ?? 'null')}`)
+  assert(await waitUntil(async() => (await putils.getPosition()) > 0.5, 30_000),
+    'song B never advanced (paused by misalignment?)')
+  // 收尾：换回夹具轨道并暂停，后台续播用例照旧承接夹具
+  putils.setResource(musicInfoA, url)
+  assert(await waitUntil(async() => {
+    const track = await playList.getCurrentTrack()
+    return typeof track?.id === 'string' && track.id.startsWith('lx_ci_local_1') && track.url === url
+  }, 30_000), 'switch back to fixture track failed')
+  await putils.setPause()
+  return { trimmedTo: afterLen }
+}
+
 // 5.2/5.3 后台播放：前台恢复播放断言推进后，切原生探针接管音频（裸
 // AVPlayer 循环播夹具），写 bg-ready，宿主把前台切到系统设置。切后台时
 // 刻与位置采样全部在原生记录——run 33233955428 实锤切后台后 RN JS 被
@@ -1581,6 +1638,8 @@ const runSuite = async() => {
     await runTest('player_cache_degrade', testPlayerCacheDegrade)
     // 播放段：起播/暂停/恢复 + 锁屏元数据 + 歌词标题通道
     await runTest('playback', testPlayback, 300_000)
+    // 队列裁剪竞态（任务 9.9）：双曲目切换路径，单曲目用例覆盖不到
+    await runTest('queue_trim_switch', testQueueTrimSwitch, 300_000)
     // 远程流播放（任务 9.8）：真机「能搜索不能播放」的收敛段，
     // file:// 用例覆盖不到的「远程流 → AVPlayer 装载」生产链路
     await runTest('remote_stream_playback', testRemoteStreamPlayback, 300_000)
