@@ -5,7 +5,7 @@ import TrackPlayer, { State as TPState, Event as TPEvent } from 'react-native-tr
 import { isTempId, isEmpty } from './utils'
 // import { play as lrcPlay, pause as lrcPause } from '@/core/lyric'
 import { exitApp } from '@/core/common'
-import { getCurrentTrack, getCurrentTrackId } from './playList'
+import { getCurrentTrack, getCurrentTrackId, queueSwitchGuard } from './playList'
 import { pause, play, playNext, playPrev } from '@/core/player/player'
 import { log } from '@/utils/log'
 import { fireAvStreamProbe } from '@/utils/nativeNetworkProbe'
@@ -131,6 +131,15 @@ const registerPlaybackService = async() => {
     global.lx.playerTrackId = await getCurrentTrackId()
     if (info.track == null) return
     if (global.lx.isPlayedStop) return handleExitApp('Timeout Exit')
+
+    // 队列手术事件隔离（任务 9.10）：fork 的 iOS stop() 清空队列并无条件
+    // 发 queueIndex 事件，removeItem 索引漂移逐件发，形状与自然播放结束
+    // 无法区分。手术窗口（setStop 置位 → handlePlayMusic/initTrackInfo
+    // 重建完成释放）内只同步当前轨 id，不判播放结束，阻断
+    // stop→playerEnded→playNext→setStop 的瞬间循环——iPhone 17 Pro 真机
+    // 「点排行歌快速循环切歌、无法播放」与 run 33842498724 全套件级联
+    // 超时同根因。Android 的 stop 不发此事件，该分支对 Android 恒不触发
+    if (queueSwitchGuard.active) return
 
     // console.log('global.lx.playerTrackId====>', global.lx.playerTrackId)
     if (isEmpty()) {

@@ -57,3 +57,19 @@ CI 冒烟 SHALL 包含 `remote_stream_playback` 自测，采用两段独立判�
 
 - **WHEN** 在已播放一首歌的队列上切换到下一首歌
 - **THEN** 裁剪完成后原生播放队列恰为 2 项（新轨 + 其 `default` 轨），`getCurrentTrack` 返回目标真实轨（url 与 id 双判），位置推进
+
+### Requirement: 队列手术事件隔离
+
+fork 的 iOS `QueuedAudioPlayer.stop()` 清空队列并无条件发射 `queueIndex` 事件，`QueueManager.removeItem` 每次索引漂移逐件发射，两类事件形状与自然播放结束无法区分。任何队列手术（`handlePlayMusic` 的 add/skip/remove、`initTrackInfo` 的 add/skip、`setStop`）SHALL 在首个原生操作前置位手术守卫，全部原生操作落地后释放；守卫期内 `PlaybackTrackChanged` 处理器 SHALL 只同步当前轨 id，不得把「当前轨为 `default` 兜底轨或空队列」判为播放结束。守卫释放 SHALL 采用令牌语义：释放只认领取时的令牌，旧手术的延迟释放不得覆盖新手术窗口；手术中途失败亦须释放，不得永久吞掉播完判定。Android 侧两类手术事件均为 `prevIndex/track=null` 形状、本被 `info.track == null` 分支过滤，守卫对 Android SHALL 是恒不生效的无操作。
+
+`setStop` 在 iOS 上 SHALL 同步清空 JS 轨道镜像（原生队列已被 `stop()` 清空，镜像残留旧轨会导致下次 add 后索引错位），且不得在空队列上调用 `skipToNext`（原生 `noNextItem` 守卫 reject 会打断 `handlePlay` 的 await，后续歌曲永远拿不到 URL）；Android 上队列不清空，`skipToNext` 跳 `default` 轨的行为 SHALL 保持不变。
+
+#### Scenario: 点击歌曲不再瞬间循环切歌
+
+- **WHEN** 在播放列表/排行中点击一首歌（触发 `handlePlay` → `setStop` → 取链 → 队列重建）
+- **THEN** 队列手术期间不触发 `playerEnded`/`playNext`，目标歌取链落地后正常起播；不出现快速循环切歌
+
+#### Scenario: CI 冒烟套件不被队列手术卡死
+
+- **WHEN** CI 冒烟运行 `queue_trim_switch` 等触碰队列裁剪的用例
+- **THEN** 用例不因手术事件的误判播完而级联超时，后续用例正常完成

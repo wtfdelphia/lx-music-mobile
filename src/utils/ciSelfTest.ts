@@ -1245,37 +1245,80 @@ const testQueueTrimSwitch = async() => {
   putils.setResource(musicInfoA, url)
   assert(await waitUntil(async() => (await putils.getPosition()) > 0.5, 30_000), 'song A never started')
   // 第二首：命中裁剪分支（裁剪前原生队列 4 项）。
-  //
-  // 判据必须先等「切歌真的发生」，不能用队列长度当裁剪完成信号——
-  // run 33842498724 实锤该陷阱：`playMusic` 是 800ms 节流器
-  // （`player/utils.ts` 的 delay=800），第二次 setResource 落进节流
-  // 分支时 handlePlayMusic 尚未执行，队列仍是第一首留下的 2 项，
-  // `queueLen()===2` 在裁剪前后同值、瞬时假通过，用例 32ms 就跌进
-  // 对齐断言读出旧轨 `lx_ci_local_1`——报的是错位，实际是没等到裁剪。
-  //
-  // 改以当前轨 id 翻到第二首为「切歌完成」的唯一信号（节流 800ms +
-  // add/skip 往返，预算给足），再查队列长度与 url 对齐。两首共用同一
-  // 夹具文件，只判 url 会假通过，故 id 与 url 双判
+  // 等待顺序（run 33842498724 竞态修复）：A 的稳定态队列本就是 2 项，
+  // `queueLen === 2` 在 B 的 add 落地前即成立——不能当「裁剪完成」信号，
+  // 首轮轮询会读到 A 的旧状态并报「misaligned」（该轮 32ms 失败的直接
+  // 原因）。先等切歌落地（当前轨换成 B），再等裁剪完成。判别力不变：
+  // 旧升序删除实现切歌照常落地（skip 不受删除顺序影响），但队列恒残留
+  // 3 项，第二步超时失败；若只查对齐不查裁剪，裁剪完成前的瞬时读数会假通过
   putils.setResource(musicInfoB, url)
-  const switched = await waitUntil(async() => (await currentIdPrefix()) === 'lx_ci_local_2', 30_000)
-  const afterLen = await queueLen()
-  assert(switched,
-    `switch to song B never completed: current=${await currentIdPrefix()} queueLen=${afterLen}（节流未过或 add/skip 未落地）`)
-  assert(afterLen === 2,
-    `queue not trimmed to 2 tracks: got ${afterLen}, current=${await currentIdPrefix()}（升序删除命中原生「不许删当前项」守卫的残留）`)
-  const trackB = await playList.getCurrentTrack()
-  assert(typeof trackB?.id === 'string' && trackB.id.startsWith('lx_ci_local_2') && trackB.url === url,
-    `native/JS queue misaligned after trim: current=${await currentIdPrefix()} url=${String(trackB?.url ?? 'null')}`)
-  assert(await waitUntil(async() => (await putils.getPosition()) > 0.5, 30_000),
-    'song B never advanced (paused by misalignment?)')
-  // 收尾：换回夹具轨道并暂停，后台续播用例照旧承接夹具
-  putils.setResource(musicInfoA, url)
-  assert(await waitUntil(async() => {
-    const track = await playList.getCurrentTrack()
-    return typeof track?.id === 'string' && track.id.startsWith('lx_ci_local_1') && track.url === url
-  }, 30_000), 'switch back to fixture track failed')
-  await putils.setPause()
-  return { trimmedTo: afterLen }
+  try {
+    const switched = await waitUntil(async() => (await currentIdPrefix()) === 'lx_ci_local_2', 30_000)
+    assert(switched, `switch to song B never landed: current=${await currentIdPrefix()}`)
+    const trimmed = await waitUntil(async() => (await queueLen()) === 2, 15_000)
+    const afterLen = await queueLen()
+    assert(trimmed,
+      `queue not trimmed to 2 tracks: got ${afterLen}, current=${await currentIdPrefix()}（升序删除命中原生「不许删当前项」守卫的残留）`)
+    const trackB = await playList.getCurrentTrack()
+    assert(typeof trackB?.id === 'string' && trackB.id.startsWith('lx_ci_local_2') && trackB.url === url,
+      `native/JS queue misaligned after trim: current=${await currentIdPrefix()} url=${String(trackB?.url ?? 'null')}`)
+    assert(await waitUntil(async() => (await putils.getPosition()) > 0.5, 30_000),
+      'song B never advanced (paused by misalignment?)')
+    // 收尾：换回夹具轨道并暂停，后台续播用例照旧承接夹具
+    putils.setResource(musicInfoA, url)
+    assert(await waitUntil(async() => {
+      const track = await playList.getCurrentTrack()
+      return typeof track?.id === 'string' && track.id.startsWith('lx_ci_local_1') && track.url === url
+    }, 30_000), 'switch back to fixture track failed')
+    return { trimmedTo: afterLen }
+  } finally {
+    // 断言失败也不留播放中状态：90s 夹具在后续用例期间播完会触发
+    // 自动切歌链，污染后续用例（run 33842498724 级联超时的放大器）
+    await putils.setPause()
+  }
+}
+
+// 9.10 队列手术事件隔离：fork 的 iOS stop() 清空队列并无条件发
+// queueIndex 事件，形状与自然播完无法区分——旧实现把空队列误判为播完，
+// playerEnded → playNext → handlePlay → setStop 自持循环，桥往返级
+// 瞬间刷完整张列表（真机「点排行歌快速瞬间循环」、run 33842498724
+// 全套件级联超时）。判据：setStop 后 playerEnded 计数恒 0，且守卫
+// 保持期间之后的起播链恢复正常
+const testQueueStopEventIsolation = async() => {
+  const putils = await import('@/plugins/player/utils')
+  const { setStop } = await import('@/plugins/player')
+  const waitUntil = async(cond: () => Promise<boolean>, ms: number) => {
+    const t0 = Date.now()
+    while (Date.now() - t0 < ms) {
+      if (await cond()) return true
+      await sleep(500)
+    }
+    return false
+  }
+  const url = `file://${ciSongPath()}`
+  const musicInfo = ciMusicInfo(ciSongPath())
+  // 先建立非空队列：空队列上的手术事件没有判别力
+  putils.setResource(musicInfo, url)
+  assert(await waitUntil(async() => (await putils.getPosition()) > 0.5, 30_000), 'fixture never started')
+  let endedCount = 0
+  const onEnded = () => { endedCount++ }
+  global.app_event.on('playerEnded', onEnded)
+  try {
+    await setStop()
+    // 循环若成立是桥往返级的（毫秒级刷列表），3s 观察窗足够且不误伤慢路径
+    await sleep(3000)
+    assert(endedCount === 0,
+      `setStop spurious queue event fired playerEnded x${endedCount} (queue surgery event isolation broken)`)
+    // 守卫保持（跨越取链窗口，由下一次手术释放）后起播链必须可恢复
+    putils.setResource(musicInfo, url)
+    assert(await waitUntil(async() => (await putils.getPosition()) > 0.5, 30_000),
+      'playback did not recover after setStop (guard stuck?)')
+    assert(endedCount === 0, `playerEnded fired during recovery x${endedCount}`)
+  } finally {
+    global.app_event.off('playerEnded', onEnded)
+    await putils.setPause()
+  }
+  return { endedCount }
 }
 
 // 5.2/5.3 后台播放：前台恢复播放断言推进后，切原生探针接管音频（裸
@@ -1650,6 +1693,9 @@ const runSuite = async() => {
     await runTest('playback', testPlayback, 300_000)
     // 队列裁剪竞态（任务 9.9）：双曲目切换路径，单曲目用例覆盖不到
     await runTest('queue_trim_switch', testQueueTrimSwitch, 300_000)
+    // 队列手术事件隔离（任务 9.10）：setStop 的空队列事件不得被误判为
+    // 播放结束触发循环切歌——真机「点排行歌快速瞬间循环」的确定性复现面
+    await runTest('queue_stop_event_isolation', testQueueStopEventIsolation, 120_000)
     // 远程流播放（任务 9.8）：真机「能搜索不能播放」的收敛段，
     // file:// 用例覆盖不到的「远程流 → AVPlayer 装载」生产链路
     await runTest('remote_stream_playback', testRemoteStreamPlayback, 300_000)

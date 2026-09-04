@@ -1,6 +1,6 @@
 import TrackPlayer, { Capability, Event, RepeatMode, State } from 'react-native-track-player'
 import BackgroundTimer from 'react-native-background-timer'
-import { playMusic as handlePlayMusic, updateNowPlayingMetadataIOS } from './playList'
+import { playMusic as handlePlayMusic, updateNowPlayingMetadataIOS, takeQueueSwitchGuard, resetQueueMirror } from './playList'
 import { existsFile, moveFile, privateStorageDirectoryPath, temporaryDirectoryPath } from '@/utils/fs'
 import { isAndroid, toast } from '@/utils/tools'
 // import { PlayerMusicInfo } from '@/store/modules/player/playInfo'
@@ -158,8 +158,18 @@ export const setPlay = async() => TrackPlayer.play()
 export const getPosition = async() => TrackPlayer.getPosition()
 export const getDuration = async() => TrackPlayer.getDuration()
 export const setStop = async() => {
+  // 守卫窗口覆盖到下一次队列手术（见 playList.ts takeQueueSwitchGuard 注释）：
+  // stop 的空队列事件与后续重建之间可能隔着取链耗时，不得在本地释放
+  takeQueueSwitchGuard()
   await TrackPlayer.stop()
-  if (!isEmpty()) await TrackPlayer.skipToNext()
+  // fork 的 iOS stop() 已清空原生队列（见 resetQueueMirror 注释），
+  // 同步清空 JS 镜像，否则下次 add 后索引错位
+  resetQueueMirror()
+  // fork 的 iOS stop() 已清空队列（QueuedAudioPlayer.reset → clearQueue），
+  // 空队列上 skipToNext 命中原生 noNextItem 守卫 reject，打断
+  // handlePlay 的 await，后续歌曲永远拿不到 URL；Android 的 stop
+  // 保留队列，需跳到 default 轨标记「空」，保持原行为
+  if (isAndroid && !isEmpty()) await TrackPlayer.skipToNext()
 }
 export const setLoop = async(loop: boolean) => TrackPlayer.setRepeatMode(loop ? RepeatMode.Off : RepeatMode.Track)
 

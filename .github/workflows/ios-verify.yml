@@ -191,7 +191,7 @@ jobs:
       - name: 启动模拟器并安装（写入自测标记）
         working-directory: ios/build/Build/Products/Release-iphonesimulator
         run: |
-          # 钉死模拟器 runtime：head -1 跟随镜像预装列表，镜像更换时 31 项
+          # 钉死模拟器 runtime：head -1 跟随镜像预装列表，镜像更换时 32 项
           # 自测的绿灯含义会静默漂移（见 docs/ios-multi-version-plan.md §2.1）。
           # 找不到目标 runtime 必须失败退出——静默回退等于把洞换个地方开
           RUNTIME="18.5"
