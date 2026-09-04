@@ -11,12 +11,17 @@
 # 用法：python3 range-http-server.py <目录> [端口]
 import os
 import sys
+import shutil
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 
 PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 8790
 
 
 class RangeRequestHandler(SimpleHTTPRequestHandler):
+    # 返回值：(文件对象, 应答字节数)；错误响应已发送时返回 None。
+    # 应答字节数必须用于截断复制——206 只答声明的 Content-Length
+    # 那么多字节，复制越界即 HTTP 帧违规，客户端会中断重试
+    # （run 33750828518 的 BrokenPipe 重试循环嫌疑）
     def send_head(self):
         path = self.translate_path(self.path)
         if not os.path.isfile(path):
@@ -31,7 +36,7 @@ class RangeRequestHandler(SimpleHTTPRequestHandler):
             self.send_header('Accept-Ranges', 'bytes')
             self.send_header('Content-Type', self.guess_type(path))
             self.end_headers()
-            return f
+            return f, total
         try:
             spec = rng.split('=', 1)[1].split(',')[0].strip()
             start_s, _, end_s = spec.partition('-')
@@ -55,22 +60,32 @@ class RangeRequestHandler(SimpleHTTPRequestHandler):
         self.send_header('Accept-Ranges', 'bytes')
         self.send_header('Content-Type', self.guess_type(path))
         self.end_headers()
-        return f
+        return f, length
 
     def do_GET(self):
-        f = self.send_head()
-        if f is None:
+        result = self.send_head()
+        if result is None:
             return
+        f, length = result
         try:
-            self.copyfile(f, self.wfile)
+            shutil.copyfileobj(f, self.wfile, length)
         finally:
             f.close()
 
-    do_HEAD = do_GET
+    def do_HEAD(self):
+        result = self.send_head()
+        if result is None:
+            return
+        result[0].close()
 
     def log_message(self, fmt, *args):
         sys.stdout.write('[range-server] %s\n' % (fmt % args))
         sys.stdout.flush()
+
+    def log_request(self, code='-', size='-'):
+        # 带上 Range 头：AVPlayer 装载失败的重试模式判读需要它
+        rng = self.headers.get('Range', '-')
+        self.log_message('"%s" %s %s Range=%s', self.requestline, code, size, rng)
 
 
 if __name__ == '__main__':

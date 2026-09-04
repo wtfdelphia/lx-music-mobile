@@ -949,7 +949,7 @@ RCT_EXPORT_METHOD(avStreamProbe:(NSString *)url
       player.volume = 0.0f; // 探针不出声
       // ATS 拦截在加载早期即以 failed 状态 + NSError 落地；
       // 可播与失败都判装载完成，只超时判待定
-      NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:12];
+      NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:6];
       while ([deadline timeIntervalSinceNow] > 0) {
         if (item.status == AVPlayerItemStatusReadyToPlay) { status = @"ready"; break; }
         if (item.status == AVPlayerItemStatusFailed) {
@@ -974,7 +974,13 @@ RCT_EXPORT_METHOD(avStreamProbe:(NSString *)url
         [NSThread sleepForTimeInterval:0.2];
       }
       if ([status isEqualToString:@"unknown"]) status = @"timeout";
+      // 彻底释放：悬挂的 AVPlayer 实例占用媒体会话与网络句柄，
+      // 套件内探针连续发射（ATS + 流两段）时会叠加成拥塞源
+      [player pause];
+      [player replaceCurrentItemWithPlayerItem:nil];
       player = nil;
+      item = nil;
+      asset = nil;
     } @catch (NSException *exception) {
       status = @"exception";
       errorDesc = [NSString stringWithFormat:@"%@: %@", exception.name, exception.reason];

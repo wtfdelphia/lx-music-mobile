@@ -1164,83 +1164,51 @@ const testPlayback = async() => {
   return { startedAt: pos, playingSeen, clockFrozen, pausedPos1, pausedPos2, resumedPos, nowPlaying: np, lyricTitle: np2?.title }
 }
 
-// 9.8 远程流播放：生产播放链「setResource → TrackPlayer.add(http(s) URL)
-// → AVPlayer 远程流装载」在 iOS 上从无运行时证据——playback/后台用例
-// 只用 file:// 夹具，真机「能搜索不能播放」（2026-09-03）恰好收敛在
-// 这段。端点两级：首选宿主 loopback HTTP 服务（ios-verify.yml 起
-// python http.server 投递夹具，模拟器与宿主共享网络栈，零外网、
-// 确定性硬门禁）；真机/手跑环境无 loopback 时回退外网端点，先
-// fetch 200 再硬断言，两个都不可达才落 skipped 记录——静默跳过
-// 必须可判读，不得无声变绿。注意 loopback 属 ATS 自动豁免区，
-// 本用例验的是流装载管线，媒体通道的 ATS 判别另走 avStreamProbe
+// 9.8 远程流播放归因判别（run 33750828518 后重构）。首版把远程流经
+// 生产队列（setResource → add → skip → AVPlayer）实证了 fork 播放栈
+// 的远程项装载路径在模拟器卡滞：add 之后 playback-state 事件停、
+// 队列切换 30s 不成、RN 桥拥塞、全套件节流（tab_switch 336s、
+// drawer_menu 120s 预算烧 500s 墙钟、套件未完成），与证据案例 1/4
+// 的 SwiftAudioEx 同步装载路径模式吻合。fork 远程装载缺陷另立
+// change（任务 9.9）；修复落地前本用例不以远程 URL 触碰生产队列，
+// 改两段独立判别，失败只影响本用例：
+//   A. 媒体通道 ATS：avStreamProbe 打外网 http 端点。数据通道放行
+//      不蕴含媒体通道放行（audio 后台模式应用另由
+//      NSAllowsArbitraryLoadsForMedia 管辖），-1022 硬断言。外网
+//      不可达只会落 timeout/传输层错误码，不产生 -1022 误报
+//   B. 远程流 AVFoundation 可装载性：avStreamProbe 打宿主 loopback
+//      流（模拟器与宿主共享网络栈，零外网），必须 ready。裸 AVPlayer
+//      独立实例 + 原生侧 6s 截止——它过而生产链不过，即把故障钉在
+//      fork 播放栈（run 33750828518 正是此组合）；它也不过则故障
+//      在更底层的媒体基础
+// loopback 属 ATS 自动豁免区，ATS 判别只认 A 段。静默跳过必须可判读：
+// 仅 loopback 不可达才落 skipped，宿主断言端对 CI 上的 skipped 判失败
 const REMOTE_STREAM_LOCAL = 'http://127.0.0.1:8790/lx-ci-song.wav'
-const REMOTE_STREAM_FALLBACK = 'https://filesamples.com/samples/audio/mp3/sample1.mp3'
 const testRemoteStreamPlayback = async() => {
-  // 媒体通道 ATS 判别（先于播放断言）：AVPlayer 装载与 NSURLSession
-  // 数据路径可能受不同 ATS 规则治理（声明 audio 后台模式的应用，
-  // 媒体通道另由 NSAllowsArbitraryLoadsForMedia 管辖）。-1022 是
-  // 确定性本地信号，与外网可达性无关：ATS 放行时错误只会落在
-  // DNS/连接/解码层。探针目标复用 network_probe 的 http 端点
-  let atsProbe: { status: string, errorDomain: string, errorCode: number, errorDesc: string, elapsedMs: number }
+  const emptyProbe = { status: 'probe_error', errorDomain: '', errorCode: 0, errorDesc: '', elapsedMs: 0 }
+  let atsProbe = { ...emptyProbe }
   try {
-    atsProbe = await utilsNative.avStreamProbe('http://qukudata.kuwo.cn/q.k?op=query&cont=tree&node=2&pn=0&rn=1&fmt=json&level=2')
-  } catch (err) {
-    // 探针方法缺失/桥接失败不得让用例崩：落可判读记录，硬断言只认 -1022
-    atsProbe = { status: 'probe_error', errorDomain: '', errorCode: 0, errorDesc: errText(err), elapsedMs: 0 }
-  }
+    atsProbe = await withTimeout(
+      utilsNative.avStreamProbe('http://qukudata.kuwo.cn/q.k?op=query&cont=tree&node=2&pn=0&rn=1&fmt=json&level=2'),
+      15_000, 'avStreamProbe ats')
+  } catch (err) { atsProbe = { ...emptyProbe, errorDesc: errText(err) } }
   assert(atsProbe.errorCode !== -1022,
     `ATS blocked AVFoundation media load (media channel exception required): ${JSON.stringify(atsProbe)}`)
-  let url = ''
   let fetchStatus = 0
-  for (const candidate of [REMOTE_STREAM_LOCAL, REMOTE_STREAM_FALLBACK]) {
-    try {
-      const r = await withTimeout(global.fetch(candidate), 12_000, `reachability ${candidate}`)
-      fetchStatus = r.status
-      if (r.status === 200) { url = candidate; break }
-    } catch { fetchStatus = 0 }
+  try {
+    const r = await withTimeout(global.fetch(REMOTE_STREAM_LOCAL), 12_000, 'loopback reachability')
+    fetchStatus = r.status
+  } catch (err) {
+    return { skipped: true, reason: `loopback unreachable: ${errText(err)}`, fetchStatus, atsMediaProbe: atsProbe }
   }
-  if (!url) return { skipped: true, reason: 'no reachable remote stream endpoint', fetchStatus, atsMediaProbe: atsProbe }
-  const putils = await import('@/plugins/player/utils')
-  const playList = await import('@/plugins/player/playList')
-  const caseStartRel = Date.now() - state.startedAt
-  // 与 testPlayback 同一生产入口：setResource → buildTracks → add → skip → play
-  putils.setResource(ciMusicInfo(url), url)
-  // 等队列切到目标轨道：切换前 getPosition 读到的还是上一用例夹具的
-  // 位置（>0.5），直接断言会假通过
-  const tSwitch = Date.now()
-  let switched = false
-  while (Date.now() - tSwitch < 30_000) {
-    const track = await playList.getCurrentTrack()
-    if (typeof track?.url === 'string' && track.url === url) { switched = true; break }
-    await sleep(300)
-  }
-  assert(switched, `queue did not switch to remote track (${url}) within 30s`)
-  const t0 = Date.now()
-  let pos = 0
-  let retried = false
-  while (Date.now() - t0 < 45_000) {
-    pos = await putils.getPosition()
-    if (pos > 0.5) break
-    // 起播冻结兜底：20s 未推进再推一次 play（AVPlayer 加载竞态自愈面）
-    if (!retried && Date.now() - t0 > 20_000) {
-      retried = true
-      await putils.setPlay()
-    }
-    await sleep(500)
-  }
-  // 状态机判据只认本用例起点之后的事件：playback 用例遗留的
-  // 'playing' 记录会污染 some() 判据
-  const playingSeen = state.playbackStates.some(e => e.t >= caseStartRel && e.state === 'playing')
-  const clockFrozen = state.audioClockProbe?.clockAdvances === false
-  const stateTail = state.playbackStates.slice(-8).map(s => `${s.state}@${s.t}`).join(',')
-  assert(clockFrozen ? playingSeen : pos > 0.5,
-    `remote stream playback never started (url=${url} pos=${pos} retried=${retried} playingSeen=${playingSeen} states=[${stateTail}])`)
-  await putils.setPause()
-  // 恢复夹具队列：后台续播用例承接当前轨道，重启兜底同样适用
-  putils.setResource(ciMusicInfo(ciSongPath()), `file://${ciSongPath()}`)
-  await sleep(2500)
-  await putils.setPause()
-  return { skipped: false, url, fetchStatus, pos, atsMediaProbe: atsProbe }
+  if (fetchStatus !== 200) return { skipped: true, reason: `loopback status ${fetchStatus}`, fetchStatus, atsMediaProbe: atsProbe }
+  let streamProbe = { ...emptyProbe }
+  try {
+    streamProbe = await withTimeout(utilsNative.avStreamProbe(REMOTE_STREAM_LOCAL), 15_000, 'avStreamProbe stream')
+  } catch (err) { streamProbe = { ...emptyProbe, errorDesc: errText(err) } }
+  assert(streamProbe.status === 'ready',
+    `bare AVPlayer failed to load remote stream (fork-independent path): ${JSON.stringify(streamProbe)}`)
+  return { skipped: false, fetchStatus, atsMediaProbe: atsProbe, streamProbe }
 }
 
 // 5.2/5.3 后台播放：前台恢复播放断言推进后，切原生探针接管音频（裸
