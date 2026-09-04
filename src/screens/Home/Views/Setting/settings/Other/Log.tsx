@@ -6,6 +6,7 @@ import { getLogs, clearLogs } from '@/utils/log'
 import SubTitle from '../../components/SubTitle'
 import Button from '../../components/Button'
 import { createStyle, toast } from '@/utils/tools'
+import { shareText } from '@/utils/nativeModules/utils'
 import ConfirmAlert, { type ConfirmAlertType } from '@/components/common/ConfirmAlert'
 import CheckBoxItem from '../../components/CheckBoxItem'
 import { useI18n } from '@/lang'
@@ -41,6 +42,19 @@ export default memo(() => {
     })
   }
 
+  // 日志落在 Caches 目录（见 utils/fs.ios.ts），iOS 上既不进 iTunes 文件共享
+  // 也不进「文件」App，用户只能在弹窗里干看。走系统分享面板导出全文，
+  // 让真机故障（播放错误、av stream probe、userApi）能带走归因证据
+  const handleExportLog = () => {
+    void getLogs().then((log) => {
+      if (!log) {
+        toast(t('setting_other_log_tip_null'))
+        return
+      }
+      void shareText(t('setting_other_log_btn_export'), t('setting_other_log'), log)
+    })
+  }
+
   const handleSetEnableSyncErrorLog = (enable: boolean) => {
     setIsEnableSyncErrorLog(enable)
     global.lx.isEnableSyncLog = enable
@@ -68,6 +82,7 @@ export default memo(() => {
         </View>
         <View style={styles.btn}>
           <Button onPress={openLogModal}>{t('setting_other_log_btn_show')}</Button>
+          <Button onPress={handleExportLog}>{t('setting_other_log_btn_export')}</Button>
         </View>
       </SubTitle>
       <ConfirmAlert

@@ -1244,14 +1244,24 @@ const testQueueTrimSwitch = async() => {
   // 第一首：让队列稳定在 currentTrackIndex != null（复刻生产非首播切歌）
   putils.setResource(musicInfoA, url)
   assert(await waitUntil(async() => (await putils.getPosition()) > 0.5, 30_000), 'song A never started')
-  // 第二首：命中裁剪分支（裁剪前原生队列 4 项）。断言顺序即机制顺序：
-  // 先等裁剪完成，再查对齐——旧实现升序删除会被「不许删当前项」守卫
-  // 跳过一项，原生队列恒残留 3 项，第一步即失败；若只先查对齐，裁剪
-  // 完成前的瞬时读数会假通过
+  // 第二首：命中裁剪分支（裁剪前原生队列 4 项）。
+  //
+  // 判据必须先等「切歌真的发生」，不能用队列长度当裁剪完成信号——
+  // run 33842498724 实锤该陷阱：`playMusic` 是 800ms 节流器
+  // （`player/utils.ts` 的 delay=800），第二次 setResource 落进节流
+  // 分支时 handlePlayMusic 尚未执行，队列仍是第一首留下的 2 项，
+  // `queueLen()===2` 在裁剪前后同值、瞬时假通过，用例 32ms 就跌进
+  // 对齐断言读出旧轨 `lx_ci_local_1`——报的是错位，实际是没等到裁剪。
+  //
+  // 改以当前轨 id 翻到第二首为「切歌完成」的唯一信号（节流 800ms +
+  // add/skip 往返，预算给足），再查队列长度与 url 对齐。两首共用同一
+  // 夹具文件，只判 url 会假通过，故 id 与 url 双判
   putils.setResource(musicInfoB, url)
-  const trimmed = await waitUntil(async() => (await queueLen()) === 2, 15_000)
+  const switched = await waitUntil(async() => (await currentIdPrefix()) === 'lx_ci_local_2', 30_000)
   const afterLen = await queueLen()
-  assert(trimmed,
+  assert(switched,
+    `switch to song B never completed: current=${await currentIdPrefix()} queueLen=${afterLen}（节流未过或 add/skip 未落地）`)
+  assert(afterLen === 2,
     `queue not trimmed to 2 tracks: got ${afterLen}, current=${await currentIdPrefix()}（升序删除命中原生「不许删当前项」守卫的残留）`)
   const trackB = await playList.getCurrentTrack()
   assert(typeof trackB?.id === 'string' && trackB.id.startsWith('lx_ci_local_2') && trackB.url === url,
@@ -1706,6 +1716,12 @@ export const ciSelfTestBoot = () => {
   void (async() => {
     try {
       if (!(await RNFS.exists(markerPath()))) return
+      // 置全局自测标记：供生产模块识别自测态并关掉会打外网的旁路逻辑
+      // （目前仅 core/init/player/preloadNextMusic 使用）。
+      // run 33842498724 实锤必要性：切歌用例触发进度事件后，预载走
+      // getMusicUrl/checkUrl 打不可达的音乐域名，单次挂 8~15s、共 10 次，
+      // 占满 RN 桥，之后每个用例都超时，套件被 45min 看门狗兜掉
+      global.lx.isCiSelfTest = true
       installAlertSpy()
       installConsoleRing()
       installLinkingSpy()

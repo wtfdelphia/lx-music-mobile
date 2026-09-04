@@ -337,6 +337,7 @@
   "setting_other_log": "错误日志（运行发生异常时的日志）",
   "setting_other_log_btn_clean": "清空",
   "setting_other_log_btn_hide": "关闭",
+  "setting_other_log_btn_export": "导出日志",
   "setting_other_log_btn_show": "查看日志",
   "setting_other_log_sync_log": "记录同步日志",
   "setting_other_log_tip_clean_success": "日志清理完成",
