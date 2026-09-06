@@ -94,6 +94,14 @@ const utilsNative = NativeModules.UtilsModule as unknown as {
     status: string, errorDomain: string, errorCode: number,
     errorDesc: string, elapsedMs: number,
   }>,
+  // 视图树探针：按 testID 取原生实际 frame。排行榜空列表（面板未挂载）
+  // 与播放页无歌词（子页高度塌缩）在 JS 状态上都「正常」，只有原生
+  // frame 能判真伪。未命中时只回 found/matches/visited
+  viewTreeProbe: (testID: string) => Promise<{
+    found: boolean, matches: number, visited: number,
+    width?: number, height?: number, windowX?: number, windowY?: number,
+    hidden?: boolean, alpha?: number, subviews?: number,
+  }>,
 }
 
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
@@ -739,6 +747,73 @@ const testDrawerMenu = async() => {
   return { opened: true }
 }
 
+// 排行榜榜单列表空白（真机 iPhone 17 Pro / iOS 26.6）。
+// 根因：iOS 抽屉早期实现把面板按 drawerShown 条件渲染，而 Leaderboard
+// 是命令式填首屏数据（boardsListRef.current?.setList(...) 在启动
+// useEffect 里发一次）。抽屉没开过 → renderNavigationView 从未执行 →
+// ref 恒为 null → 那次 setList 被 ?. 静默吞掉，列表停在初始空数组。
+// Android 的 DrawerLayoutAndroid 始终挂载面板，调用方依赖的正是这个语义。
+//
+// 判据必须落在「不打开抽屉」的前提上：面板要在原生视图树里已挂载。
+// JS 侧无从判别——ref 为 null 时 ?. 不抛错、组件状态一切正常，所以走
+// 原生 frame。条件渲染的旧实现下 found 为假，本用例判负。
+// 再数榜单条目是否真进了视图树，把「面板挂上了」与「数据填上了」分开：
+// 仅挂载不足以证明 setList 生效。
+const testLeaderboardDrawer = async() => {
+  const commonAction = (await import('@/store/common/action')).default
+  const commonState = (await import('@/store/common/state')).default
+  const leaderboardState = (await import('@/store/leaderboard/state')).default
+  // 排行榜页懒挂载（Main.tsx 的 LeaderboardPage 按 navActiveId 置 visible），
+  // 必须先切到该 Tab 才有面板可测
+  commonAction.setNavActiveId('nav_top')
+  await sleep(8000) // 等页面挂载 + 榜单请求回来 + 命令式 setList 落地
+  assert(commonState.navActiveId === 'nav_top', 'navActiveId == nav_top')
+
+  const panel = await withTimeout(utilsNative.viewTreeProbe('lx-drawer-panel'), 15_000, 'viewTreeProbe drawer')
+  // 核心判据：抽屉从未打开过，面板仍须在视图树里
+  assert(panel.found,
+    `drawer panel not mounted while closed (visited=${panel.visited}); imperative setList would be swallowed by the null ref`)
+  assert((panel.width ?? 0) > 0 && (panel.height ?? 0) > 0,
+    `drawer panel has zero size: ${panel.width ?? 0}x${panel.height ?? 0}`)
+  // 关闭态应被移出可视区（translateX + 容器 overflow:hidden），
+  // 否则面板会盖住首页——挂载修复不能以「常显」为代价。
+  // 抽屉可配左/右（common.drawerLayoutPosition），移出方向随之相反，
+  // 判据必须跟着设置走，否则右侧配置下假失败
+  const settingState = (await import('@/store/setting/state')).default
+  const isRight = settingState.setting['common.drawerLayoutPosition'] === 'right'
+  const { windowSizeTools } = await import('@/utils/windowSizeTools')
+  const screenW = windowSizeTools.getSize().width
+  const offscreen = isRight
+    ? (panel.windowX ?? 0) >= screenW - 1
+    : (panel.windowX ?? 0) + (panel.width ?? 0) <= 1
+  assert(offscreen,
+    `closed drawer panel is not off-screen (${isRight ? 'right' : 'left'}): windowX=${panel.windowX ?? 0} width=${panel.width ?? 0} screenW=${screenW}`)
+  // 数据侧：boards 落库说明 getBoardsList 成功返回。CI 上榜单要走外网，
+  // 不通时列表本就该是空的——那种情况下「渲染了几条」判不出 ref 缺陷，
+  // 故仅在数据确实到位时才断言条目已渲染，避免把外网不通误判成回归
+  const source = Object.keys(leaderboardState.boards)[0]
+  const boardCount = source ? (leaderboardState.boards[source as LX.OnlineSource]?.list.length ?? 0) : 0
+  const items = await withTimeout(utilsNative.viewTreeProbe('lx-board-list-items'), 15_000, 'viewTreeProbe board items')
+  assert(items.found, `board list container not in view tree (visited=${items.visited}); panel mounted but renderNavigationView produced nothing`)
+  if (boardCount > 0) {
+    // 命令式 setList 真正落地的判据：条目已进原生视图树。
+    // 旧实现下 ref 为 null、setList 被 ?. 吞掉，此处为 0
+    assert((items.subviews ?? 0) > 0,
+      `boards loaded (${boardCount}) but no item rendered; imperative setList was swallowed by the null ref`)
+  }
+
+  commonAction.setNavActiveId('nav_search')
+  await sleep(1000)
+  return {
+    panelMounted: panel.found,
+    panelSize: `${panel.width ?? 0}x${panel.height ?? 0}`,
+    windowX: panel.windowX ?? 0,
+    boardSource: source ?? null,
+    boardCount,
+    renderedItems: items.subviews ?? 0,
+  }
+}
+
 // 9.4 自定义源本地导入竞态：真机（iPhone 17 Pro / iOS 26.6）点导入无反应。
 // 根因：导入下拉（RN Modal）的 menuPress 先触发 onPress（selectFile）再
 // onHide()，两条命令同拍进入原生主队列；旧实现把 UIDocumentPicker present
@@ -1321,6 +1396,77 @@ const testQueueStopEventIsolation = async() => {
   return { endedCount }
 }
 
+// 播放器页无歌词、翻译/罗马音开关看着无效（真机 iPhone 17 Pro / iOS 26.6）。
+// 根因在 PagerView 的平台不对称：Android 侧 ViewPagerViewHolder.kt 把子容器
+// 强制设为 MATCH_PARENT/MATCH_PARENT，子 View 不写 style 也会被拉满；iOS 侧
+// UIViewController+CreateExtension.m 只做 self.view = view、不覆写 frame，
+// 尺寸全交给 Yoga。PlayDetail/Vertical 的子页原先没有 flex:1，于是 iOS 上
+// 高度塌缩为 0，歌词 FlatList（自身 flex:1）没有可绘区——数据其实一直在，
+// 只是没地方画，所以开关也「看不出变化」。属上游代码的隐式 Android 依赖。
+//
+// 双判据，缺一不可：
+// 1) 原生 frame 高度非零。JS 状态判不出来——lines 一直有数据，塌缩的是
+//    布局。缺 flex 的旧实现下 height 为 0，本用例判负。
+// 2) toggle 后 lines 带上翻译行。证明开关本身的链路是通的，把「开关坏了」
+//    与「没地方画」彻底分开——这也是「开关无效」的真实归因所在。
+const CI_LRC = '[00:00.00]lx ci line one\n[00:03.00]lx ci line two\n[00:06.00]lx ci line three'
+const CI_LRC_TRANSLATION = '[00:00.00]CI 第一行\n[00:03.00]CI 第二行\n[00:06.00]CI 第三行'
+
+const testLyricPage = async() => {
+  const lyric = await import('@/plugins/lyric')
+  const commonState = (await import('@/store/common/state')).default
+  const { navigations } = await import('@/navigation')
+
+  // 先验开关链路：与 core/init/player/lyric.ts 同一入口。
+  // 注意 toggleTranslation 里 `if (!lrcTools.lyricText) return` 的短路——
+  // 必须先 setLyric 有词，再 toggle，否则跳过的是解析重建
+  lyric.toggleTranslation(false)
+  lyric.setLyric(CI_LRC, CI_LRC_TRANSLATION)
+  await sleep(500)
+  let lines = lyric.getCurrentLines()
+  assert(lines.length === 3, `parsed lines == 3, got ${lines.length}`)
+  assert(lines.every(l => l.extendedLyrics.length === 0),
+    `translation off but extendedLyrics present: ${JSON.stringify(lines.map(l => l.extendedLyrics))}`)
+
+  lyric.toggleTranslation(true)
+  await sleep(500)
+  lines = lyric.getCurrentLines()
+  assert(lines.length === 3, `lines still 3 after toggle, got ${lines.length}`)
+  assert(lines.every(l => l.extendedLyrics.length === 1),
+    `translation on but no extended rows: ${JSON.stringify(lines.map(l => l.extendedLyrics))}`)
+  assert(lines[0].extendedLyrics[0] === 'CI 第一行',
+    `translation row mismatch: ${lines[0].extendedLyrics[0]}`)
+  const parsedLines = lines.length
+  const extendedRows = lines[0].extendedLyrics.length
+
+  // 再验渲染面：推入播放详情页，翻到歌词页（index 1），量原生高度
+  const homeId = commonState.componentIds.home
+  assert(homeId != null, 'home componentId missing; cannot push play detail')
+  navigations.pushPlayDetailScreen(homeId!, true)
+  await sleep(6000) // 等推屏动画 + PagerView 布局稳定
+
+  // 量的是第 0 页而非歌词页：iOS 的 RNCPagerView 只
+  // setViewControllers:@[当前页]（RNCPagerView.m:184），未翻页时歌词页
+  // 根本不在原生视图树里，而 PlayDetail 未持有 pager ref，JS 侧无法驱动
+  // 翻页。两个子页共用同一 styles.page，缺 flex 是二者共同的塌缩根因，
+  // 第 0 页的高度足以判别这个事实
+  const page = await withTimeout(utilsNative.viewTreeProbe('lx-playdetail-page-0'), 15_000, 'viewTreeProbe play detail page')
+  assert(page.found, `play detail page not found in view tree (visited=${page.visited})`)
+  assert((page.height ?? 0) > 100,
+    `pager child height collapsed to ${page.height ?? 0}; PagerView child missing flex:1 on iOS`)
+  assert((page.width ?? 0) > 100, `pager child width collapsed to ${page.width ?? 0}`)
+
+  // 收尾退回首页：后续用例（横屏/深链）都以首页为基准场景
+  const detailId = commonState.componentIds.playDetail
+  if (detailId) await Navigation.pop(detailId).catch(() => {})
+  await sleep(1500)
+  return {
+    pageSize: `${page.width ?? 0}x${page.height ?? 0}`,
+    parsedLines,
+    extendedRows,
+  }
+}
+
 // 5.2/5.3 后台播放：前台恢复播放断言推进后，切原生探针接管音频（裸
 // AVPlayer 循环播夹具），写 bg-ready，宿主把前台切到系统设置。切后台时
 // 刻与位置采样全部在原生记录——run 33233955428 实锤切后台后 RN JS 被
@@ -1706,6 +1852,14 @@ const runSuite = async() => {
     // 不影响后续场景状态；与菜单按钮同链，旧实现在此抛
     // TypeError undefined is not a function（iPhone 17 Pro 真机）
     await runTest('drawer_menu', testDrawerMenu)
+    // 榜单列表空白：与 drawer_menu 同段（纯应用内、不碰 SpringBoard），
+    // 但判据是「抽屉未开时面板已挂载」，须紧跟其后、赶在任何会打开抽屉
+    // 的操作之前——面板一旦开过，条件渲染的旧实现也会挂载，用例失去判负力
+    await runTest('leaderboard_drawer', testLeaderboardDrawer, 120_000)
+    // 播放器页歌词：推屏 + 原生 frame 量高度，收尾 pop 回首页。
+    // 放在横屏之前（横屏用例断言无弹窗且需场景 active），且在
+    // leaderboard_drawer 之后——它把 nav 切回 nav_search，与推屏互不干扰
+    await runTest('lyric_page', testLyricPage, 120_000)
     // 文件选择竞态：走原生探针 + 生产呈现管线，纯应用内无系统投递，
     // 判活后立即取消收尾；放在横屏之前（与抽屉同段，不碰 SpringBoard）
     await runTest('file_picker_race', testFilePickerRace, 60_000)

@@ -996,6 +996,70 @@ RCT_EXPORT_METHOD(avStreamProbe:(NSString *)url
   });
 }
 
+// CI 自测：按 testID 在真机视图树里取视图的实际 frame。
+// 排行榜空列表与播放页无歌词都是「视图挂载 / 尺寸」缺陷：JS 侧看不到——
+// 抽屉面板条件渲染时 ref 恒为 null，命令式 setList 被 ?. 静默吞掉；
+// PagerView 子页缺 flex 时 iOS 侧 Yoga 把高度算成 0，歌词 FlatList 无
+// 可绘区。两者在 JS 状态上都「正常」，只有原生 frame 能判真伪。
+// RN 把 testID 映射为 reactAccessibilityElement.accessibilityIdentifier
+// （RCTViewManager.m:202），故按该属性广度优先搜索。
+// found=NO 与 zero-size 是两种不同事实，分别回报，断言端各自判别。
+// 门控：仅沙箱存在 .lx-ci-selftest 标记时生效，正式包恒拒绝。
+RCT_EXPORT_METHOD(viewTreeProbe:(NSString *)testID
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSString *marker = [NSTemporaryDirectory() stringByAppendingPathComponent:@".lx-ci-selftest"];
+  if (![[NSFileManager defaultManager] fileExistsAtPath:marker]) {
+    reject(@"not_allowed", @"view tree probe requires the CI self-test marker", nil);
+    return;
+  }
+  if (testID.length == 0) {
+    reject(@"bad_arg", @"testID required", nil);
+    return;
+  }
+  dispatch_async(dispatch_get_main_queue(), ^{
+    NSMutableArray<UIView *> *roots = [NSMutableArray array];
+    for (UIWindow *window in [UIApplication sharedApplication].windows) {
+      [roots addObject:window];
+    }
+    // 广度优先：命中即停。同 testID 多实例时取最先命中者，
+    // 并回报 matches 总数供断言端识别意外重复挂载
+    NSMutableArray<UIView *> *queue = [roots mutableCopy];
+    NSMutableArray<UIView *> *matches = [NSMutableArray array];
+    NSUInteger visited = 0;
+    while (queue.count > 0 && visited < 20000) {
+      UIView *view = queue.firstObject;
+      [queue removeObjectAtIndex:0];
+      visited++;
+      if ([view.accessibilityIdentifier isEqualToString:testID]) [matches addObject:view];
+      for (UIView *sub in view.subviews) [queue addObject:sub];
+    }
+    UIView *hit = matches.firstObject;
+    if (hit == nil) {
+      resolve(@{ @"found": @NO, @"matches": @(0), @"visited": @(visited) });
+      return;
+    }
+    CGRect frame = hit.frame;
+    // 屏幕坐标：面板关闭时靠 translateX 移出容器，frame.origin 仍是
+    // 布局位置，故同时回报换算到窗口的可见原点，供位移判别
+    CGRect inWindow = [hit convertRect:hit.bounds toView:nil];
+    BOOL hidden = hit.isHidden;
+    resolve(@{
+      @"found": @YES,
+      @"matches": @(matches.count),
+      @"visited": @(visited),
+      @"width": @(frame.size.width),
+      @"height": @(frame.size.height),
+      @"windowX": @(inWindow.origin.x),
+      @"windowY": @(inWindow.origin.y),
+      @"hidden": @(hidden),
+      @"alpha": @(hit.alpha),
+      @"subviews": @(hit.subviews.count),
+    });
+  });
+}
+
 - (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls
 {
   RCTPromiseResolveBlock resolve = self.selectFileResolve;

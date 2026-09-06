@@ -25,7 +25,6 @@ export interface DrawerLayoutFixedType {
 // iOS 版关闭即卸载面板、无此问题，不解构以免 lint 报未使用
 const DrawerLayoutFixed = forwardRef<DrawerLayoutFixedType, Props>(({ widthPercentage, widthPercentageMax, children, renderNavigationView, drawerPosition, drawerBackgroundColor, style }, ref) => {
   const [drawerShown, setDrawerShown] = useState(false)
-  const [containerWidth, setContainerWidth] = useState(0)
   const [drawerWidth, setDrawerWidth] = useState(0)
   const animValue = useRef(new Animated.Value(0)).current
   // 动画目标值：快开快关时防止旧的完成回调误卸载面板
@@ -35,7 +34,6 @@ const DrawerLayoutFixed = forwardRef<DrawerLayoutFixedType, Props>(({ widthPerce
 
   const handleLayout = useCallback((e: LayoutChangeEvent) => {
     const width = e.nativeEvent.layout.width
-    setContainerWidth(width)
     const wp = Math.floor(width * widthPercentage)
     setDrawerWidth(widthPercentageMax ? Math.min(wp, widthPercentageMax) : wp)
   }, [widthPercentage, widthPercentageMax])
@@ -70,28 +68,37 @@ const DrawerLayoutFixed = forwardRef<DrawerLayoutFixedType, Props>(({ widthPerce
   return (
     <View style={[styles.container, style]} onLayout={handleLayout}>
       {children}
-      {drawerShown && drawerWidth > 0 && containerWidth > 0 ? (
-        <>
-          <Animated.View style={[StyleSheet.absoluteFill, { opacity: animValue, backgroundColor: 'rgba(0,0,0,0.5)' }]}>
-            <TouchableWithoutFeedback onPress={hideDrawer}>
-              <View style={StyleSheet.absoluteFill} />
-            </TouchableWithoutFeedback>
-          </Animated.View>
-          <Animated.View
-            style={[
-              styles.drawer,
-              isRight ? styles.drawerRight : styles.drawerLeft,
-              {
-                width: drawerWidth,
-                backgroundColor: drawerBackgroundColor ?? '#fff',
-                transform: [{ translateX }],
-              },
-            ]}
-          >
-            {renderNavigationView()}
-          </Animated.View>
-        </>
+      {drawerShown ? (
+        <Animated.View style={[StyleSheet.absoluteFill, { opacity: animValue, backgroundColor: 'rgba(0,0,0,0.5)' }]}>
+          <TouchableWithoutFeedback onPress={hideDrawer}>
+            <View style={StyleSheet.absoluteFill} />
+          </TouchableWithoutFeedback>
+        </Animated.View>
       ) : null}
+      {/* 面板必须无条件挂载，不能按 drawerShown 条件渲染。Leaderboard/SongList
+          是命令式填首屏数据（boardsListRef.current?.setList(...)），条件渲染时
+          抽屉未开过 → renderNavigationView 从未执行 → ref 恒为 null → 那次
+          setList 被 ?. 静默吞掉，列表停在初始空数组。Android 的
+          DrawerLayoutAndroid 始终挂载面板，调用方依赖的正是这个语义。
+          无条件挂载使 ref 在首次 commit 就绑定，早于调用方 useEffect，无竞态。
+          关闭时靠 translateX 移出容器 + 容器 overflow:hidden 裁掉 */}
+      <Animated.View
+        // CI 自测按此 testID 在原生视图树里核验面板是否常驻挂载
+        // （条件渲染的旧实现下抽屉未开过时 found 为假，用例判负）
+        testID="lx-drawer-panel"
+        pointerEvents={drawerShown ? 'auto' : 'none'}
+        style={[
+          styles.drawer,
+          isRight ? styles.drawerRight : styles.drawerLeft,
+          {
+            width: drawerWidth,
+            backgroundColor: drawerBackgroundColor ?? '#fff',
+            transform: [{ translateX }],
+          },
+        ]}
+      >
+        {renderNavigationView()}
+      </Animated.View>
     </View>
   )
 })
@@ -99,6 +106,8 @@ const DrawerLayoutFixed = forwardRef<DrawerLayoutFixedType, Props>(({ widthPerce
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    // 面板常驻挂载，关闭时靠 translateX 移到容器外，需裁剪避免溢出可见
+    overflow: 'hidden',
   },
   drawer: {
     position: 'absolute',

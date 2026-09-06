@@ -58,6 +58,16 @@ if (remoteStream && remoteStream.detail && remoteStream.detail.skipped === true)
   }
 }
 
+// UI 回归门禁：榜单列表空白与播放页无歌词两条用例必须在报告里出现。
+// 上面的遍历只对「跑了但失败」判红，用例整体缺席（注册块中断、早退）
+// 时报告里没有该条目，遍历判不出来——这两条正是真机实测出的回归，
+// 缺席即绿灯含义漂移，必须红
+for (const id of ['leaderboard_drawer', 'lyric_page']) {
+  if (!report.results.some(r => r.id === id)) {
+    failures.push(`${id}_missing: 报告缺少该用例结果（未执行或套件早退）`)
+  }
+}
+
 // gzip 交叉验证：设备端 gzipString 产物必须能被宿主标准 gunzip 解压（iOS→Android 互操作）
 const gzipResult = report.results.find(r => r.id === 'gzip_contract')
 if (gzipResult && gzipResult.ok && gzipResult.detail && gzipResult.detail.gzipOutB64) {

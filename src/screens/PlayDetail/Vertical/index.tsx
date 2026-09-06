@@ -79,10 +79,15 @@ export default memo(({ componentId }: { componentId: string }) => {
           // onPageScrollStateChanged={onPageScrollStateChanged}
           style={styles.pagerView}
         >
-          <View collapsable={false}>
+          {/* CI 自测按此 testID 在原生视图树里核验子页高度非零（缺 flex 的
+              旧实现下 iOS 侧塌缩为 0，用例判负）。测第 0 页而非歌词页：
+              iOS 的 RNCPagerView 只 setViewControllers:@[当前页]，未翻页
+              时歌词页不在视图树里，而组件未持有 pager ref，JS 侧无法驱动
+              翻页。两页共用同一 styles.page，第 0 页即可判别该 flex 事实 */}
+          <View collapsable={false} testID="lx-playdetail-page-0" style={styles.page}>
             <Pic componentId={componentId} />
           </View>
-          <View collapsable={false}>
+          <View collapsable={false} style={styles.page}>
             <LyricPage activeIndex={pageIndex} />
           </View>
         </PagerView>
@@ -102,6 +107,13 @@ const styles = createStyle({
     flexDirection: 'column',
   },
   pagerView: {
+    flex: 1,
+  },
+  // PagerView 的子页必须自带 flex:1。Android 侧 ViewPagerViewHolder 把子容器
+  // 强制设为 MATCH_PARENT，子 View 无 style 也会被拉满；iOS 侧
+  // UIViewController+CreateExtension 只做 self.view = view，不覆写 frame，
+  // 尺寸全交给 Yoga——缺 flex 时歌词 FlatList 高度塌缩为 0，页面看起来「无歌词」
+  page: {
     flex: 1,
   },
   // pageIndicator: {

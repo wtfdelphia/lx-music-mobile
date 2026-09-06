@@ -122,6 +122,10 @@ export const useLrcPlay = (autoUpdate = true) => {
 }
 
 // on lyric set hook
+// 当前解析结果的只读快照。useLrcSet 是 hook，非组件环境（CI 自测）
+// 拿不到订阅；用它核验 toggleTranslation 是否把翻译行并进 extendedLyrics
+export const getCurrentLines = () => lrcTools.currentLines
+
 export const useLrcSet = () => {
   const [lines, setLines] = useState<Lines>(lrcTools.currentLines)
   useEffect(() => {
