@@ -38,7 +38,7 @@
 - [X] 5.4 `updateNowPlayingTitles`，锁屏标题随歌词变化（应用内自测 `playback` PASS：iOS 侧该方法经 `updateNowPlayingMetadataIOS` 走 fork 的 metadata 通道，调用后 `getNowPlayingInfo` 原生探针实证 title 翻为歌词行 `lx-ci lyric line`；run 33248314363）
 - [X] 5.5 缓存三方法降级（0/false），`preloadNextMusic` 不崩（应用内自测 `player_cache_degrade` PASS：`isCached`=false、`getCacheSize`=0、`clearCache` 不崩；run 32838388685）
 - [X] 5.6 CacheModule：设置页缓存大小显示与清理有效（应用内自测 `cache_module` PASS：写入样本后统计 128 字节、清理后归 0，字节口径对齐 Android；设置页展示待手测；run 32838388685）
-- [ ] 5.7 门槛验证：完整听完一首在线歌，锁屏不中断可控
+- [ ] 5.7 门槛验证：完整听完一首在线歌，锁屏不中断可控（阻塞项已清除：iPhone 17 Pro / iOS 26.6 真机 2026-09-05 在 run 33904863776（`3bf18542`）构建上确认「已经正确播放」——此前「完全无法播放 + 快速循环切歌」由三项叠加修复：升序裁剪致队列索引错位（案例 16）+ 判据/预载缺陷（案例 17 (a)(b)）+ `stop()` 事件被误判播完的自持循环（案例 17 (c)）。**本条仍未达成**：真机只确认了「能播放」，「完整听完一首在线歌」（全程无中断、无中途切歌）与「锁屏不中断可控」两项判据均未经确认，需用户复测判读）
 
 ## 6. Phase 3：功能补齐
 
