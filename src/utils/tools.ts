@@ -308,7 +308,10 @@ export const shareMusic = (shareType: LX.ShareType, downloadFileName: LX.AppSett
   const musicTitle = downloadFileName.replace('歌名', name).replace('歌手', singer)
   switch (shareType) {
     case 'system':
-      void shareText(global.i18n.t('share_card_title_music', { name }), global.i18n.t('share_title_music'), `${musicTitle.replace(/\s/g, '')}${detailUrl ? '\n' + detailUrl : ''}`)
+      // shareText 现在会在呈现失败时 reject（见 UtilsModule.m），必须接住：
+      // 否则是未捕获的 Promise rejection，且用户仍看不到失败原因
+      shareText(global.i18n.t('share_card_title_music', { name }), global.i18n.t('share_title_music'), `${musicTitle.replace(/\s/g, '')}${detailUrl ? '\n' + detailUrl : ''}`)
+        .catch((err: any) => { toast(String(err?.message ?? err)) })
       break
     case 'clipboard':
       clipboardWriteText(`${musicTitle}${detailUrl ? '\n' + detailUrl : ''}`)

@@ -79,6 +79,13 @@ const utilsNative = NativeModules.UtilsModule as unknown as {
   selectFileRaceProbe: (options: Record<string, never> | {}) => Promise<{
     presented: boolean, attempts: number, elapsedMs: number, error: string | null,
   }>,
+  // 分享面板竞态探针：与 selectFileRaceProbe 同构，但造真 UIActivityView-
+  // Controller 走生产同一管线。旧 shareText 直接 present 到
+  // delegate.window.rootViewController，此时序下被 UIKit 静默吞掉，
+  // 故本探针在旧实现上必然 presented=false（原用例只断言导出存在，无判别力）
+  shareTextRaceProbe: (text: string) => Promise<{
+    presented: boolean, attempts: number, elapsedMs: number, error: string | null,
+  }>,
   // 网络原生探针（任务 9.6）：绕过 RN fetch 栈，原生 NSURLSession 直打
   // 同一 URL。RN Networking 把 NSError 吞成 "Network request failed"，
   // 交叉对照「RN 失败 / 原生通」可把故障收敛到 RN 网络栈配置层
@@ -830,6 +837,58 @@ const testFilePickerRace = async() => {
   assert(probe.presented === true,
     `picker never survived the dismissal race: attempts=${probe.attempts} elapsedMs=${probe.elapsedMs} error=${probe.error ?? 'null'}`)
   return { presented: probe.presented, attempts: probe.attempts, elapsedMs: probe.elapsedMs }
+}
+
+// 「设置-错误日志-导出日志」真机点击无反应。三层静默叠加：
+// ① 原生 shareText 直接 present 到 delegate.window.rootViewController，
+//    与任务 9.4 已在同一台设备（iPhone 17 Pro / iOS 26.6）实锤的坏写法同形，
+//    上层 Modal 退场同拍时被 UIKit 吞掉；
+// ② 原生 shareText 是 fire-and-forget，无 resolve/reject，失败无通道；
+// ③ JS 侧 `void getLogs().then(...)` 无 catch，读文件 reject 也全静默。
+// 本用例三层各有判据：日志可读可写（导出源存在）、竞态下面板真能呈现
+// （旧实现必然 presented=false）、shareText 返回值是 Promise（旧实现
+// 丢弃返回值，await 拿不到失败）。
+// 注意：导出取证入口本身坏掉会掩盖所有其他真机故障的诊断，
+// 故此用例优先级等同播放主链路。
+const testLogExport = async() => {
+  const { log, getLogs } = await import('@/utils/log')
+  // 写一条可辨识的日志，确认导出源确实有内容（readFile 不 reject）
+  const marker = `ci-log-export-probe-${Date.now()}`
+  log.info(marker)
+  let content = ''
+  for (let i = 0; i < 20; i++) {
+    await sleep(100)
+    content = await getLogs()
+    if (content.includes(marker)) break
+  }
+  assert(content.includes(marker),
+    `log file never received the marker (export source empty): len=${content.length}`)
+
+  // 错误通道必须真的存在：空文本走原生的立即 reject 分支——既验证
+  // Promise 通道（旧实现 fire-and-forget，await 永远拿不到失败），
+  // 又不呈现任何面板（正常文本会弹面板挡住后续用例）
+  const utils = await import('@/utils/nativeModules/utils')
+  let rejected = false
+  try {
+    await utils.shareText('ci', 'ci', '')
+  } catch {
+    rejected = true
+  }
+  assert(rejected, 'shareText with empty text resolved: no error channel (fire-and-forget)')
+
+  // 竞态下真呈现（旧实现在此时序必然判负）
+  const probe = await withTimeout(
+    utilsNative.shareTextRaceProbe(marker),
+    20_000, 'shareTextRaceProbe')
+  assert(probe.presented === true,
+    `share sheet never survived the dismissal race: attempts=${probe.attempts} elapsedMs=${probe.elapsedMs} error=${probe.error ?? 'null'}`)
+  return {
+    logLen: content.length,
+    markerFound: true,
+    presented: probe.presented,
+    attempts: probe.attempts,
+    elapsedMs: probe.elapsedMs,
+  }
 }
 
 // 6.3/6.4 深链：等待宿主探针标记，校验监听注册与处理痕迹
@@ -1863,6 +1922,9 @@ const runSuite = async() => {
     // 文件选择竞态：走原生探针 + 生产呈现管线，纯应用内无系统投递，
     // 判活后立即取消收尾；放在横屏之前（与抽屉同段，不碰 SpringBoard）
     await runTest('file_picker_race', testFilePickerRace, 60_000)
+    // 导出日志：与 file_picker_race 同段（同一呈现管线、纯应用内、
+    // 判活后立即撤面板），须在横屏用例之前——横屏断言无弹窗
+    await runTest('log_export', testLogExport, 60_000)
     // 横屏在深链之前：深链的 SpringBoard 往返会把场景压成 inactive
     // （run 33233955428：旋转被接受但不重排版），旋转必须趁场景还 active；
     // 也须赶在宿主深链探针之前（file:// 探针的导入弹窗会撞横屏用例的

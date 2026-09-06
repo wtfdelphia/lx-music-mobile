@@ -191,22 +191,50 @@ RCT_EXPORT_METHOD(openNotificationPermissionActivity:(RCTPromiseResolveBlock)res
   }];
 }
 
+// 任务 9.4 同类缺陷：旧实现直接把分享面板 present 到
+// `delegate.window.rootViewController`，与 selectFile 修复前完全同形。
+// 「导出日志」按钮位于设置页，点击时上层可能有正在退场的 Modal
+// （ConfirmAlert / Menu 都走 RN Modal），呈现命令与退场同拍时 UIKit
+// 静默吞掉面板：无回调、无报错。且旧实现是 fire-and-forget，没有
+// Promise 通道，失败在 JS 侧也无从察觉——真机「点导出没反应」即此。
+// 改为复用 runPresentPipelineWithFactory（等层级稳定→呈现→存活校验→
+// 重试），失败走 reject，不许静默吞。
 RCT_EXPORT_METHOD(shareText:(NSString *)shareTitle
                   title:(NSString *)title
-                  text:(NSString *)text)
+                  text:(NSString *)text
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
 {
+  if (text.length == 0) {
+    reject(@"share_empty", @"shareText called with empty text", nil);
+    return;
+  }
+  NSString *subject = shareTitle.length > 0 ? shareTitle : title;
   dispatch_async(dispatch_get_main_queue(), ^{
-    UIViewController *root = [UIApplication sharedApplication].delegate.window.rootViewController;
-    while (root.presentedViewController != nil) root = root.presentedViewController;
-    if (root == nil) return;
-    NSString *subject = shareTitle.length > 0 ? shareTitle : title;
-    UIActivityViewController *controller = [[UIActivityViewController alloc] initWithActivityItems:@[ text ] applicationActivities:nil];
-    [controller setValue:subject forKey:@"subject"];
-    if (controller.popoverPresentationController != nil) {
-      controller.popoverPresentationController.sourceView = root.view;
-      controller.popoverPresentationController.sourceRect = CGRectMake(CGRectGetMidX(root.view.bounds), CGRectGetMidY(root.view.bounds), 0, 0);
-    }
-    [root presentViewController:controller animated:YES completion:nil];
+    self.selectFilePresentAttempts = 0;
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:kLXPickerPresentBudget];
+    __weak typeof(self) weakSelf = self;
+    [self runPresentPipelineWithFactory:^UIViewController *{
+      __strong typeof(weakSelf) self = weakSelf;
+      UIActivityViewController *controller = [[UIActivityViewController alloc] initWithActivityItems:@[ text ] applicationActivities:nil];
+      if (subject.length > 0) [controller setValue:subject forKey:@"subject"];
+      // iPad / 部分 iOS 26 形态下 UIActivityViewController 走 popover，
+      // 缺 sourceView 会直接抛异常，锚到当前稳定顶层 VC 的中心
+      if (controller.popoverPresentationController != nil) {
+        UIViewController *anchor = [self lx_stableTopViewController];
+        if (anchor != nil) {
+          controller.popoverPresentationController.sourceView = anchor.view;
+          controller.popoverPresentationController.sourceRect = CGRectMake(CGRectGetMidX(anchor.view.bounds), CGRectGetMidY(anchor.view.bounds), 0, 0);
+        }
+      }
+      return controller;
+    } deadline:deadline onFinish:^(UIViewController *vc, NSString *error) {
+      if (error == nil) {
+        resolve(@(YES));
+        return;
+      }
+      reject(@"share_present_failed", error, nil);
+    }];
   });
 }
 
@@ -803,6 +831,68 @@ RCT_EXPORT_METHOD(selectFile:(NSDictionary *)options
   self.selectFileResolve = nil;
   self.selectFileToPath = nil;
   self.selectFilePicker = nil;
+}
+
+// CI 自测：验证 shareText 的分享面板在「Modal 退场同拍」下真能呈现。
+// 旧实现直接 present 到 delegate.window.rootViewController，此场景下被
+// UIKit 静默吞掉且无 Promise 通道，故本探针在旧实现上必然判负——
+// 这正是原用例（只断言 `typeof shareText === 'function'`）缺失的判别力。
+// 与 selectFileRaceProbe 同构：先呈现临时 VC，completion 内同拍退场并
+// 立即调 shareText，呈现存活后立刻撤掉分享面板，不留残留。
+// 双保险门控：仅沙箱存在 .lx-ci-selftest 标记时生效，正式包恒拒绝。
+RCT_EXPORT_METHOD(shareTextRaceProbe:(NSString *)text
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSString *tmp = NSTemporaryDirectory();
+  NSString *marker = [tmp stringByAppendingPathComponent:@".lx-ci-selftest"];
+  if (![[NSFileManager defaultManager] fileExistsAtPath:marker]) {
+    reject(@"not_allowed", @"shareTextRaceProbe requires the CI self-test marker", nil);
+    return;
+  }
+  dispatch_async(dispatch_get_main_queue(), ^{
+    UIViewController *top = [self lx_stableTopViewController];
+    if (top == nil) {
+      resolve(@{ @"presented": @(NO), @"elapsedMs": @0, @"error": @"no stable top view controller to stage race" });
+      return;
+    }
+    NSTimeInterval t0 = [NSDate date].timeIntervalSince1970;
+    UIViewController *transient = [[UIViewController alloc] init];
+    transient.modalPresentationStyle = UIModalPresentationFullScreen;
+    transient.view.backgroundColor = [UIColor clearColor];
+    __weak typeof(self) weakSelf = self;
+    [top presentViewController:transient animated:YES completion:^{
+      __strong typeof(weakSelf) self = weakSelf;
+      if (self == nil) return;
+      // 同一拍：退场临时 VC + 发起分享（复刻真机「点导出时上层 Modal 正退场」）
+      [transient dismissViewControllerAnimated:YES completion:nil];
+      self.selectFilePresentAttempts = 0;
+      NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:kLXPickerPresentBudget];
+      [self runPresentPipelineWithFactory:^UIViewController *{
+        __strong typeof(weakSelf) self = weakSelf;
+        UIActivityViewController *controller = [[UIActivityViewController alloc] initWithActivityItems:@[ text ?: @"lx ci probe" ] applicationActivities:nil];
+        if (controller.popoverPresentationController != nil) {
+          UIViewController *anchor = [self lx_stableTopViewController];
+          if (anchor != nil) {
+            controller.popoverPresentationController.sourceView = anchor.view;
+            controller.popoverPresentationController.sourceRect = CGRectMake(CGRectGetMidX(anchor.view.bounds), CGRectGetMidY(anchor.view.bounds), 0, 0);
+          }
+        }
+        return controller;
+      } deadline:deadline onFinish:^(UIViewController *vc, NSString *error) {
+        __strong typeof(weakSelf) self = weakSelf;
+        NSTimeInterval elapsedMs = ([NSDate date].timeIntervalSince1970 - t0) * 1000.0;
+        NSInteger attempts = self == nil ? 0 : self.selectFilePresentAttempts;
+        if (vc != nil) {
+          // 判活成功：立即撤掉分享面板恢复现场，不残留进入后续用例
+          [vc dismissViewControllerAnimated:NO completion:nil];
+          resolve(@{ @"presented": @(YES), @"attempts": @(attempts), @"elapsedMs": @(elapsedMs), @"error": [NSNull null] });
+          return;
+        }
+        resolve(@{ @"presented": @(NO), @"attempts": @(attempts), @"elapsedMs": @(elapsedMs), @"error": error ?: @"unknown" });
+      }];
+    }];
+  });
 }
 
 // CI 自测（任务 9.4）：无头复现「下拉退场与呈现命令同拍」。从稳定顶层 VC

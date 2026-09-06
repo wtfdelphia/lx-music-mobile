@@ -62,10 +62,24 @@ if (remoteStream && remoteStream.detail && remoteStream.detail.skipped === true)
 // 上面的遍历只对「跑了但失败」判红，用例整体缺席（注册块中断、早退）
 // 时报告里没有该条目，遍历判不出来——这两条正是真机实测出的回归，
 // 缺席即绿灯含义漂移，必须红
-for (const id of ['leaderboard_drawer', 'lyric_page']) {
+// log_export 同理必须在场：它是真机取证入口本身，坏掉会掩盖其他所有
+// 真机故障的诊断（原用例只断言 `typeof shareText === 'function'`，
+// 旧实现上恒真，缺陷因此逃逸）
+for (const id of ['leaderboard_drawer', 'lyric_page', 'log_export']) {
   if (!report.results.some(r => r.id === id)) {
     failures.push(`${id}_missing: 报告缺少该用例结果（未执行或套件早退）`)
   }
+}
+
+// 导出日志三层判据逐项复核：detail 缺字段或判据为假即红，
+// 防「用例在场但断言被弱化」的绿灯漂移
+const logExport = report.results.find(r => r.id === 'log_export')
+if (logExport && logExport.ok) {
+  const d = logExport.detail || {}
+  if (d.markerFound !== true) failures.push('log_export_source: 日志文件未收到标记（导出源为空）')
+  if (d.presented !== true) failures.push(`log_export_present: 竞态下分享面板未呈现 attempts=${d.attempts} error=${d.error}`)
+  if (!(d.logLen > 0)) failures.push(`log_export_len: 日志内容长度非正 logLen=${d.logLen}`)
+  if (d.markerFound === true && d.presented === true && d.logLen > 0) console.log('  [PASS] log_export_gates')
 }
 
 // gzip 交叉验证：设备端 gzipString 产物必须能被宿主标准 gunzip 解压（iOS→Android 互操作）
