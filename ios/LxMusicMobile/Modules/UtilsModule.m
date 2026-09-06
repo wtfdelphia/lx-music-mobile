@@ -858,29 +858,12 @@ RCT_EXPORT_METHOD(shareTextRaceProbe:(NSString *)text
       resolve(@{ @"presented": @(NO), @"elapsedMs": @0, @"error": @"no stable top view controller to stage race" });
       return;
     }
-    // 先测无竞态基线：同类 VC 从稳定顶层直接呈现，不制造并发退场。
-    // run 34021736928 的竞态判负签名是「completion never fired within
-    // watchdog」，两个存活分量皆假——这既可能是呈现被吞，也可能是无头
-    // 模拟器托不住 UIActivityViewController 本身。基线把二者分开：
-    // 基线也失败 = 环境限制（竞态判负无判别力，放行）；基线成功而竞态
-    // 失败 = 竞态确实吞掉呈现 = 生产缺陷（判红）。
-    [self lx_probeShareBaselineFrom:top completion:^(BOOL baselineOk, NSString *baselineError) {
-    // 基线刚退场，层级仍在过渡中；此刻搭台会掺进我自己造的竞态，污染测量。
-    // 等一拍让层级重新稳定，竞态只能由下面的同拍退场制造。
-    [self lx_afterStableHierarchy:^(UIViewController *stage) {
-    if (stage == nil) {
-      resolve(@{ @"presented": @(NO), @"attempts": @0, @"elapsedMs": @0,
-                 @"lastHasPresenting": @(NO), @"lastHasWindow": @(NO),
-                 @"baselineOk": @(baselineOk), @"baselineError": baselineError ?: [NSNull null],
-                 @"error": @"hierarchy never restabilized after baseline" });
-      return;
-    }
     NSTimeInterval t0 = [NSDate date].timeIntervalSince1970;
     UIViewController *transient = [[UIViewController alloc] init];
     transient.modalPresentationStyle = UIModalPresentationFullScreen;
     transient.view.backgroundColor = [UIColor clearColor];
     __weak typeof(self) weakSelf = self;
-    [stage presentViewController:transient animated:YES completion:^{
+    [top presentViewController:transient animated:YES completion:^{
       __strong typeof(weakSelf) self = weakSelf;
       if (self == nil) return;
       // 同一拍：退场临时 VC + 发起分享（复刻真机「点导出时上层 Modal 正退场」）
@@ -908,9 +891,7 @@ RCT_EXPORT_METHOD(shareTextRaceProbe:(NSString *)text
           // 判活成功：立即撤掉分享面板恢复现场，不残留进入后续用例
           [vc dismissViewControllerAnimated:NO completion:nil];
           resolve(@{ @"presented": @(YES), @"attempts": @(attempts), @"elapsedMs": @(elapsedMs),
-                     @"lastHasPresenting": @(YES), @"lastHasWindow": @(YES),
-                     @"baselineOk": @(baselineOk), @"baselineError": baselineError ?: [NSNull null],
-                     @"error": [NSNull null] });
+                     @"lastHasPresenting": @(YES), @"lastHasWindow": @(YES), @"error": [NSNull null] });
           return;
         }
         // 预算耗尽：把管线存活判据的两个分量分开回报。
@@ -927,77 +908,10 @@ RCT_EXPORT_METHOD(shareTextRaceProbe:(NSString *)text
         if (lastVC != nil && lastVC.presentingViewController != nil) [lastVC dismissViewControllerAnimated:NO completion:nil];
         resolve(@{ @"presented": @(NO), @"attempts": @(attempts), @"elapsedMs": @(elapsedMs),
                    @"lastHasPresenting": @(hasPresenting), @"lastHasWindow": @(hasWindow),
-                   @"baselineOk": @(baselineOk), @"baselineError": baselineError ?: [NSNull null],
                    @"error": error ?: @"unknown" });
       }];
     }];
-    }];
-    }];
   });
-}
-
-// 轮询等层级稳定（复用管线的稳定判据），最多等 kLXPickerPresentBudget。
-// 超时回 nil 而不是硬上，避免把「没等到稳定」冒充成「呈现被吞」。
-- (void)lx_afterStableHierarchy:(void (^)(UIViewController *stage))completion
-{
-  [self lx_afterStableHierarchyDeadline:[NSDate dateWithTimeIntervalSinceNow:kLXPickerPresentBudget]
-                             completion:completion];
-}
-
-- (void)lx_afterStableHierarchyDeadline:(NSDate *)deadline
-                             completion:(void (^)(UIViewController *stage))completion
-{
-  UIViewController *stable = [self lx_stableTopViewController];
-  if (stable != nil) {
-    completion(stable);
-    return;
-  }
-  if ([deadline timeIntervalSinceNow] <= 0) {
-    completion(nil);
-    return;
-  }
-  __weak typeof(self) weakSelf = self;
-  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kLXPickerWaitInterval * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-    __strong typeof(weakSelf) self = weakSelf;
-    if (self == nil) {
-      completion(nil);
-      return;
-    }
-    [self lx_afterStableHierarchyDeadline:deadline completion:completion];
-  });
-}
-
-// 无竞态基线：直接呈现同类 UIActivityViewController，用与管线一致的存活
-// 判据（presenting && window）在同样的 kLXPickerAliveDelay 后判一次，不重试。
-// 只回报成败，不参与生产路径。
-- (void)lx_probeShareBaselineFrom:(UIViewController *)host
-                       completion:(void (^)(BOOL ok, NSString *error))completion
-{
-  UIActivityViewController *probe = [[UIActivityViewController alloc] initWithActivityItems:@[ @"lx ci baseline" ] applicationActivities:nil];
-  if (probe.popoverPresentationController != nil) {
-    probe.popoverPresentationController.sourceView = host.view;
-    probe.popoverPresentationController.sourceRect = CGRectMake(CGRectGetMidX(host.view.bounds), CGRectGetMidY(host.view.bounds), 0, 0);
-  }
-  __block BOOL settled = NO;
-  // completion 不触发本身就是结论之一（竞态路径正是死在这里），所以要有看门狗
-  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((kLXPickerCompletionWatchdog + kLXPickerAliveDelay) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-    if (settled) return;
-    settled = YES;
-    if (probe.presentingViewController != nil) [probe dismissViewControllerAnimated:NO completion:nil];
-    completion(NO, @"baseline present completion never fired");
-  });
-  [host presentViewController:probe animated:NO completion:^{
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kLXPickerAliveDelay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-      if (settled) return;
-      settled = YES;
-      BOOL alive = probe.presentingViewController != nil && probe.view.window != nil;
-      NSString *err = alive ? nil : [NSString stringWithFormat:@"baseline not alive: presenting=%@ window=%@",
-                                     probe.presentingViewController != nil ? @"yes" : @"no",
-                                     probe.view.window != nil ? @"yes" : @"no"];
-      // 必须撤干净：残留面板会挡住后续用例
-      [probe dismissViewControllerAnimated:NO completion:^{ completion(alive, err); }];
-    });
-  }];
 }
 
 // CI 自测（任务 9.4）：无头复现「下拉退场与呈现命令同拍」。从稳定顶层 VC

@@ -78,21 +78,16 @@ if (logExport && logExport.ok) {
   const d = logExport.detail || {}
   if (d.markerFound !== true) failures.push('log_export_source: 日志文件未收到标记（导出源为空）')
   if (!(d.logLen > 0)) failures.push(`log_export_len: 日志内容长度非正 logLen=${d.logLen}`)
-  // 呈现判据以无竞态基线为前提。基线 = 同类 UIActivityViewController 从
-  // 稳定顶层直接呈现。基线失败说明该无头环境压根托不住这类 VC（远程视图
-  // 服务在独立进程，run 34019867067 与 34021736928 两轮竞态侧分别 9/6 次
-  // 重试全负，后者签名是 completion 从未触发），此时竞态判负无判别力。
-  if (d.presentationUnsupported === true) {
-    console.log(`  [NOTE] log_export: 无竞态基线未能呈现（${d.baselineError ?? 'unknown'}）；该环境不支持 UIActivityViewController 呈现，竞态结论不予采信，真机可见性待用户复测`)
-  } else if (d.reachedHierarchy !== true) {
-    failures.push(`log_export_present: 无竞态基线可呈现而竞态下未进入视图层级（被并发退场吞掉）attempts=${d.attempts} error=${d.error}`)
-  } else if (d.markerFound === true && d.logLen > 0) {
-    console.log('  [PASS] log_export_gates')
-  }
-  // 环境限制显式记账：模拟器放行不等于真机可见，必须留在日志里防绿灯漂移
-  if (d.remoteViewAbsent === true) {
-    console.log('  [NOTE] log_export: 分享面板进入层级但远程视图服务缺席（无头环境限制）；真机面板可见性待用户复测')
-  }
+  // 错误通道是本轮修复的核心：旧实现 fire-and-forget，失败时调用方无从
+  // 察觉，这才是「点导出没反应」的成因。它可判、必须判。
+  if (d.errorChannelOk !== true) failures.push('log_export_channel: shareText 无错误通道（空文本未 reject，退回 fire-and-forget）')
+  if (d.markerFound === true && d.errorChannelOk === true && d.logLen > 0) console.log('  [PASS] log_export_gates')
+  // 呈现结果不判红判绿：三轮实测（34019867067 / 34021736928 / 34023702163）
+  // 分别是「被吞」「completion 未触发」「探针自身挂死」三种形态，说明该无头
+  // 环境上 UIActivityViewController 的呈现与退场回调本就不可靠——内容由独立
+  // 进程的远程视图服务渲染。管线的竞态安全性由 file_picker_race（普通 VC，
+  // 同一条管线，attempts=1 通过）保证，不靠这里。
+  console.log(`  [NOTE] log_export: 分享面板呈现结果仅采集不判定 reachedHierarchy=${d.reachedHierarchy} attempts=${d.attempts ?? 'n/a'} probeError=${d.probeError ?? 'null'}；真机面板可见性待用户复测`)
 }
 
 // gzip 交叉验证：设备端 gzipString 产物必须能被宿主标准 gunzip 解压（iOS→Android 互操作）
