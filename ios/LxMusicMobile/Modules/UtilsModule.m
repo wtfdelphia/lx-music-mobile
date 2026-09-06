@@ -18,6 +18,8 @@
 @property (nonatomic, assign) NSInteger selectFilePresentAttempts;
 // 呈现管线（任务 9.4）当前拍正在尝试呈现的 VC：重试前据此清场防层叠
 @property (nonatomic, strong, nullable) UIViewController *lxPendingVC;
+// 分享探针最后一拍造的 VC：预算耗尽时分解存活判据（presenting / window）
+@property (nonatomic, strong, nullable) UIViewController *lxLastShareProbeVC;
 @end
 
 @implementation UtilsModule {
@@ -878,6 +880,8 @@ RCT_EXPORT_METHOD(shareTextRaceProbe:(NSString *)text
             controller.popoverPresentationController.sourceRect = CGRectMake(CGRectGetMidX(anchor.view.bounds), CGRectGetMidY(anchor.view.bounds), 0, 0);
           }
         }
+        // 留存最后一拍造的 VC：预算耗尽时用于分解存活判据的两个分量
+        if (self != nil) self.lxLastShareProbeVC = controller;
         return controller;
       } deadline:deadline onFinish:^(UIViewController *vc, NSString *error) {
         __strong typeof(weakSelf) self = weakSelf;
@@ -886,10 +890,25 @@ RCT_EXPORT_METHOD(shareTextRaceProbe:(NSString *)text
         if (vc != nil) {
           // 判活成功：立即撤掉分享面板恢复现场，不残留进入后续用例
           [vc dismissViewControllerAnimated:NO completion:nil];
-          resolve(@{ @"presented": @(YES), @"attempts": @(attempts), @"elapsedMs": @(elapsedMs), @"error": [NSNull null] });
+          resolve(@{ @"presented": @(YES), @"attempts": @(attempts), @"elapsedMs": @(elapsedMs),
+                     @"lastHasPresenting": @(YES), @"lastHasWindow": @(YES), @"error": [NSNull null] });
           return;
         }
-        resolve(@{ @"presented": @(NO), @"attempts": @(attempts), @"elapsedMs": @(elapsedMs), @"error": error ?: @"unknown" });
+        // 预算耗尽：把管线存活判据的两个分量分开回报。
+        // UIActivityViewController 的内容由独立进程的远程视图服务渲染，
+        // 宿主进程侧 vc.view 只是容器——无头模拟器上远程服务起不来时
+        // view.window 恒 nil，而 presentingViewController 仍在。
+        // 二者分开才能区分「呈现真被并发退场吞掉」（两者皆 nil）与
+        // 「仅远程视图服务不可用」（有 presenting、无 window，属无头环境
+        // 限制，非生产缺陷）。合成一个 bool 时这两种情形不可分辨。
+        UIViewController *lastVC = self == nil ? nil : self.lxLastShareProbeVC;
+        BOOL hasPresenting = lastVC != nil && lastVC.presentingViewController != nil;
+        BOOL hasWindow = lastVC != nil && lastVC.view.window != nil;
+        if (self != nil) self.lxLastShareProbeVC = nil;
+        if (lastVC != nil && lastVC.presentingViewController != nil) [lastVC dismissViewControllerAnimated:NO completion:nil];
+        resolve(@{ @"presented": @(NO), @"attempts": @(attempts), @"elapsedMs": @(elapsedMs),
+                   @"lastHasPresenting": @(hasPresenting), @"lastHasWindow": @(hasWindow),
+                   @"error": error ?: @"unknown" });
       }];
     }];
   });

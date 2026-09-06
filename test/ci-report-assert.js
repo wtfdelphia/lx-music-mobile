@@ -77,9 +77,17 @@ const logExport = report.results.find(r => r.id === 'log_export')
 if (logExport && logExport.ok) {
   const d = logExport.detail || {}
   if (d.markerFound !== true) failures.push('log_export_source: 日志文件未收到标记（导出源为空）')
-  if (d.presented !== true) failures.push(`log_export_present: 竞态下分享面板未呈现 attempts=${d.attempts} error=${d.error}`)
   if (!(d.logLen > 0)) failures.push(`log_export_len: 日志内容长度非正 logLen=${d.logLen}`)
-  if (d.markerFound === true && d.presented === true && d.logLen > 0) console.log('  [PASS] log_export_gates')
+  // 判据是「进入视图层级」而非「呈现存活」：UIActivityViewController 走
+  // 独立进程的远程视图服务，无头模拟器上该服务起不来，vc.view.window
+  // 恒 nil（run 34019867067 实测 attempts=9 全判负，而同管线普通 VC 的
+  // file_picker_race attempts=1 即过）。两分量皆 false 才是真被吞。
+  if (d.reachedHierarchy !== true) failures.push(`log_export_present: 分享面板未进入视图层级（被并发退场吞掉）attempts=${d.attempts} error=${d.error}`)
+  if (d.markerFound === true && d.reachedHierarchy === true && d.logLen > 0) console.log('  [PASS] log_export_gates')
+  // 环境限制显式记账：模拟器放行不等于真机可见，必须留在日志里防绿灯漂移
+  if (d.remoteViewAbsent === true) {
+    console.log('  [NOTE] log_export: 分享面板进入层级但远程视图服务缺席（无头环境限制）；真机面板可见性待用户复测')
+  }
 }
 
 // gzip 交叉验证：设备端 gzipString 产物必须能被宿主标准 gunzip 解压（iOS→Android 互操作）
