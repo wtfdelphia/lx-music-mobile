@@ -835,6 +835,57 @@ RCT_EXPORT_METHOD(selectFile:(NSDictionary *)options
   self.selectFilePicker = nil;
 }
 
+// CI 自测：等模态残留清空，最多 timeoutMs；超时前逐层强制撤场。
+// 动因（run 34036942428）：shareTextRaceProbe 真呈现出分享面板后，
+// UIActivityViewController 只支持竖屏，残留在层级里会让紧随其后的
+// landscape 用例拿到「Supported: portrait」而判负。探针内的 dismiss 是
+// 异步的、且该环境下 completion 不可靠（run 34023702163 即挂死在此），
+// 所以恢复现场不能赌回调，只能由调用方轮询确认。
+// 双保险门控：仅沙箱存在 .lx-ci-selftest 标记时生效。
+RCT_EXPORT_METHOD(waitModalDismissed:(double)timeoutMs
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSString *marker = [NSTemporaryDirectory() stringByAppendingPathComponent:@".lx-ci-selftest"];
+  if (![[NSFileManager defaultManager] fileExistsAtPath:marker]) {
+    reject(@"not_allowed", @"waitModalDismissed requires the CI self-test marker", nil);
+    return;
+  }
+  NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:timeoutMs / 1000.0];
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [self lx_waitModalClearedUntil:deadline resolve:resolve];
+  });
+}
+
+- (void)lx_waitModalClearedUntil:(NSDate *)deadline resolve:(RCTPromiseResolveBlock)resolve
+{
+  UIViewController *root = [UIApplication sharedApplication].delegate.window.rootViewController;
+  UIViewController *modal = root.presentedViewController;
+  if (modal == nil) {
+    resolve(@{ @"cleared": @(YES), @"forced": @(NO), @"top": @"" });
+    return;
+  }
+  NSString *topName = NSStringFromClass([modal class]);
+  if ([deadline timeIntervalSinceNow] > 0) {
+    __weak typeof(self) weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kLXPickerWaitInterval * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      __strong typeof(weakSelf) self = weakSelf;
+      if (self == nil) {
+        resolve(@{ @"cleared": @(NO), @"forced": @(NO), @"top": topName });
+        return;
+      }
+      [self lx_waitModalClearedUntil:deadline resolve:resolve];
+    });
+    return;
+  }
+  // 超时：强制撤掉整条模态链，不阻塞后续用例（回报 forced 供取证）
+  [root dismissViewControllerAnimated:NO completion:nil];
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kLXPickerAliveDelay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    UIViewController *r = [UIApplication sharedApplication].delegate.window.rootViewController;
+    resolve(@{ @"cleared": @(r.presentedViewController == nil), @"forced": @(YES), @"top": topName });
+  });
+}
+
 // CI 自测：验证 shareText 的分享面板在「Modal 退场同拍」下真能呈现。
 // 旧实现直接 present 到 delegate.window.rootViewController，此场景下被
 // UIKit 静默吞掉且无 Promise 通道，故本探针在旧实现上必然判负——

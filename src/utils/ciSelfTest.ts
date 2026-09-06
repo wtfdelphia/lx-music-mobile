@@ -90,6 +90,11 @@ const utilsNative = NativeModules.UtilsModule as unknown as {
     // 两者皆 false 才是「呈现真被并发退场吞掉」的生产缺陷
     lastHasPresenting: boolean, lastHasWindow: boolean,
   }>,
+  // 等模态残留清空（见原生注释）：分享面板只支持竖屏，残留会让后续
+  // landscape 用例判负。超时会强制撤场并回报 forced
+  waitModalDismissed: (timeoutMs: number) => Promise<{
+    cleared: boolean, forced: boolean, top: string,
+  }>,
   // 网络原生探针（任务 9.6）：绕过 RN fetch 栈，原生 NSURLSession 直打
   // 同一 URL。RN Networking 把 NSError 吞成 "Network request failed"，
   // 交叉对照「RN 失败 / 原生通」可把故障收敛到 RN 网络栈配置层
@@ -908,6 +913,19 @@ const testLogExport = async() => {
   } catch (err: any) {
     // 探针挂死/超时同样只记录：它测的是环境不支持的对象，不是生产逻辑
     probeDetail = { presented: false, reachedHierarchy: false, probeError: String(err?.message ?? err) }
+  }
+  // 无论成败都必须等现场清空：run 34036942428 里探针真弹出了分享面板
+  // （presented=true），而 UIActivityViewController 只支持竖屏，残留导致
+  // 紧随其后的 landscape 用例拿到「Supported: portrait」判负。探针内部的
+  // dismiss 靠不住（该环境 completion 不可靠），故在此显式确认。
+  try {
+    const cleanup = await withTimeout(utilsNative.waitModalDismissed(5_000), 8_000, 'waitModalDismissed')
+    probeDetail.modalCleared = cleanup.cleared
+    probeDetail.modalForcedDismiss = cleanup.forced
+    if (!cleanup.cleared) probeDetail.modalResidue = cleanup.top
+  } catch (err: any) {
+    probeDetail.modalCleared = false
+    probeDetail.modalResidue = String(err?.message ?? err)
   }
   return {
     logLen: content.length,

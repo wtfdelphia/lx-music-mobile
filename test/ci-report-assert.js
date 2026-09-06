@@ -88,6 +88,10 @@ if (logExport && logExport.ok) {
   // 进程的远程视图服务渲染。管线的竞态安全性由 file_picker_race（普通 VC，
   // 同一条管线，attempts=1 通过）保证，不靠这里。
   console.log(`  [NOTE] log_export: 分享面板呈现结果仅采集不判定 reachedHierarchy=${d.reachedHierarchy} attempts=${d.attempts ?? 'n/a'} probeError=${d.probeError ?? 'null'}；真机面板可见性待用户复测`)
+  // 现场恢复要判：分享面板只支持竖屏，残留会让紧随其后的 landscape 判负
+  // （run 34036942428 即此）。这层是可判的，与呈现结果不同。
+  if (d.modalCleared !== true) failures.push(`log_export_residue: 分享面板未清场，会污染后续用例 residue=${d.modalResidue ?? 'unknown'}`)
+  if (d.modalForcedDismiss === true) console.log('  [NOTE] log_export: 模态残留经强制撤场清空（探针自身 dismiss 未按期完成）')
 }
 
 // gzip 交叉验证：设备端 gzipString 产物必须能被宿主标准 gunzip 解压（iOS→Android 互操作）
