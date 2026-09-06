@@ -89,6 +89,9 @@ const utilsNative = NativeModules.UtilsModule as unknown as {
     // lastHasWindow 恒 false 而 lastHasPresenting 为 true，属环境限制；
     // 两者皆 false 才是「呈现真被并发退场吞掉」的生产缺陷
     lastHasPresenting: boolean, lastHasWindow: boolean,
+    // 无竞态基线：同类 VC 从稳定顶层直接呈现的成败。基线失败说明该环境
+    // 压根托不住 UIActivityViewController，此时竞态判负没有判别力
+    baselineOk: boolean, baselineError: string | null,
   }>,
   // 网络原生探针（任务 9.6）：绕过 RN fetch 栈，原生 NSURLSession 直打
   // 同一 URL。RN Networking 把 NSError 吞成 "Network request failed"，
@@ -897,13 +900,24 @@ const testLogExport = async() => {
     utilsNative.shareTextRaceProbe(marker),
     20_000, 'shareTextRaceProbe')
   const reachedHierarchy = probe.presented || probe.lastHasPresenting
-  assert(reachedHierarchy,
-    `share sheet never reached the view hierarchy (swallowed by concurrent dismiss): attempts=${probe.attempts} elapsedMs=${probe.elapsedMs} hasPresenting=${probe.lastHasPresenting} hasWindow=${probe.lastHasWindow} error=${probe.error ?? 'null'}`)
+  // 判负前先问基线：无竞态下同类 VC 都呈现不了，说明这个无头环境托不住
+  // UIActivityViewController（run 34021736928：竞态侧 6 次重试全负，签名
+  // 是 completion 从未触发）。此时竞态判负没有判别力，不能据此断定生产
+  // 缺陷，也不能据此宣称修复有效——两头都不主张，只记录。
+  // 基线通而竞态负 = 差异只在并发退场 = 真缺陷，判红。
+  if (probe.baselineOk) {
+    assert(reachedHierarchy,
+      `share sheet never reached the view hierarchy while the no-race baseline succeeded (concurrent dismiss swallowed it): attempts=${probe.attempts} elapsedMs=${probe.elapsedMs} hasPresenting=${probe.lastHasPresenting} hasWindow=${probe.lastHasWindow} error=${probe.error ?? 'null'}`)
+  }
   return {
     logLen: content.length,
     markerFound: true,
     presented: probe.presented,
     reachedHierarchy,
+    baselineOk: probe.baselineOk,
+    baselineError: probe.baselineError,
+    // 基线也失败：呈现能力受限于环境，本用例对竞态不下结论
+    presentationUnsupported: !probe.baselineOk,
     // 无头环境下远程视图服务缺席的取证面：presented=false 但
     // hasPresenting=true 即属此情形，真机需另行确认面板可见
     remoteViewAbsent: !probe.presented && probe.lastHasPresenting && !probe.lastHasWindow,

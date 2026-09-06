@@ -78,12 +78,17 @@ if (logExport && logExport.ok) {
   const d = logExport.detail || {}
   if (d.markerFound !== true) failures.push('log_export_source: 日志文件未收到标记（导出源为空）')
   if (!(d.logLen > 0)) failures.push(`log_export_len: 日志内容长度非正 logLen=${d.logLen}`)
-  // 判据是「进入视图层级」而非「呈现存活」：UIActivityViewController 走
-  // 独立进程的远程视图服务，无头模拟器上该服务起不来，vc.view.window
-  // 恒 nil（run 34019867067 实测 attempts=9 全判负，而同管线普通 VC 的
-  // file_picker_race attempts=1 即过）。两分量皆 false 才是真被吞。
-  if (d.reachedHierarchy !== true) failures.push(`log_export_present: 分享面板未进入视图层级（被并发退场吞掉）attempts=${d.attempts} error=${d.error}`)
-  if (d.markerFound === true && d.reachedHierarchy === true && d.logLen > 0) console.log('  [PASS] log_export_gates')
+  // 呈现判据以无竞态基线为前提。基线 = 同类 UIActivityViewController 从
+  // 稳定顶层直接呈现。基线失败说明该无头环境压根托不住这类 VC（远程视图
+  // 服务在独立进程，run 34019867067 与 34021736928 两轮竞态侧分别 9/6 次
+  // 重试全负，后者签名是 completion 从未触发），此时竞态判负无判别力。
+  if (d.presentationUnsupported === true) {
+    console.log(`  [NOTE] log_export: 无竞态基线未能呈现（${d.baselineError ?? 'unknown'}）；该环境不支持 UIActivityViewController 呈现，竞态结论不予采信，真机可见性待用户复测`)
+  } else if (d.reachedHierarchy !== true) {
+    failures.push(`log_export_present: 无竞态基线可呈现而竞态下未进入视图层级（被并发退场吞掉）attempts=${d.attempts} error=${d.error}`)
+  } else if (d.markerFound === true && d.logLen > 0) {
+    console.log('  [PASS] log_export_gates')
+  }
   // 环境限制显式记账：模拟器放行不等于真机可见，必须留在日志里防绿灯漂移
   if (d.remoteViewAbsent === true) {
     console.log('  [NOTE] log_export: 分享面板进入层级但远程视图服务缺席（无头环境限制）；真机面板可见性待用户复测')
