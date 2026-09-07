@@ -1792,24 +1792,30 @@ const testLandscape = async() => {
   })
   const tModal = Date.now()
   let modalProbe: Awaited<ReturnType<typeof utilsNative.modalOrientationProbe>> = {}
-  while (Date.now() - tModal < 15_000) {
-    modalProbe = await utilsNative.modalOrientationProbe()
-    if (modalProbe.presented === true && modalProbe.presentedClass === 'RCTModalHostViewController') break
-    await sleep(500)
+  // presented 经 NSNumber 过桥为 0/1（run 34091023873 实锤：不回布尔），
+  // 判据走真值而非严格 === true。断言失败时仍须清场——残留的判别屏
+  // 是 RNN 模态，会污染后续用例的无弹窗断言
+  try {
+    while (Date.now() - tModal < 15_000) {
+      modalProbe = await utilsNative.modalOrientationProbe()
+      if (modalProbe.presented && modalProbe.presentedClass === 'RCTModalHostViewController') break
+      await sleep(500)
+    }
+    assert(!!modalProbe.presented && modalProbe.presentedClass === 'RCTModalHostViewController',
+      `RN Modal host never presented: ${JSON.stringify(modalProbe)}`)
+    // 掩码须含横屏位（旧实现竖屏独占掩码 2）
+    assert(((modalProbe.presentedOrientations ?? 0) & 24) !== 0,
+      `modal host orientation mask lacks landscape bits: ${JSON.stringify(modalProbe)}`)
+    assert(/^landscape/.test(modalProbe.interfaceOrientation ?? ''),
+      `scene rotated back to portrait while modal presented: ${JSON.stringify(modalProbe)}`)
+  } finally {
+    // 收尾：撤掉 RN 弹窗与 RNN 判别屏，断言无残留污染后续用例
+    modalProbeRef.current?.setVisible(false)
+    await Navigation.dismissModal('lxm.CiModalProbe').catch(() => {})
+    await Navigation.dismissAllModals()
+    const modalResidue = await utilsNative.waitModalDismissed(10_000)
+    assert(modalResidue.cleared === true, `modal probe residue not cleared: ${JSON.stringify(modalResidue)}`)
   }
-  assert(modalProbe.presented === true && modalProbe.presentedClass === 'RCTModalHostViewController',
-    `RN Modal host never presented: ${JSON.stringify(modalProbe)}`)
-  // 掩码须含横屏位（旧实现竖屏独占掩码 2）
-  assert(((modalProbe.presentedOrientations ?? 0) & 24) !== 0,
-    `modal host orientation mask lacks landscape bits: ${JSON.stringify(modalProbe)}`)
-  assert(/^landscape/.test(modalProbe.interfaceOrientation ?? ''),
-    `scene rotated back to portrait while modal presented: ${JSON.stringify(modalProbe)}`)
-  // 收尾：撤掉 RN 弹窗与 RNN 判别屏，断言无残留污染后续用例
-  modalProbeRef.current?.setVisible(false)
-  await Navigation.dismissModal('lxm.CiModalProbe').catch(() => {})
-  await Navigation.dismissAllModals()
-  const modalResidue = await utilsNative.waitModalDismissed(10_000)
-  assert(modalResidue.cleared === true, `modal probe residue not cleared: ${JSON.stringify(modalResidue)}`)
   // 复原竖屏
   const rotP = await utilsNative.setDeviceOrientation('portrait')
   const tBack = Date.now()
