@@ -27,6 +27,12 @@ export interface OpenDocumentOptions {
 
 export const extname = (name: string) => name.lastIndexOf('.') > 0 ? name.substring(name.lastIndexOf('.') + 1) : ''
 
+// 「文件」App / 深链递来的路径带 `file://` 前缀；RNFS 内部 stat/readFile 会
+// 自行剥掉，但 stat 返回的 `path` 字段原样回显输入。下游原生方法
+// （GzipModule 等）按纯路径读文件，带前缀即读失败（真机 9.14 热启动
+// 「导入失败」）。统一在适配层剥掉，返回纯路径
+const stripFileScheme = (p: string) => p.startsWith('file://') ? p.slice('file://'.length) : p
+
 const MIME_MAP: Record<string, string> = {
   mp3: 'audio/mpeg',
   flac: 'audio/flac',
@@ -101,7 +107,7 @@ export const stat = async(path: string): Promise<FileType> => {
   const name = info.name ?? path.split('/').pop() ?? path
   return {
     name,
-    path: info.path,
+    path: stripFileScheme(info.path),
     size: info.size,
     isDirectory: info.isDirectory(),
     isFile: info.isFile(),

@@ -36,7 +36,11 @@ static void LXCIRecordOpenURL(NSURL *url, NSString *source) {
 
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions
 {
-  RCTBridge *bridge = [[RCTBridge alloc] initWithDelegate:self launchOptions:launchOptions];
+  // 任务 9.14 冷启动补口：进程未启动时打开文档，URL 不经 openURL 回调，
+  // 而是由 RCTLinkingManager.getInitialURL 从 launchOptions 直取；暂存
+  // 必须提前到此处改写 launchOptions，否则冷启动拿到的仍是沙箱外原始
+  // 路径（真机实测：程序后台没有启动时报「调用失败 文件不存在」）
+  RCTBridge *bridge = [[RCTBridge alloc] initWithDelegate:self launchOptions:[self lx_stagedLaunchOptions:launchOptions]];
   [ReactNativeNavigation bootstrapWithBridge:bridge];
   // You can add your custom initial props in the dictionary below.
   // They will be passed down to the ViewController used by React Native.
@@ -80,6 +84,18 @@ static void LXCIRecordOpenURL(NSURL *url, NSString *source) {
   // 拷贝失败保留原路径：下游报可读错误，不静默吞掉
   if (!copied) return url;
   return [NSURL fileURLWithPath:destPath];
+}
+
+- (NSDictionary *)lx_stagedLaunchOptions:(NSDictionary *)launchOptions
+{
+  if (launchOptions == nil) return launchOptions;
+  id raw = launchOptions[UIApplicationLaunchOptionsURLKey];
+  if (![raw isKindOfClass:[NSURL class]]) return launchOptions;
+  NSURL *staged = [self lx_stagedFileURL:(NSURL *)raw];
+  if (staged == (NSURL *)raw) return launchOptions;
+  NSMutableDictionary *m = [launchOptions mutableCopy];
+  m[UIApplicationLaunchOptionsURLKey] = staged;
+  return m;
 }
 
 - (BOOL)application:(UIApplication *)app openURL:(NSURL *)url
