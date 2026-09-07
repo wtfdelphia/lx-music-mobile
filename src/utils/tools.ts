@@ -504,8 +504,7 @@ export interface RowInfo {
 
 export type RowInfoType = 'full' | 'medium'
 
-export const getRowInfo = (type: RowInfoType = 'full'): RowInfo => {
-  const win = windowSizeTools.getSize()
+export const getRowInfo = (type: RowInfoType = 'full', win: { width: number, height: number } = windowSizeTools.getSize()): RowInfo => {
   let isMultiRow = isHorizontalMode(win.width, win.height)
   if (type == 'medium' && win.width / win.height < 1.8) isMultiRow = false
   // console.log('getRowInfo')

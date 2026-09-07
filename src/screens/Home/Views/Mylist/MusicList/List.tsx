@@ -14,6 +14,7 @@ import type { Position } from './ListMenu'
 import type { SelectMode } from './MultipleModeBar'
 import { useActiveListId } from '@/store/list/hook'
 import { useSettingValue } from '@/store/setting/hook'
+import { useWindowSize } from '@/utils/hooks'
 
 type FlatListType = FlatListProps<LX.Music.MusicInfo>
 
@@ -56,7 +57,13 @@ const List = forwardRef<ListType, ListProps>(({ onShowMenu, onMuiltSelectMode, o
   const selectedListRef = useRef<LX.List.ListMusics>([])
   const currentListIdRef = useRef('')
   const waitJumpListPositionRef = useRef(false)
-  const rowInfo = useRef(getRowInfo())
+  // 排数跟随旋转：useWindowSize 订阅 windowSizeTools 尺寸事件（与排行榜
+  // useHorizontalMode 同一响应链）；useRef 只在挂载时算一次，旋转后排数冻结
+  const windowSize = useWindowSize()
+  const rowInfo = useMemo(() => getRowInfo('full', windowSize), [windowSize])
+  // 下方 useEffect([]) 闭包捕获的是挂载时值，滚动定位经此镜像读最新排数
+  const rowInfoRef = useRef(rowInfo)
+  rowInfoRef.current = rowInfo
   const isShowAlbumName = useSettingValue('list.isShowAlbumName')
   const isShowInterval = useSettingValue('list.isShowInterval')
   // console.log('render music list')
@@ -89,7 +96,7 @@ const List = forwardRef<ListType, ListProps>(({ onShowMenu, onMuiltSelectMode, o
       void getListMusics(listState.activeListId).then((list) => {
         const index = list.findIndex(m => m.id == info.id)
         if (index < 0) return
-        flatListRef.current?.scrollToIndex({ index: Math.floor(index / (rowInfo.current.rowNum ?? 1)), viewPosition: 0.3, animated: true })
+        flatListRef.current?.scrollToIndex({ index: Math.floor(index / (rowInfo.rowNum ?? 1)), viewPosition: 0.3, animated: true })
       })
     },
     scrollToTop() {
@@ -120,7 +127,7 @@ const List = forwardRef<ListType, ListProps>(({ onShowMenu, onMuiltSelectMode, o
               waitJumpListPositionRef.current = false
               if (playerState.playMusicInfo.listId == id && playerState.playInfo.playIndex > -1) {
                 try {
-                  flatListRef.current?.scrollToIndex({ index: Math.floor(playerState.playInfo.playIndex / (rowInfo.current.rowNum ?? 1)), viewPosition: 0.3, animated: false })
+                  flatListRef.current?.scrollToIndex({ index: Math.floor(playerState.playInfo.playIndex / (rowInfoRef.current.rowNum ?? 1)), viewPosition: 0.3, animated: false })
                   return
                 } catch {}
               }
@@ -152,7 +159,7 @@ const List = forwardRef<ListType, ListProps>(({ onShowMenu, onMuiltSelectMode, o
           if (isUpdateingList) waitJumpListPositionRef.current = true
           else {
             try {
-              flatListRef.current?.scrollToIndex({ index: Math.floor(playerState.playInfo.playIndex / (rowInfo.current.rowNum ?? 1)), viewPosition: 0.3, animated: true })
+              flatListRef.current?.scrollToIndex({ index: Math.floor(playerState.playInfo.playIndex / (rowInfoRef.current.rowNum ?? 1)), viewPosition: 0.3, animated: true })
             } catch {}
           }
         }
@@ -258,7 +265,7 @@ const List = forwardRef<ListType, ListProps>(({ onShowMenu, onMuiltSelectMode, o
       onLongPress={handleLongPress}
       onShowMenu={onShowMenu}
       selectedList={selectedList}
-      rowInfo={rowInfo.current}
+      rowInfo={rowInfo}
       isShowAlbumName={isShowAlbumName}
       isShowInterval={isShowInterval}
     />
@@ -270,12 +277,13 @@ const List = forwardRef<ListType, ListProps>(({ onShowMenu, onMuiltSelectMode, o
 
   return (
     <FlatList
+      key={String(rowInfo.rowNum ?? 1)}
       ref={flatListRef}
       onScroll={handleScroll}
       style={styles.list}
       data={currentList}
       maxToRenderPerBatch={4}
-      numColumns={rowInfo.current.rowNum}
+      numColumns={rowInfo.rowNum}
       horizontal={false}
       // updateCellsBatchingPeriod={80}
       windowSize={8}

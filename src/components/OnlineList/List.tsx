@@ -13,6 +13,7 @@ import { useI18n } from '@/lang'
 import Text from '@/components/common/Text'
 import { handlePlay } from './listAction'
 import { useSettingValue } from '@/store/setting/hook'
+import { useWindowSize } from '@/utils/hooks'
 
 type FlatListType = FlatListProps<LX.Music.MusicInfoOnline>
 
@@ -68,7 +69,10 @@ const List = forwardRef<ListType, ListProps>(({
   const selectedListRef = useRef<LX.Music.MusicInfoOnline[]>([])
   const [visibleMultiSelect, setVisibleMultiSelect] = useState(false)
   const [status, setStatus] = useState<Status>('idle')
-  const rowInfo = useRef(getRowInfo(rowType))
+  // 排数跟随旋转：useWindowSize 订阅 windowSizeTools 尺寸事件（与排行榜
+  // useHorizontalMode 同一响应链）；useRef 只在挂载时算一次，旋转后排数冻结
+  const windowSize = useWindowSize()
+  const rowInfo = useMemo(() => getRowInfo(rowType, windowSize), [windowSize, rowType])
   const isShowAlbumName = useSettingValue('list.isShowAlbumName')
   const isShowInterval = useSettingValue('list.isShowInterval')
   // const currentListIdRef = useRef('')
@@ -189,7 +193,7 @@ const List = forwardRef<ListType, ListProps>(({
       onLongPress={handleLongPress}
       onShowMenu={onShowMenu}
       selectedList={selectedList}
-      rowInfo={rowInfo.current}
+      rowInfo={rowInfo}
       isShowAlbumName={isShowAlbumName}
       isShowInterval={isShowInterval}
     />
@@ -231,10 +235,11 @@ const List = forwardRef<ListType, ListProps>(({
 
   return (
     <FlatList
+      key={String(rowInfo.rowNum ?? 1)}
       ref={flatListRef}
       style={styles.list}
       data={currentList}
-      numColumns={rowInfo.current.rowNum}
+      numColumns={rowInfo.rowNum}
       horizontal={false}
       maxToRenderPerBatch={4}
       // updateCellsBatchingPeriod={80}
