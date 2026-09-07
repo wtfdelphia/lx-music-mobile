@@ -1,11 +1,13 @@
 // iOS CI 应用内自测：沙箱 tmp 目录存在标记文件 `.lx-ci-selftest` 时运行，
 // 结果写入 `lx-ci-report.json` 供 CI 宿主读取断言。无标记文件立即返回，
 // 对正式包零影响。宿主侧流程见 .github/workflows/ios-verify.yml 冒烟 job。
-import { Alert, AppState, Linking, NativeModules, Platform } from 'react-native'
+import { createElement, useEffect, useRef } from 'react'
+import { Alert, AppState, Linking, NativeModules, Platform, View } from 'react-native'
 import RNFS from 'react-native-fs'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { Navigation } from 'react-native-navigation'
 import BackgroundTimer from 'react-native-background-timer'
+import Modal, { type ModalType } from '@/components/common/Modal'
 import { DEFAULT_SETTING, LIST_IDS, storageDataPrefix } from '@/config/constant'
 
 type TestResult = { id: string, ok: boolean, ms: number, detail?: unknown }
@@ -117,6 +119,14 @@ const utilsNative = NativeModules.UtilsModule as unknown as {
     found: boolean, matches: number, visited: number,
     width?: number, height?: number, windowX?: number, windowY?: number,
     hidden?: boolean, alpha?: number, subviews?: number,
+  }>,
+  // 弹窗方向保持判别看回读（任务 9.12）：presented 确认 RN Modal 真已
+  // 呈现；presentedClass/presentedOrientations 为最顶层 presented VC 的
+  // 类名与方向掩码（旧实现竖屏独占掩码）；interfaceOrientation 为当前
+  // 场景方向——弹窗呈现后应仍是横屏
+  modalOrientationProbe: () => Promise<{
+    presented?: boolean, presentedClass?: string, presentedOrientations?: number,
+    interfaceOrientation?: string, error?: string | null,
   }>,
 }
 
@@ -1689,6 +1699,21 @@ const testBackgroundPlay = async() => {
 // 7.4 横屏：应用内驱动旋转（宿主无可靠无头旋转通道，原生侧
 // setDeviceOrientation 仅在自测标记存在时生效），断言窗口尺寸翻转、
 // isHorizontalMode 生效、宿主截图握手、可复原竖屏且全程无意外弹窗
+const modalProbeRef: { current: ModalType | null } = { current: null }
+
+// 9.12 判别屏：经生产收口 common/Modal 渲染一个真弹窗（自定义源管理、
+// 排行榜音源下拉同链路）。本文件是 .ts，用 createElement 不用 JSX
+const ModalProbeScreen = () => {
+  const ref = useRef<ModalType>(null)
+  useEffect(() => {
+    modalProbeRef.current = ref.current
+    const raf = requestAnimationFrame(() => { ref.current?.setVisible(true) })
+    return () => { cancelAnimationFrame(raf); modalProbeRef.current = null }
+  }, [])
+  return createElement(Modal, { ref, bgColor: 'rgba(0,0,0,0.5)' },
+    createElement(View, { style: { flex: 1 } }))
+}
+
 const testLandscape = async() => {
   const { windowSizeTools, getWindowSize: getFreshSize } = await import('@/utils/windowSizeTools')
   const { isHorizontalMode } = await import('@/utils/tools')
@@ -1751,6 +1776,40 @@ const testLandscape = async() => {
     await sleep(1000)
   }
   assert(shotConsumed, 'host consumed landscape-shot marker')
+  // 9.12 弹窗方向保持（真机 2026-09-07：自定义源管理、排行榜音源下拉在
+  // 横屏被强制转回竖屏）：应用所有弹窗经 common/Modal（RN Modal 包装），
+  // iPhone 上 supportedOrientations 缺省时宿主 VC 方向掩码为竖屏独占
+  // （RCTModalHostView:211-215），横屏呈现弹窗系统当场转竖屏。判别：经
+  // 同一收口呈现真弹窗，原生探针回读「呈现成功 + 掩码含横屏位 + 场景仍
+  // 横屏」——旧实现三条全判负
+  Navigation.registerComponent('lxm.CiModalProbe', () => ModalProbeScreen)
+  await Navigation.showModal({
+    component: {
+      id: 'lxm.CiModalProbe',
+      name: 'lxm.CiModalProbe',
+      options: { layout: { componentBackgroundColor: 'transparent' } },
+    },
+  })
+  const tModal = Date.now()
+  let modalProbe: Awaited<ReturnType<typeof utilsNative.modalOrientationProbe>> = {}
+  while (Date.now() - tModal < 15_000) {
+    modalProbe = await utilsNative.modalOrientationProbe()
+    if (modalProbe.presented === true && modalProbe.presentedClass === 'RCTModalHostViewController') break
+    await sleep(500)
+  }
+  assert(modalProbe.presented === true && modalProbe.presentedClass === 'RCTModalHostViewController',
+    `RN Modal host never presented: ${JSON.stringify(modalProbe)}`)
+  // 掩码须含横屏位（旧实现竖屏独占掩码 2）
+  assert(((modalProbe.presentedOrientations ?? 0) & 24) !== 0,
+    `modal host orientation mask lacks landscape bits: ${JSON.stringify(modalProbe)}`)
+  assert(/^landscape/.test(modalProbe.interfaceOrientation ?? ''),
+    `scene rotated back to portrait while modal presented: ${JSON.stringify(modalProbe)}`)
+  // 收尾：撤掉 RN 弹窗与 RNN 判别屏，断言无残留污染后续用例
+  modalProbeRef.current?.setVisible(false)
+  await Navigation.dismissModal('lxm.CiModalProbe').catch(() => {})
+  await Navigation.dismissAllModals()
+  const modalResidue = await utilsNative.waitModalDismissed(10_000)
+  assert(modalResidue.cleared === true, `modal probe residue not cleared: ${JSON.stringify(modalResidue)}`)
   // 复原竖屏
   const rotP = await utilsNative.setDeviceOrientation('portrait')
   const tBack = Date.now()
@@ -1783,7 +1842,7 @@ const testLandscape = async() => {
   await RNFS.unlink(rotatePhaseMarker()).catch(() => {})
   const newAlerts = state.alerts.slice(alertsBefore)
   assert(newAlerts.length === 0, `unexpected alerts during landscape: ${JSON.stringify(newAlerts)}`)
-  return { portrait: before, landscape: landscapeSize, restored, phantomForward, phantomRestore }
+  return { portrait: before, landscape: landscapeSize, restored, phantomForward, phantomRestore, modalOrientation: modalProbe }
 }
 
 // 6.9 主流程本地段：搜索（真实网络）→ 收藏 → 歌单管理 → 备份/恢复。

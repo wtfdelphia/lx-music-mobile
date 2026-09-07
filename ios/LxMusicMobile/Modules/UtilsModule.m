@@ -539,6 +539,58 @@ RCT_EXPORT_METHOD(isScreenKeepAwake:(RCTPromiseResolveBlock)resolve
   });
 }
 
+// CI 自测（任务 9.12）：弹窗方向保持判别看回读。RN Modal 宿主 VC 的方向
+// 掩码来自 supportedOrientations，iPhone 上缺省为竖屏独占
+// （RCTModalHostView supportedOrientationsMask），横屏呈现弹窗会把界面
+// 当场转回竖屏（真机 2026-09-07：自定义源管理、排行榜音源下拉）。
+// presented 确认弹窗真已呈现（防用例在未渲染时假通过）；
+// presentedOrientations 为最顶层 presented VC 的
+// supportedInterfaceOrientations 掩码（旧实现 = 竖屏独占 2，修复后含
+// 横屏位）；interfaceOrientation 为当前 active 场景方向（弹窗呈现后
+// 应仍是横屏）。只读探针，正式包零影响
+RCT_EXPORT_METHOD(modalOrientationProbe:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  dispatch_async(dispatch_get_main_queue(), ^{
+    NSMutableDictionary *out = [NSMutableDictionary dictionary];
+    @try {
+      UIViewController *topPresented = nil;
+      for (UIWindow *window in [UIApplication sharedApplication].windows) {
+        UIViewController *vc = window.rootViewController;
+        if (vc == nil) continue;
+        while (vc.presentedViewController != nil) vc = vc.presentedViewController;
+        if (vc != window.rootViewController) { topPresented = vc; break; }
+      }
+      out[@"presented"] = @(topPresented != nil);
+      if (topPresented != nil) {
+        out[@"presentedOrientations"] = @((NSInteger)topPresented.supportedInterfaceOrientations);
+        // 类名回读：判据须确认顶层呈现 VC 是 RN Modal 宿主
+        // （RCTModalHostViewController），而非外层 RNN 模态 VC——
+        // 后者默认全方向，会让掩码断言假通过
+        out[@"presentedClass"] = NSStringFromClass([topPresented class]);
+      }
+      NSString *orientation = @"unknown";
+      for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+        UIWindowScene *windowScene = (UIWindowScene *)scene;
+        if (windowScene.activationState != UISceneActivationStateForegroundActive) continue;
+        switch (windowScene.interfaceOrientation) {
+          case UIInterfaceOrientationPortrait: orientation = @"portrait"; break;
+          case UIInterfaceOrientationPortraitUpsideDown: orientation = @"portrait-upside-down"; break;
+          case UIInterfaceOrientationLandscapeLeft: orientation = @"landscape-left"; break;
+          case UIInterfaceOrientationLandscapeRight: orientation = @"landscape-right"; break;
+          default: orientation = @"unknown"; break;
+        }
+        break;
+      }
+      out[@"interfaceOrientation"] = orientation;
+    } @catch (NSException *exception) {
+      out[@"error"] = exception.reason ?: @"exception";
+    }
+    resolve(out);
+  });
+}
+
 // CI 自测（任务 7.4 横屏）：强制旋转模拟器窗口。宿主侧无可靠的无头旋转
 // 通道（simctl 无 rotate 子命令，AppleScript 依赖 GUI 会话），改由应用内
 // 驱动：iOS 16+ 场景几何请求（requestGeometryUpdate）。

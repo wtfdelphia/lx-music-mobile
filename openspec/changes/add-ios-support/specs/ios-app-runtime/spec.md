@@ -44,3 +44,12 @@ UtilsModule、CacheModule 在 iOS 上 SHALL 提供与 Android 语义一致的导
 
 - **WHEN** 在 iOS 上遍历设置页全部入口
 - **THEN** 桌面歌词入口不可见，更新入口跳转 Release 页，无未捕获警告
+
+### Requirement: 弹窗方向保持
+
+应用内弹窗（`Dialog`、下拉菜单 `Menu`、`ChoosePath` 等，均经 `common/Modal` 这一收口）在横屏下呈现时，SHALL 不强制把界面转回竖屏。实现上，`common/Modal` 包装 RN `Modal` 时 SHALL 显式传 `supportedOrientations`（含横屏位）——RN 0.73 原生侧对缺省值在 iPhone 上返回竖屏独占掩码（`RCTModalHostView` `supportedOrientationsMask`），会导致横屏呈现弹窗即被系统转回竖屏。该契约仅作用于 iOS；Android 侧 `setSupportedOrientations` 为空实现，行为不变。
+
+#### Scenario: 横屏弹窗不掉方向
+
+- **WHEN** 横屏状态下呈现任意应用内弹窗（如自定义源管理、排行榜音源选择下拉）
+- **THEN** 界面保持横屏，弹窗可正常操作；弹窗宿主 VC 方向掩码含横屏位
