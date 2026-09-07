@@ -516,12 +516,16 @@ RCT_EXPORT_METHOD(getNowPlayingInfo:(RCTPromiseResolveBlock)resolve
   id album = info[MPMediaItemPropertyAlbumTitle];
   id duration = info[MPMediaItemPropertyPlaybackDuration];
   id elapsed = info[MPNowPlayingInfoPropertyElapsedPlaybackTime];
+  // 任务 9.11 判据：锁屏面板进度锚点两键（elapsed + rate）回读。
+  // 修复前面板没有锚点，两键恒缺席
+  id rate = info[MPNowPlayingInfoPropertyPlaybackRate];
   id artwork = info[MPMediaItemPropertyArtwork];
   if ([title isKindOfClass:[NSString class]]) out[@"title"] = title;
   if ([artist isKindOfClass:[NSString class]]) out[@"artist"] = artist;
   if ([album isKindOfClass:[NSString class]]) out[@"album"] = album;
   if ([duration isKindOfClass:[NSNumber class]]) out[@"duration"] = duration;
   if ([elapsed isKindOfClass:[NSNumber class]]) out[@"elapsed"] = elapsed;
+  if ([rate isKindOfClass:[NSNumber class]]) out[@"rate"] = rate;
   out[@"hasArtwork"] = @([artwork isKindOfClass:[MPMediaItemArtwork class]]);
   resolve(out);
 }

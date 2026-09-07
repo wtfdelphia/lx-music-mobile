@@ -1,5 +1,5 @@
 diff --git a/node_modules/react-native-track-player/ios/RNTrackPlayer/RNTrackPlayer.swift b/node_modules/react-native-track-player/ios/RNTrackPlayer/RNTrackPlayer.swift
-index 6ad6d92..93e44a9 100644
+index 6ad6d92..145d422 100644
 --- a/node_modules/react-native-track-player/ios/RNTrackPlayer/RNTrackPlayer.swift
 +++ b/node_modules/react-native-track-player/ios/RNTrackPlayer/RNTrackPlayer.swift
 @@ -16,13 +16,21 @@ public class RNTrackPlayer: RCTEventEmitter {
@@ -61,7 +61,32 @@ index 6ad6d92..93e44a9 100644
          // setup event listeners
          player.remoteCommandController.handleChangePlaybackPositionCommand = { [weak self] event in
              if let event = event as? MPChangePlaybackPositionCommandEvent {
-@@ -504,17 +530,28 @@ public class RNTrackPlayer: RCTEventEmitter {
+@@ -434,6 +460,14 @@ public class RNTrackPlayer: RCTEventEmitter {
+     public func seek(to time: Double, resolve: RCTPromiseResolveBlock, reject: RCTPromiseRejectBlock) {
+         print("Seeking to \(time) seconds")
+         player.seek(to: time)
++        // lx-ci patch（任务 9.11）：seek 后立即刷锁屏面板进度锚点。
++        // autoUpdateMetadata=false 时 SwiftAudioEx 的锚点自动通道关闭
++        // （AudioPlayer.seek 的 updateNowPlayingCurrentTime 被同一开关
++        // 门控），拖动进度条/切进度后锁屏面板仍显示旧锚点。写目标值而非
++        // currentTime：AVPlayer seek 是异步的，此刻 currentTime 仍是旧位置；
++        // 上游（该开关为 true 时）AudioPlayer.seek 写的也是目标秒数，
++        // 语义对齐
++        syncNowPlayingProgressAnchor(elapsedTime: time)
+         resolve(NSNull())
+     }
+ 
+@@ -466,6 +500,9 @@ public class RNTrackPlayer: RCTEventEmitter {
+     public func setRate(rate: Float, resolve: RCTPromiseResolveBlock, reject: RCTPromiseRejectBlock) {
+         print("Setting rate to \(rate)")
+         player.rate = rate
++        // lx-ci patch（任务 9.11）：变速后立即刷锁屏面板锚点速率，
++        // 否则面板按旧速率外推显示位置，见 syncNowPlayingProgressAnchor 说明
++        syncNowPlayingProgressAnchor()
+         resolve(NSNull())
+     }
+ 
+@@ -504,17 +541,28 @@ public class RNTrackPlayer: RCTEventEmitter {
  
      @objc(getDuration:rejecter:)
      public func getDuration(resolve: RCTPromiseResolveBlock, reject: RCTPromiseRejectBlock) {
@@ -93,7 +118,58 @@ index 6ad6d92..93e44a9 100644
      }
  
      @objc(getState:rejecter:)
-@@ -651,8 +688,15 @@ public class RNTrackPlayer: RCTEventEmitter {
+@@ -551,8 +599,50 @@ public class RNTrackPlayer: RCTEventEmitter {
+ 
+     // MARK: - QueuedAudioPlayer Event Handlers
+ 
++    // lx-ci patch（任务 9.11）：锁屏/控制中心进度条锚点。MPNowPlayingInfoCenter
++    // 用 elapsedPlaybackTime + playbackRate 两键渲染进度（锚点 + 按速率外推）。
++    // 应用经 setupPlayer 传 autoUpdateMetadata=false（任务 5.4 为让歌词走
++    // 标题通道接管元数据），关闭了 SwiftAudioEx 唯一写这对键的自动通道
++    // （AudioPlayer.AVWrapper(didChangeState:) 的 updateNowPlayingPlaybackValues
++    // 被该开关门控）；JS 侧 updateNowPlayingMetadataIOS / updateNowPlayingTitles
++    // 写的 metadata 又从不带 elapsedTime——锁屏面板因此没有锚点。真机
++    // （iPhone 17 Pro / iOS 26.6，2026-09-07）现象：锁屏暂停进度立即归零，
++    // 继续播放从 0 重新计时，而 AVPlayer 实际位置正常——纯锁屏面板显示错位。
++    // 该开关只作用于 iOS 原生实例；Android 的 autoUpdateMetadata 在
++    // ExoPlayback 侧（MusicManager.java:124），与本补丁零交集，不改变
++    // 任何 Android 行为。标题/歌手/封面仍由 JS 侧元数据写入，此处只补
++    // 时间锚点两键，与 fork 上游自动通道写的是同一对键、同一单位（秒）。
++    // 每次写入经 NowPlayingInfoController 全量提交 nowPlayingInfo，锚点
++    // 不会因 JS 侧后续元数据写入而丢失。状态翻转时 currentTime 已处于
++    // 目标位置（AVPlayerWrapper 先更新 _state 再发事件），paused 写暂停
++    // 点、playing 写恢复点。
++    // elapsedTime 为 nil 时取 currentTime（状态翻转路径）；seek 路径显式
++    // 传目标值（异步 seek 未完成时 currentTime 仍是旧位置）。
++    // 速率键按实际播放状态写：仅 playing 写真实速率，暂停/缓冲写 0——
++    // 面板按「锚点 + rate 外推」渲染进度，暂停时写非零速率会让进度在
++    // 暂停期间继续爬。此处与上游自动通道（恒写存储速率）刻意不同：该
++    // 通道在本应用被 autoUpdateMetadata=false 关闭，可见行为由本写入器
++    // 定义，按 Apple 文档语义写
++    private func syncNowPlayingProgressAnchor(elapsedTime: Double? = nil) {
++        let elapsed = elapsedTime ?? player.currentTime
++        let rate: Double = player.playerState == .playing ? Double(player.rate) : 0
++        let kvs: [NowPlayingInfoKeyValue] = [
++            NowPlayingInfoProperty.elapsedPlaybackTime(elapsed),
++            NowPlayingInfoProperty.playbackRate(rate),
++        ]
++        player.nowPlayingInfoController.set(keyValues: kvs)
++    }
++
+     func handleAudioPlayerStateChange(state: AVPlayerWrapperState) {
+         sendEvent(withName: "playback-state", body: ["state": state.rawValue])
++        // lx-ci patch（任务 9.11）：播放/暂停/缓冲状态翻转时刷锁屏进度锚点，
++        // 见 syncNowPlayingProgressAnchor 说明
++        switch state {
++        case .playing, .paused, .buffering:
++            syncNowPlayingProgressAnchor()
++        default:
++            break
++        }
+     }
+ 
+     func handleAudioPlayerMetadataReceived(metadata: [AVMetadataItem]) {
+@@ -651,8 +741,15 @@ public class RNTrackPlayer: RCTEventEmitter {
          // Load isLiveStream option for track
          var isTrackLiveStream = false
          if let nextIndex = nextIndex {

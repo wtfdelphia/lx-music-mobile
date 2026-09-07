@@ -82,3 +82,17 @@ fork 的 iOS `QueuedAudioPlayer.stop()` 清空队列并无条件发射 `queueInd
 
 - **WHEN** 播放接近结束触发预载，而取链目标不可达
 - **THEN** 该轮预载在硬超时内结束并放弃，当前播放与后续切歌调用的响应不因此延长
+
+### Requirement: 锁屏面板进度锚点
+
+锁屏/控制中心面板的进度渲染依赖 `MPNowPlayingInfoCenter` 的 `elapsedPlaybackTime`（锚点）与 `playbackRate`（外推斜率）两键。应用经 `setupPlayer` 传 `autoUpdateMetadata: false`（歌词走标题通道接管元数据，任务 5.4），关闭了 SwiftAudioEx 唯一写这对键的自动通道；JS 侧元数据写入又从不带这两键。iOS 原生侧 SHALL 在播放状态翻转（playing/paused/buffering）、seek、变速时写入进度锚点：播放中写实际速率与当前位置，暂停写速率 0 与暂停点，seek 写目标值（异步 seek 期间 `currentTime` 仍是旧位置）。速率键在暂停时 SHALL 为 0，使面板在暂停期间不外推进度。标题/歌手/封面仍由 JS 侧元数据写入；锚点写入与元数据写入同走 `NowPlayingInfoController` 全量提交，锚点两键不得因后续元数据写入而丢失。本契约仅作用于 iOS 原生实例，SHALL NOT 改变 Android 行为。
+
+#### Scenario: 锁屏暂停进度不清零
+
+- **WHEN** 播放中锁屏暂停，随后继续播放
+- **THEN** 锁屏面板进度从实际播放位置继续，不从 0 重新计时；Now Playing 的 `elapsedPlaybackTime` 在暂停与恢复时分别为暂停点与恢复点
+
+#### Scenario: 暂停期间面板进度不外推
+
+- **WHEN** 播放处于暂停状态
+- **THEN** Now Playing 的 `playbackRate` 键为 0，锁屏面板进度保持冻结

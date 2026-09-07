@@ -51,7 +51,7 @@ const utilsNative = NativeModules.UtilsModule as unknown as {
   // 诊断 + 兜底：返回匹配家族名；未注册时尝试 CTFontManager 挂载 bundle 内字体
   registerBundledFont: (fileName: string) => Promise<{ matched: string[], registered: boolean }>,
   getAudioSessionCategory: () => Promise<string>,
-  getNowPlayingInfo: () => Promise<{ title?: string, artist?: string, album?: string, duration?: number, elapsed?: number, hasArtwork?: boolean } | null>,
+  getNowPlayingInfo: () => Promise<{ title?: string, artist?: string, album?: string, duration?: number, elapsed?: number, rate?: number, hasArtwork?: boolean } | null>,
   isScreenKeepAwake: () => Promise<boolean>,
   // 横屏自测驱动：宿主无可靠无头旋转通道，改由应用内强制旋转（仅自测标记存在时生效）
   setDeviceOrientation: (orientation: string) => Promise<{
@@ -1293,16 +1293,53 @@ const testPlayback = async() => {
   })()
   assert(clockFrozen ? playingSeen : pos > 0.5,
     `playback never started (pos=${pos}, retried=${retried}, playingSeen=${playingSeen}, player=${JSON.stringify(playerDiag)}, states=[${stateTail}])${probeDigest}`)
+  // 锁屏进度锚点（任务 9.11）：起播态面板必须有 elapsed 锚点且速率键非零——
+  // 修复前 autoUpdateMetadata=false 关掉了唯一写这对键的通道，两键恒缺席。
+  // 播放中不判 elapsed 与 pos 的差距：面板按「锚点 + rate 外推」渲染，
+  // 锚点只在状态翻转/seek 时刷新，落在起播点 0 是正确行为
+  const tAnchor0 = Date.now()
+  let npAnchor: Awaited<ReturnType<typeof utilsNative.getNowPlayingInfo>> = null
+  while (Date.now() - tAnchor0 < 10_000) {
+    npAnchor = await utilsNative.getNowPlayingInfo()
+    if (npAnchor?.elapsed != null && npAnchor?.rate != null) break
+    await sleep(500)
+  }
+  assert(npAnchor?.elapsed != null, `now playing progress anchor missing while playing: ${JSON.stringify(npAnchor)}`)
+  assert((npAnchor?.rate ?? 0) > 0.5, `now playing playback rate should reflect playing state: ${JSON.stringify(npAnchor)}`)
   await putils.setPause()
   await sleep(1500)
   const pausedPos1 = await putils.getPosition()
   await sleep(2000)
   const pausedPos2 = await putils.getPosition()
   assert(Math.abs(pausedPos2 - pausedPos1) < 0.3, `position moved while paused (${pausedPos1} -> ${pausedPos2})`)
+  // 暂停锚点（任务 9.11）：暂停写暂停点并把速率键归零。速率不归零时面板
+  // 在暂停期间继续外推；锚点缺失/为 0 即真机「暂停进度清零」的判负点
+  const tAnchor1 = Date.now()
+  let npPaused: Awaited<ReturnType<typeof utilsNative.getNowPlayingInfo>> = null
+  while (Date.now() - tAnchor1 < 10_000) {
+    npPaused = await utilsNative.getNowPlayingInfo()
+    if (npPaused?.rate === 0 && npPaused?.elapsed != null) break
+    await sleep(500)
+  }
+  assert(npPaused?.rate === 0, `paused anchor rate not zeroed: ${JSON.stringify(npPaused)}`)
+  assert(npPaused?.elapsed != null, `paused anchor elapsed missing: ${JSON.stringify(npPaused)}`)
+  if (!clockFrozen) assert(Math.abs((npPaused?.elapsed ?? 0) - pausedPos2) < 1.5,
+    `paused anchor far from real position (${String(npPaused?.elapsed)} vs ${pausedPos2})`)
   await putils.setPlay()
   await sleep(2000)
   const resumedPos = await putils.getPosition()
   if (!clockFrozen) assert(resumedPos > pausedPos2 + 0.5, `position stuck after resume (${pausedPos2} -> ${resumedPos})`)
+  // 恢复锚点（任务 9.11）：playing 翻转重写锚点并回填速率键
+  const tAnchor2 = Date.now()
+  let npResumed: Awaited<ReturnType<typeof utilsNative.getNowPlayingInfo>> = null
+  while (Date.now() - tAnchor2 < 10_000) {
+    npResumed = await utilsNative.getNowPlayingInfo()
+    if ((npResumed?.rate ?? 0) > 0.5 && npResumed?.elapsed != null) break
+    await sleep(500)
+  }
+  assert((npResumed?.rate ?? 0) > 0.5, `resumed anchor rate not restored: ${JSON.stringify(npResumed)}`)
+  if (!clockFrozen) assert((npResumed?.elapsed ?? 0) > pausedPos2 - 1.5,
+    `resumed anchor rewound before pause point (${String(npResumed?.elapsed)} vs pause ${pausedPos2})`)
   // 锁屏/通知栏元数据（任务 5.3 判据之一）：标题/歌手进 Now Playing 面板
   await putils.updateMetaData({
     ...musicInfo,
@@ -1337,9 +1374,12 @@ const testPlayback = async() => {
     await sleep(500)
   }
   assert(np2?.title === 'lx-ci lyric line', `now playing titles not applied: ${JSON.stringify(np2)}`)
+  // 锚点在 JS 元数据写入后存活（任务 9.11）：Metadata.update 与标题通道都走
+  // NowPlayingInfoController 全量提交，锚点两键不得被覆盖丢失
+  assert(np2?.elapsed != null, `anchor keys lost after metadata/title writes: ${JSON.stringify(np2)}`)
   // 暂停收尾：避免夹具在后续用例期间播完触发空轨降级路径
   await putils.setPause()
-  return { startedAt: pos, playingSeen, clockFrozen, pausedPos1, pausedPos2, resumedPos, nowPlaying: np, lyricTitle: np2?.title }
+  return { startedAt: pos, playingSeen, clockFrozen, pausedPos1, pausedPos2, resumedPos, nowPlaying: np, lyricTitle: np2?.title, anchor: { playingElapsed: npAnchor?.elapsed, playingRate: npAnchor?.rate, pausedElapsed: npPaused?.elapsed, pausedRate: npPaused?.rate, resumedElapsed: npResumed?.elapsed, resumedRate: npResumed?.rate } }
 }
 
 // 9.8 远程流播放归因判别（run 33750828518 后重构）。首版把远程流经
