@@ -61,15 +61,26 @@ static void LXCIRecordOpenURL(NSURL *url, NSString *source) {
 // 「调用失败：文件不存在」（真机 iPhone 17 Pro / iOS 26.6 实测）。
 // 在此同步拷进沙箱暂存区并转发暂存 URL，下游 handleFileAction 看到的
 // 一律是沙箱内可读路径（lxmc/js/audio 三类 DocumentTypes 同走此路径）。
-// 沙箱内已可读文件（共享文档、CI 探针）原样透传，零拷贝。
-- (NSURL *)lx_stagedFileURL:(NSURL *)url
+//
+// 第三轮（冷启动残余）：第一轮的「当前可读即透传」快速路径不可靠——
+// 启动窗口内系统对外部安全作用域文件短暂放行，该判断为真，但 JS 数秒
+// 后执行时放行已失效，stat 仍读不到（冷启动「文件不存在」的最可能根因）。
+// 判据改为沙箱包含性：路径在 NSHomeDirectory() 之内（共享文档、CI 探针）
+// 才透传，之外一律经安全作用域拷贝。每次处置追加一行真机归因日志到
+// Documents（UIFileSharingEnabled 暴露进「文件」App），复测仍失败时
+// 用户可直接取出回传定位。
+- (NSURL *)lx_stagedFileURL:(NSURL *)url context:(NSString *)context
 {
   if (url == nil || !url.isFileURL) return url;
   NSString *srcPath = url.path;
   if (srcPath.length == 0) return url;
-  NSFileManager *fm = [NSFileManager defaultManager];
-  if ([fm isReadableFileAtPath:srcPath]) return url;
+  // 沙箱内（共享文档、CI 探针）：恒可读，原样透传零拷贝
+  if ([srcPath hasPrefix:NSHomeDirectory()]) {
+    [self lx_logOpen:[NSString stringWithFormat:@"%@: sandbox passthrough url=%@", context, url.absoluteString]];
+    return url;
+  }
 
+  NSFileManager *fm = [NSFileManager defaultManager];
   BOOL scoped = [url startAccessingSecurityScopedResource];
   NSString *name = url.lastPathComponent.length > 0 ? url.lastPathComponent : @"opened-file";
   NSString *stageRoot = [NSTemporaryDirectory() stringByAppendingPathComponent:@"lx-opened-files"];
@@ -81,17 +92,54 @@ static void LXCIRecordOpenURL(NSURL *url, NSString *source) {
   NSString *destPath = [destDir stringByAppendingPathComponent:name];
   BOOL copied = [fm copyItemAtPath:srcPath toPath:destPath error:&error];
   if (scoped) [url stopAccessingSecurityScopedResource];
-  // 拷贝失败保留原路径：下游报可读错误，不静默吞掉
-  if (!copied) return url;
-  return [NSURL fileURLWithPath:destPath];
+  if (copied) {
+    [self lx_logOpen:[NSString stringWithFormat:@"%@: staged url=%@ scoped=%@ dest=%@", context, url.absoluteString, scoped ? @"yes" : @"no", destPath]];
+    return [NSURL fileURLWithPath:destPath];
+  }
+  // 拷贝失败保留原路径：下游报可读错误，错误细节落归因日志，不静默吞掉
+  [self lx_logOpen:[NSString stringWithFormat:@"%@: stage FAILED url=%@ scoped=%@ error=%@", context, url.absoluteString, scoped ? @"yes" : @"no", error ? error.localizedDescription : @"<nil>"]];
+  return url;
+}
+
+// 真机归因日志：落 Documents 目录（UIFileSharingEnabled 使其出现在
+// 「文件」App 的本应用共享目录），复测失败时直接取出回传即可定位。
+// 只在外部打开文件时追加一行，无持续写入。
+- (void)lx_logOpen:(NSString *)message
+{
+  NSString *docs = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
+  if (docs.length == 0) return;
+  NSString *logPath = [docs stringByAppendingPathComponent:@"lx-open-log.txt"];
+  NSDateFormatter *fmt = [[NSDateFormatter alloc] init];
+  [fmt setDateFormat:@"yyyy-MM-dd HH:mm:ss.SSS"];
+  NSString *line = [NSString stringWithFormat:@"%@ %@\n", [fmt stringFromDate:[NSDate date]], message];
+  NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
+  NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:logPath];
+  if (handle) {
+    @try {
+      [handle seekToEndOfFile];
+      [handle writeData:data];
+    } @finally {
+      [handle closeFile];
+    }
+  } else {
+    [data writeToFile:logPath atomically:YES];
+  }
 }
 
 - (NSDictionary *)lx_stagedLaunchOptions:(NSDictionary *)launchOptions
 {
-  if (launchOptions == nil) return launchOptions;
+  if (launchOptions == nil) {
+    [self lx_logOpen:@"cold: launchOptions nil"];
+    return launchOptions;
+  }
   id raw = launchOptions[UIApplicationLaunchOptionsURLKey];
-  if (![raw isKindOfClass:[NSURL class]]) return launchOptions;
-  NSURL *staged = [self lx_stagedFileURL:(NSURL *)raw];
+  if (![raw isKindOfClass:[NSURL class]]) {
+    // 冷启动没带 URL：若复测仍失败，此行 + keys 列表即可区分
+    // 「系统没投递」与「投递了但暂存失败」
+    [self lx_logOpen:[NSString stringWithFormat:@"cold: no URL in launchOptions keys=%@", [[launchOptions allKeys] componentsJoinedByString:@","]]];
+    return launchOptions;
+  }
+  NSURL *staged = [self lx_stagedFileURL:(NSURL *)raw context:@"cold"];
   if (staged == (NSURL *)raw) return launchOptions;
   NSMutableDictionary *m = [launchOptions mutableCopy];
   m[UIApplicationLaunchOptionsURLKey] = staged;
@@ -101,7 +149,7 @@ static void LXCIRecordOpenURL(NSURL *url, NSString *source) {
 - (BOOL)application:(UIApplication *)app openURL:(NSURL *)url
             options:(NSDictionary<UIApplicationOpenURLOptionsKey,id> *)options {
   LXCIRecordOpenURL(url, options[UIApplicationOpenURLOptionsSourceApplicationKey]);
-  return [RCTLinkingManager application:app openURL:[self lx_stagedFileURL:url] options:options];
+  return [RCTLinkingManager application:app openURL:[self lx_stagedFileURL:url context:@"warm"] options:options];
 }
 
 - (BOOL)application:(UIApplication *)application continueUserActivity:(NSUserActivity *)userActivity
