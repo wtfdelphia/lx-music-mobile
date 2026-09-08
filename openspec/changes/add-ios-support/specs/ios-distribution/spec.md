@@ -30,3 +30,12 @@ CI SHALL 包含 iOS unsigned 编译回归 job，代码合入即验证可编译�
 
 - **WHEN** 应用发起明文 `http` 请求（原生 `NSURLSession` 或 RN fetch 任一通道）
 - **THEN** 失败原因不得是 `NSURLErrorDomain` code `-1022`（App Transport Security 拦截）；冒烟自测的 `network_probe` SHALL 对 `http` 探针的原生侧错误码做 `-1022` 硬断言
+
+### Requirement: 本地网络权限声明
+
+数据同步经同一局域网内对桌面端同步服务的 TCP 连接（WebSocket）实现。iOS 14+ 对本地网络出站连接强制要求 `NSLocalNetworkUsageDescription`；缺失时系统不弹权限授权、连接静默失败且无错误文本可归因。`Info.plist` SHALL 声明 `NSLocalNetworkUsageDescription` 且文案说明用途为局域网内同步服务连接。
+
+#### Scenario: 同步连接不被权限策略静默拦截
+
+- **WHEN** 应用对局域网内主机地址（`http://<内网IP>:<端口>`）发起同步鉴权或 WebSocket 连接
+- **THEN** 首次连接时系统弹出本地网络权限授权提示；授权后连接可达，失败原因不得是权限缺失导致的静默断连
