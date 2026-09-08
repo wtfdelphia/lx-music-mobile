@@ -90,7 +90,24 @@ static void LXCIRecordOpenURL(NSURL *url, NSString *source) {
   NSError *error = nil;
   [fm createDirectoryAtPath:destDir withIntermediateDirectories:YES attributes:nil error:&error];
   NSString *destPath = [destDir stringByAppendingPathComponent:name];
+  // 清掉同路径上次暂存残留
+  [fm removeItemAtPath:destPath error:nil];
+  // 裸拷贝先行：FileProvider 项已物化时可直接读
   BOOL copied = [fm copyItemAtPath:srcPath toPath:destPath error:&error];
+  if (!copied) {
+    // 协调器：FileProvider / in-place 文档的文档化访问通道，未物化时可
+    // 触发物化——第三轮冷启动暂存只有裸拷贝、缺这一档，是冷启动
+    // 「no such file」的直接原因（真机 scoped=no + no such file 实锤）
+    NSFileCoordinator *coordinator = [[NSFileCoordinator alloc] initWithFilePresenter:nil];
+    __block BOOL coordCopied = NO;
+    __block NSError *coordInnerErr = nil;
+    NSError *coordErr = nil;
+    [coordinator coordinateReadingItemAtURL:url options:0 error:&coordErr byAccessor:^(NSURL *readURL) {
+      coordCopied = [fm copyItemAtURL:readURL toURL:[NSURL fileURLWithPath:destPath] error:&coordInnerErr];
+    }];
+    copied = coordCopied;
+    if (!copied) error = coordInnerErr != nil ? coordInnerErr : coordErr;
+  }
   if (scoped) [url stopAccessingSecurityScopedResource];
   if (copied) {
     [self lx_logOpen:[NSString stringWithFormat:@"%@: staged url=%@ scoped=%@ dest=%@", context, url.absoluteString, scoped ? @"yes" : @"no", destPath]];
