@@ -1298,6 +1298,12 @@ RCT_EXPORT_METHOD(importOpenedFile:(NSString *)rawPath
     resolve(@{ @"path": path, @"staged": @(NO), @"attempts": @0 });
     return;
   }
+  // 冷启动领取：授权窗口只在 openURL 回调内，JS 运行时（作用域已关、
+  // FileProvider 项未物化）拷贝必然失败——真机 scoped=no + no such file
+  // 实锤。openURL 暂存成功的产物经 NSUserDefaults 登记，此处按源 URL 领取
+  NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+  NSString *rawAbs = [rawPath isKindOfClass:[NSString class]] ? rawPath : @"";
+  NSString *pathAbs = [path hasPrefix:@"/"] ? [@"file://" stringByAppendingString:path] : path;
   NSURL *url = [NSURL fileURLWithPath:path];
   NSString *name = url.lastPathComponent.length > 0 ? url.lastPathComponent : @"opened-file";
   NSString *destDir = [[NSTemporaryDirectory() stringByAppendingPathComponent:@"lx-opened-files"]
@@ -1307,16 +1313,34 @@ RCT_EXPORT_METHOD(importOpenedFile:(NSString *)rawPath
   NSMutableArray<NSString *> *diag = [NSMutableArray array];
   [[NSFileManager defaultManager] createDirectoryAtPath:destDir withIntermediateDirectories:YES attributes:nil error:nil];
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-    [self lx_stageAttempt:url destPath:destPath diag:diag attempt:1 resolve:resolve reject:reject];
+    [self lx_stageAttempt:url destPath:destPath diag:diag attempt:1 resolve:resolve reject:reject
+                 pickupSourceURLs:@[rawAbs, pathAbs]];
   });
 }
 
 - (void)lx_stageAttempt:(NSURL *)url destPath:(NSString *)destPath
                    diag:(NSMutableArray<NSString *> *)diag attempt:(NSInteger)attempt
                 resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
+       pickupSourceURLs:(NSArray<NSString *> *)pickupSourceURLs
 {
   static const NSInteger kMaxAttempts = 5;
   static const NSTimeInterval kRetryDelay = 0.4;
+  // openURL 暂存产物领取（冷启动主路径）：每拍先查登记表，命中即返回；
+  // 未命中才走下面的现场拷贝。产物可能晚于 JS 启动才登记，随拍轮询
+  NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+  NSString *stagedDest = [ud stringForKey:@"lxStagedFilePath"];
+  NSString *stagedSource = [ud stringForKey:@"lxStagedFileSourceURL"];
+  if (stagedDest.length > 0 && stagedSource.length > 0) {
+    for (NSString *candidate in pickupSourceURLs) {
+      if (candidate.length > 0 && [stagedSource isEqualToString:candidate]) {
+        [self lx_writeOpenLog:[NSString stringWithFormat:@"jsImport: picked staged artifact attempt=%ld dest=%@", (long)attempt, stagedDest]];
+        [ud removeObjectForKey:@"lxStagedFilePath"];
+        [ud removeObjectForKey:@"lxStagedFileSourceURL"];
+        resolve(@{ @"path": stagedDest, @"staged": @(YES), @"attempts": @(attempt) });
+        return;
+      }
+    }
+  }
   NSFileManager *fm = [NSFileManager defaultManager];
   BOOL scoped = [url startAccessingSecurityScopedResource];
   [diag addObject:[NSString stringWithFormat:@"a%ld scoped=%@", (long)attempt, scoped ? @"yes" : @"no"]];
@@ -1364,7 +1388,8 @@ RCT_EXPORT_METHOD(importOpenedFile:(NSString *)rawPath
     return;
   }
   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kRetryDelay * NSEC_PER_SEC)), dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-    [self lx_stageAttempt:url destPath:destPath diag:diag attempt:attempt + 1 resolve:resolve reject:reject];
+    [self lx_stageAttempt:url destPath:destPath diag:diag attempt:attempt + 1 resolve:resolve reject:reject
+         pickupSourceURLs:pickupSourceURLs];
   });
 }
 

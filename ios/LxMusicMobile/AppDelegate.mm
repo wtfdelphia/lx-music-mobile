@@ -111,6 +111,12 @@ static void LXCIRecordOpenURL(NSURL *url, NSString *source) {
   if (scoped) [url stopAccessingSecurityScopedResource];
   if (copied) {
     [self lx_logOpen:[NSString stringWithFormat:@"%@: staged url=%@ scoped=%@ dest=%@", context, url.absoluteString, scoped ? @"yes" : @"no", destPath]];
+    // 暂存产物登记：冷启动时 JS 只读 launchOptions（grant 窗口已关），
+    // 而 openURL 在启动完成后仍会被调用且协调器可触发物化——产物经
+    // NSUserDefaults 登记，供 JS 侧 importOpenedFile 按源 URL 领取
+    NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+    [ud setObject:destPath forKey:@"lxStagedFilePath"];
+    [ud setObject:url.absoluteString forKey:@"lxStagedFileSourceURL"];
     return [NSURL fileURLWithPath:destPath];
   }
   // 拷贝失败保留原路径：下游报可读错误，错误细节落归因日志，不静默吞掉
