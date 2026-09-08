@@ -3,7 +3,7 @@ import { errorDialog } from './utils'
 import { handleMusicAction } from './musicAction'
 import { handlePlayerAction, type PlayerAction } from './playerAction'
 import { handleSonglistAction } from './songlistAction'
-import { extname, stat } from '@/utils/fs'
+import { extname, stat, importOpenedFile } from '@/utils/fs'
 import { handleFileMusicAction, handleFileJSAction, handleFileLXMCAction } from './fileAction'
 
 
@@ -42,7 +42,12 @@ const handleLinkAction = async(link: string) => {
 }
 
 const handleFileAction = async(link: string) => {
-  const file = await stat(link)
+  // 任务 9.14：「文件」App in-place 打开递来的沙箱外安全作用域路径先经
+  // 原生暂存拷进沙箱再处理；沙箱内路径（共享文档、已暂存产物）恒等透传。
+  // 启动阶段原生暂存在冷启动拿不到访问（四轮真机实测），必须放在
+  // JS 处理时点（此时应用已完全启动、访问可发起）
+  const { path: stagedPath } = await importOpenedFile(link)
+  const file = await stat(stagedPath)
   // console.log(file)
   switch (extname(file.name)) {
     case 'json':

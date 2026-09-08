@@ -1276,6 +1276,115 @@ RCT_EXPORT_METHOD(viewTreeProbe:(NSString *)testID
   });
 }
 
+// 任务 9.14 第五轮：JS 时点暂存兜底。原生启动阶段暂存在冷启动拿不到
+// in-place 文档的安全作用域访问（三轮真机实测失败）；JS 处理深链时应用
+// 已完全启动、FileProvider 已物化、可发起访问。重试覆盖物化延迟，每步
+// 写 Documents/lx-open-log.txt（「文件」App 本应用共享目录可见），失败
+// 的 reject 带逐步诊断（错误弹窗真机直接可见）。
+// 沙箱内路径（共享文档、已暂存产物、CI 探针）原样返回零拷贝。
+RCT_EXPORT_METHOD(importOpenedFile:(NSString *)rawPath
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSString *path = [rawPath isKindOfClass:[NSString class]] ? rawPath : @"";
+  if ([path hasPrefix:@"file://"]) path = [path substringFromIndex:7];
+  [self lx_writeOpenLog:[NSString stringWithFormat:@"jsImport: enter path=%@", path]];
+  if (path.length == 0) {
+    reject(@"import_opened_file_failed", @"importOpenedFile: empty path", nil);
+    return;
+  }
+  if ([path hasPrefix:NSHomeDirectory()]) {
+    [self lx_writeOpenLog:@"jsImport: sandbox passthrough"];
+    resolve(@{ @"path": path, @"staged": @(NO), @"attempts": @0 });
+    return;
+  }
+  NSURL *url = [NSURL fileURLWithPath:path];
+  NSString *name = url.lastPathComponent.length > 0 ? url.lastPathComponent : @"opened-file";
+  NSString *destDir = [[NSTemporaryDirectory() stringByAppendingPathComponent:@"lx-opened-files"]
+                       stringByAppendingPathComponent:
+                       [NSString stringWithFormat:@"%.0f", [[NSDate date] timeIntervalSince1970] * 1000.0]];
+  NSString *destPath = [destDir stringByAppendingPathComponent:name];
+  NSMutableArray<NSString *> *diag = [NSMutableArray array];
+  [[NSFileManager defaultManager] createDirectoryAtPath:destDir withIntermediateDirectories:YES attributes:nil error:nil];
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    [self lx_stageAttempt:url destPath:destPath diag:diag attempt:1 resolve:resolve reject:reject];
+  });
+}
+
+- (void)lx_stageAttempt:(NSURL *)url destPath:(NSString *)destPath
+                   diag:(NSMutableArray<NSString *> *)diag attempt:(NSInteger)attempt
+                resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
+{
+  static const NSInteger kMaxAttempts = 5;
+  static const NSTimeInterval kRetryDelay = 0.4;
+  NSFileManager *fm = [NSFileManager defaultManager];
+  BOOL scoped = [url startAccessingSecurityScopedResource];
+  [diag addObject:[NSString stringWithFormat:@"a%ld scoped=%@", (long)attempt, scoped ? @"yes" : @"no"]];
+  __block BOOL copied = NO;
+  NSError *error = nil;
+  // 重试复用同一目标路径：先清上一轮可能残留的半成品，防「文件已存在」
+  [fm removeItemAtPath:destPath error:nil];
+  // 裸拷贝先行：物化已完成时不依赖作用域授予即可读（冷启动 FileProvider
+  // 已物化但作用域未授的形态）
+  copied = [fm copyItemAtPath:url.path toPath:destPath error:&error];
+  if (scoped) {
+    if (!copied) {
+      // NSFileCoordinator：FileProvider in-place 文档的文档化访问通道
+      NSFileCoordinator *coordinator = [[NSFileCoordinator alloc] initWithFilePresenter:nil];
+      [coordinator coordinateReadingItemAtURL:url options:0 error:&error byAccessor:^(NSURL *readURL) {
+        copied = [fm copyItemAtURL:readURL toURL:[NSURL fileURLWithPath:destPath] error:&error];
+      }];
+    }
+    [url stopAccessingSecurityScopedResource];
+  } else if (!copied) {
+    // 无作用域也走一遍协调器：覆盖物化已完成、作用域未授的形态
+    NSFileCoordinator *coordinator = [[NSFileCoordinator alloc] initWithFilePresenter:nil];
+    [coordinator coordinateReadingItemAtURL:url options:0 error:&error byAccessor:^(NSURL *readURL) {
+      copied = [fm copyItemAtURL:readURL toURL:[NSURL fileURLWithPath:destPath] error:&error];
+    }];
+  }
+  if (copied) {
+    [self lx_writeOpenLog:[NSString stringWithFormat:@"jsImport: staged attempt=%ld dest=%@", (long)attempt, destPath]];
+    resolve(@{ @"path": destPath, @"staged": @(YES), @"attempts": @(attempt) });
+    return;
+  }
+  [diag addObject:[NSString stringWithFormat:@"copyErr=%@", error.localizedDescription ?: @"<nil>"]];
+  if (attempt >= kMaxAttempts) {
+    NSString *message = [NSString stringWithFormat:@"importOpenedFile failed: %@", [diag componentsJoinedByString:@"; "]];
+    [self lx_writeOpenLog:[NSString stringWithFormat:@"jsImport: FAILED %@", message]];
+    reject(@"import_opened_file_failed", message, nil);
+    return;
+  }
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kRetryDelay * NSEC_PER_SEC)), dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    [self lx_stageAttempt:url destPath:destPath diag:diag attempt:attempt + 1 resolve:resolve reject:reject];
+  });
+}
+
+// 真机归因日志（与 AppDelegate lx_logOpen 同一文件）：落 Documents 目录，
+// UIFileSharingEnabled 使其出现在「文件」App 本应用共享目录，复测失败
+// 时直接取出回传即可定位
+- (void)lx_writeOpenLog:(NSString *)message
+{
+  NSString *docs = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
+  if (docs.length == 0) return;
+  NSString *logPath = [docs stringByAppendingPathComponent:@"lx-open-log.txt"];
+  NSDateFormatter *fmt = [[NSDateFormatter alloc] init];
+  [fmt setDateFormat:@"yyyy-MM-dd HH:mm:ss.SSS"];
+  NSString *line = [NSString stringWithFormat:@"%@ %@\n", [fmt stringFromDate:[NSDate date]], message];
+  NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
+  NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:logPath];
+  if (handle) {
+    @try {
+      [handle seekToEndOfFile];
+      [handle writeData:data];
+    } @finally {
+      [handle closeFile];
+    }
+  } else {
+    [data writeToFile:logPath atomically:YES];
+  }
+}
+
 - (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls
 {
   RCTPromiseResolveBlock resolve = self.selectFileResolve;

@@ -1,4 +1,4 @@
-// iOS 文件适配层：等价实现 fs.ts 的 27 个导出（任务 1.4 / design D4）。
+// iOS 文件适配层：等价实现 fs.ts 的导出面（任务 1.4 / design D4）。
 // 基于 react-native-fs；stat/readDir 合成 name/path/mimeType/canRead 字段。
 // gzip 四方法走 GzipModule（任务 6.1）；文件选择走 UtilsModule.selectFile（任务 6.5）。
 import RNFS from 'react-native-fs'
@@ -75,6 +75,18 @@ export const selectFile = async(options: OpenDocumentOptions): Promise<{ data: s
     extTypes: options.extTypes ?? null,
     toPath: options.toPath ?? null,
   }) as Promise<{ data: string } | null>
+}
+// 「文件」App in-place 打开递来的沙箱外安全作用域路径经原生暂存拷进沙箱
+// （任务 9.14）：启动阶段原生暂存拿不到访问（四轮真机实测），JS 处理深链
+// 时应用已完全启动、访问可发起；沙箱内路径原样返回零拷贝
+export interface OpenedFileImportResult {
+  path: string
+  staged: boolean
+  attempts: number
+}
+
+export const importOpenedFile = async(path: string): Promise<OpenedFileImportResult> => {
+  return UtilsModule.importOpenedFile(path) as Promise<OpenedFileImportResult>
 }
 export const removeManagedFolder = async(_path: string): Promise<void> => {}
 export const getManagedFolders = async(): Promise<string[]> => []
