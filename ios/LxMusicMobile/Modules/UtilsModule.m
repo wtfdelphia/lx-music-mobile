@@ -1321,6 +1321,9 @@ RCT_EXPORT_METHOD(importOpenedFile:(NSString *)rawPath
   BOOL scoped = [url startAccessingSecurityScopedResource];
   [diag addObject:[NSString stringWithFormat:@"a%ld scoped=%@", (long)attempt, scoped ? @"yes" : @"no"]];
   __block BOOL copied = NO;
+  // 块内回写经 __block 中间变量；方法作用域的 & 参数一律用普通局部，
+  // 规避 __block 变量取址的 __autoreleasing 转换限制
+  __block NSError *blockCopyError = nil;
   NSError *error = nil;
   // 重试复用同一目标路径：先清上一轮可能残留的半成品，防「文件已存在」
   [fm removeItemAtPath:destPath error:nil];
@@ -1332,7 +1335,9 @@ RCT_EXPORT_METHOD(importOpenedFile:(NSString *)rawPath
       // NSFileCoordinator：FileProvider in-place 文档的文档化访问通道
       NSFileCoordinator *coordinator = [[NSFileCoordinator alloc] initWithFilePresenter:nil];
       [coordinator coordinateReadingItemAtURL:url options:0 error:&error byAccessor:^(NSURL *readURL) {
-        copied = [fm copyItemAtURL:readURL toURL:[NSURL fileURLWithPath:destPath] error:&error];
+        NSError *copyErr = nil;
+        copied = [fm copyItemAtURL:readURL toURL:[NSURL fileURLWithPath:destPath] error:&copyErr];
+        if (!copied) blockCopyError = copyErr;
       }];
     }
     [url stopAccessingSecurityScopedResource];
@@ -1340,9 +1345,12 @@ RCT_EXPORT_METHOD(importOpenedFile:(NSString *)rawPath
     // 无作用域也走一遍协调器：覆盖物化已完成、作用域未授的形态
     NSFileCoordinator *coordinator = [[NSFileCoordinator alloc] initWithFilePresenter:nil];
     [coordinator coordinateReadingItemAtURL:url options:0 error:&error byAccessor:^(NSURL *readURL) {
-      copied = [fm copyItemAtURL:readURL toURL:[NSURL fileURLWithPath:destPath] error:&error];
+      NSError *copyErr = nil;
+      copied = [fm copyItemAtURL:readURL toURL:[NSURL fileURLWithPath:destPath] error:&copyErr];
+      if (!copied) blockCopyError = copyErr;
     }];
   }
+  if (blockCopyError != nil) error = blockCopyError;
   if (copied) {
     [self lx_writeOpenLog:[NSString stringWithFormat:@"jsImport: staged attempt=%ld dest=%@", (long)attempt, destPath]];
     resolve(@{ @"path": destPath, @"staged": @(YES), @"attempts": @(attempt) });
