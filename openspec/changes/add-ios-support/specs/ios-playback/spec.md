@@ -69,6 +69,15 @@ fork 的 iOS `QueuedAudioPlayer.stop()` 清空队列并无条件发射 `queueInd
 - **WHEN** 在播放列表/排行中点击一首歌（触发 `handlePlay` → `setStop` → 取链 → 队列重建）
 - **THEN** 队列手术期间不触发 `playerEnded`/`playNext`，目标歌取链落地后正常起播；不出现快速循环切歌
 
+### Requirement: 播放器销毁不触发自动切歌
+
+`destroy()`（退出应用、定时退出等路径）内部经 `player.stop()` 清空队列，逐件发射的 `PlaybackTrackChanged` 事件形状与自然播放结束一致。`destroy()` SHALL 在首个原生操作前置位队列手术守卫，且本地不释放——`stop()` 事件经桥异步投递，可能晚于 `destroy()` resolve 才到，立即释放会漏接；守卫由下一次队列手术（`handlePlayMusic`/`initTrackInfo`/`setStop`）的令牌释放兜住。`destroy()` SHALL 同步清空 JS 轨道镜像（同 `setStop` 口径）。
+
+#### Scenario: 退出应用后后台不再切歌播放
+
+- **WHEN** 播放中点击「退出应用」（`core/common.ts` `exitApp` → `destroy()` → 挂起）
+- **THEN** 销毁过程不触发 `playerEnded`/`playNext`，播放器不重新初始化、不自动起播；挂起后无音频残留
+
 #### Scenario: CI 冒烟套件不被队列手术卡死
 
 - **WHEN** CI 冒烟运行 `queue_trim_switch` 等触碰队列裁剪的用例

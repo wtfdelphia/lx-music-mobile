@@ -218,7 +218,17 @@ export const migratePlayerCache = async() => {
 
 export const destroy = async() => {
   if (global.lx.playerStatus.isIniting || !global.lx.playerStatus.isInitialized) return
+  // 任务 9.18：destroy 内部经 player.stop() 清队列，逐件发射的
+  // PlaybackTrackChanged 事件形状与自然播完一致，不加守卫会被 service.ts
+  // 判为播完 → playerEnded → playNext → 重新 setup 并起播——真机「退出
+  // 应用后后台切歌播放」的直接根因。守卫语义与 setStop 同款：本地不释放，
+  // 由下一次队列手术的令牌释放兜住——destroy 的 stop() 事件经桥异步投递，
+  // 可能晚于 destroy() resolve 才到，立即释放会漏接；仅 iOS 生效
+  takeQueueSwitchGuard()
   await TrackPlayer.destroy()
+  // fork 的 iOS destroy 已清空原生队列，同步清 JS 镜像（同 setStop 口径），
+  // 否则播放器再次初始化后 add 会撞上残留镜像导致索引错位
+  resetQueueMirror()
   global.lx.playerStatus.isInitialized = false
 }
 

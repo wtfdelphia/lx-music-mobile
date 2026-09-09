@@ -36,6 +36,15 @@ UtilsModule、CacheModule 在 iOS 上 SHALL 提供与 Android 语义一致的导
 - **WHEN** 在有刘海/灵动岛的机型上显示首页
 - **THEN** 内容不被状态栏或灵动岛遮挡，全局布局无上移
 
+### Requirement: 挂起期间旋转后尺寸重同步
+
+旋转发生在应用挂起期间时场景非 active，RN 不发 `Dimensions` change 事件（同 `evidence/landscape-inactive-scene.md` 实证机制），`SizeView` 的尺寸门闩不会被打开，解锁回前台后布局会停在旋转前的尺寸。`SizeView` SHALL 监听 `AppState`，回 `active` 时主动测量视图尺寸，与记录不符 SHALL 强制重走完整尺寸同步（原生读数 + 状态栏高度 + `windowSizeTools.setWindowSize`），不依赖 `Dimensions` 补发。
+
+#### Scenario: 横屏锁屏解锁后列表重排
+
+- **WHEN** 横屏状态下锁屏，解锁后系统已回竖屏
+- **THEN** 歌单列表从两排重排为单排；反向竖屏锁屏、横屏解锁同样重排为两排
+
 ### Requirement: 降级入口闭合
 
 桌面歌词、应用内更新、本地音乐标签写入在 iOS 上 SHALL 隐藏或降级，且不留死链与未捕获的 reject。
