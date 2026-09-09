@@ -113,3 +113,36 @@ iOS 18.5 模拟器证据，真机确认补上了跨 runtime 的一环。
   文件）、`ios/.xcode.env`（RN 模板，仅 `export NODE_BINARY=$(command -v
   node)`，无密钥）、`tsconfig.json`。
 - 本文档及会话输出未包含 token、账号、Cookie 或真实配置。
+
+---
+
+# 归档前验证：add-ios-support（2026-09-09 会话）
+
+## Verification
+
+| 命令 | 结果 | 结论 |
+| --- | --- | --- |
+| `npx tsc --noEmit` | 21 条错误 | 与登记基线一致（15 条在 `ciSelfTest.ts`，6 条在既有业务文件），零新增 |
+| `npm test` | 4/4 通过 | 通过 |
+| `openspec validate --all` | 2 passed, 0 failed | 通过 |
+| `openspec status --change add-ios-support --json` | `isComplete: true`，四工件齐全 | 工件完成 |
+| 任务清单 | 62/62 全勾（7.6 经用户决定降级关闭） | 无未完成任务 |
+| 最近三轮真机判据 | 9.17/9.18/9.19（退出挂起语义、销毁守卫、解锁尺寸重同步）真机确认修复，run 34341455441（`f288302`）五 job 全绿 | 通过 |
+| `cargo check --release --all-targets` | SKIPPED：本会话无 Rust 改动；最近一轮含 Rust 的 CI 全绿由 `rust.yml` / `ios-verify.yml` rust-ios-target job 承担（run 34341455441 全绿） | 剩余风险见下 |
+
+## Documentation Sync
+
+| 文件 | 判断 |
+| --- | --- |
+| `README.md` | 第 99 行引用 `openspec/changes/add-ios-support/tasks.md`，归档后路径变为 `openspec/changes/archive/2026-09-09-add-ios-support/tasks.md`。该文件为用户未提交内容，按工作区边界规则不代改，归档后需同步更新引用路径 |
+| `AGENTS.md` | 无需变更：验证矩阵红绿状态未翻转，无新增高风险类型 |
+| `spec/` | 无需变更：本变更为平台补齐，未改长期架构边界 |
+| `openspec/specs/` | 归档时由 6 份 delta（全为 ADDED）新建主规范 |
+| `docs/tooling-sources.md` | 用户未提交内容，不代改 |
+
+## Residual Risk
+
+- 7.6 判据降级：多设备（含 iOS 13/14 旧机）与 Instruments 泄漏分析未覆盖，列为后续观察项
+- 弱网/慢网播放（任务 8.1）仅经真机主观确认无卡死，未做受控限速复测
+- `tsc` 21 条既有错误仍未入 CI（入会即阻断 `dev-ios`，另立 change 处理）
+- README 归档路径引用待用户同步
