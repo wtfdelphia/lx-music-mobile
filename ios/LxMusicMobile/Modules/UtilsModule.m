@@ -109,8 +109,39 @@ RCT_EXPORT_MODULE()
 // 不覆写 addListener/removeListeners：RN 0.73 RCTEventEmitter 基类
 // 负责监听计数与 startObserving 触发，空覆写会吞掉全部事件。
 
-// iOS 不允许应用主动退出，桩化为空实现
-RCT_EXPORT_METHOD(exitApp) {}
+// 任务 9.17：iOS 不允许应用主动退出（exit(0) 会被系统当崩溃记录，
+// Apple 亦明确反对），语义统一收敛为「挂起到后台」——等同用户按
+// Home 键，与社区通行做法（react-native-exit-app）一致。
+// 两个消费面各自收敛：
+// - exitApp：「退出应用」按钮与启动失败退出路径经 core/common.ts
+//   先销毁播放器再调本方法，挂起前音频已干净停止；
+// - backHome：「返回桌面」按钮直达挂起，不动播放器（后台继续播，
+//   与 iOS 平台惯例一致）。
+// 注意：不得用 performSelector 调 suspend——其返回类型非对象，与
+// performSelector 的对象返回契约相悖，触发 ARC 报错；IMP 直调绕开
+// 该检查，行为完全一致
+RCT_EXPORT_METHOD(exitApp)
+{
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [self lx_suspend];
+  });
+}
+
+RCT_EXPORT_METHOD(backHome)
+{
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [self lx_suspend];
+  });
+}
+
+- (void)lx_suspend
+{
+  SEL suspendSel = NSSelectorFromString(@"suspend");
+  IMP suspendImp = [UIApplication instanceMethodForSelector:suspendSel];
+  if (suspendImp == NULL) return;
+  void (*suspendFn)(id, SEL) = (void (*)(id, SEL))suspendImp;
+  suspendFn([UIApplication sharedApplication], suspendSel);
+}
 
 RCT_EXPORT_METHOD(getSupportedAbis:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)

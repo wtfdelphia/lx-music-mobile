@@ -3,7 +3,7 @@ import { Platform, BackHandler, Linking, Dimensions, Alert, Appearance, Permissi
 import Clipboard from '@react-native-clipboard/clipboard'
 import { storageDataPrefix } from '@/config/constant'
 import { gzipFile, readFile, temporaryDirectoryPath, unGzipFile, unlink, writeFile } from '@/utils/fs'
-import { getSystemLocales, isIgnoringBatteryOptimization, isNotificationsEnabled, requestNotificationPermission, requestIgnoreBatteryOptimization, shareText } from '@/utils/nativeModules/utils'
+import { backHome, getSystemLocales, isIgnoringBatteryOptimization, isNotificationsEnabled, requestNotificationPermission, requestIgnoreBatteryOptimization, shareText } from '@/utils/nativeModules/utils'
 import musicSdk from '@/utils/musicSdk'
 import { getData, removeData, saveData } from '@/plugins/storage'
 import BackgroundTimer from 'react-native-background-timer'
@@ -118,7 +118,14 @@ export const assertApiSupport = (source: LX.Source): boolean => {
 // }
 
 export const exitApp = () => {
-  BackHandler.exitApp()
+  if (isAndroid) {
+    BackHandler.exitApp()
+    return
+  }
+  // iOS：BackHandler.exitApp 是 Android 专属空操作，点了无任何效果（任务
+  // 9.17 真机反馈「显示返回桌面按钮」无效）；收敛为挂起到后台，播放器与
+  // 后台播放不受影响，与 Android 的 moveTaskToBack 语义对齐
+  backHome()
 }
 
 export const handleSaveFile = async(path: string, data: any) => {

@@ -15,17 +15,17 @@ App 在 iOS 上启动时，系统 SHALL 完成全部模块求值并进入首页�
 
 ### Requirement: 原生模块面完整
 
-UtilsModule、CacheModule 在 iOS 上 SHALL 提供与 Android 语义一致的导出；`exitApp` 桩化为空实现；桌面歌词相关模块桩化。
+UtilsModule、CacheModule 在 iOS 上 SHALL 提供与 Android 语义一致的导出；`exitApp` 与 `backHome` SHALL 收敛为挂起到后台（iOS 不允许应用主动退出，`exit(0)` 会被系统当崩溃记录）；桌面歌词相关模块桩化。
 
 #### Scenario: 窗口尺寸与事件
 
 - **WHEN** JS 侧调用 `getWindowSize` 并旋转设备
 - **THEN** 返回正确尺寸，且收到窗口变化事件
 
-#### Scenario: 退出桩化
+#### Scenario: 退出不留死按钮
 
-- **WHEN** 初始化失败弹窗后调用 `exitApp`
-- **THEN** 不抛异常（iOS 不允许主动退出，空实现即可）
+- **WHEN** 调用 `exitApp`（退出应用按钮、启动失败退出路径）或 `backHome`（返回桌面按钮）
+- **THEN** 不抛异常；应用挂起到后台（等同按 Home 键）。「退出应用」路径在挂起前经 `core/common.ts` 已销毁播放器，挂起时无音频残留；「返回桌面」路径不动播放器，后台播放保持
 
 ### Requirement: 布局安全区
 
