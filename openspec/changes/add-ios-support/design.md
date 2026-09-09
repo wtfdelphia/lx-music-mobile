@@ -32,7 +32,7 @@
 
 ### D4 文件系统走 `react-native-fs` 适配层
 
-`fs.ios.ts` 适配 27 个导出；`stat`/`readDir` 合成 `name`/`mimeType`/`canRead` 字段（RNFS 不提供）。ChoosePath 族 8 文件改 4 个，SAF 概念整体替换为沙箱 + DocumentPicker。
+`fs.ios.ts` 适配导出面（当前 29 个，含 `importOpenedFile`、`exportFile`）；`stat`/`readDir` 合成 `name`/`mimeType`/`canRead` 字段（RNFS 不提供）。ChoosePath 族 8 文件改 4 个，SAF 概念整体替换为沙箱 + DocumentPicker。
 
 ### D5 播放沿用 track-player fork
 
@@ -93,6 +93,6 @@ JS 业务层（契约不变）
 
 - 加密：Android 真机产出黄金基准 JSON → `cargo test` 100% 字节级通过 → iOS 经桥复跑同一份基准
 - 沙箱：注入函数逐个与 Android 返回值对照；回归集全量跑并留报告（G1）
-- 文件：27 个导出逐个断言，重点 `stat().name`（TS 检查不出）
+- 文件：导出面逐个断言（`fs_exports` 清单，当前 29 个），重点 `stat().name`（TS 检查不出）
 - 跨端：`.lxmc` 备份与同步报文双向互通实测
 - 回归：iOS job unsigned 编译回归进 CI，防再腐化

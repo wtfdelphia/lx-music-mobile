@@ -3,6 +3,7 @@ import { confirmDialog, handleReadFile, handleSaveFile, showImportTip, toast } f
 import syncSourceList from '@/core/syncSourceList'
 import { log } from '@/utils/log'
 import { filterFileName, filterMusicList, formatPlayTime2, toNewMusicInfo } from '@/utils'
+import { saveViaSystemExportPicker, systemExportPicker } from '@/utils/exportPicker'
 import { handleImportListPart } from '@/screens/Home/Views/Setting/settings/Backup/actions'
 import { readMetadata, scanAudioFiles, type MusicMetadataFull } from '@/utils/localMediaMetadata'
 import settingState from '@/store/setting/state'
@@ -62,15 +63,21 @@ const exportList = async(listInfo: LX.List.MyListInfo, path: string) => {
       list: await getListMusics(listInfo.id),
     },
   }))
+  // iOS 走系统另存为面板（任务 9.16），同 Backup/actions.ts 口径
+  if (systemExportPicker) {
+    return saveViaSystemExportPicker(`lx_list_part_${filterFileName(listInfo.name)}.lxmc`, data).then(({ saved }) => saved)
+  }
   try {
     await handleSaveFile(`${path}/lx_list_part_${filterFileName(listInfo.name)}.lxmc`, data)
   } catch (error: any) {
     log.error(error.stack)
   }
+  return true
 }
 export const handleExport = (listInfo: LX.List.MyListInfo, path: string) => {
   toast(global.i18n.t('setting_backup_part_export_list_tip_zip'))
-  exportList(listInfo, path).then(() => {
+  exportList(listInfo, path).then(saved => {
+    if (!saved) return
     toast(global.i18n.t('setting_backup_part_export_list_tip_success'))
   }).catch((err: any) => {
     log.error(err.message)

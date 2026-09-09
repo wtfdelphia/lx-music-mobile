@@ -318,7 +318,7 @@ const testUtils = async() => {
 const EXPECTED_FS_EXPORTS = [
   'extname', 'temporaryDirectoryPath', 'externalStorageDirectoryPath', 'privateStorageDirectoryPath',
   'getExternalStoragePaths', 'selectManagedFolder', 'selectFile', 'removeManagedFolder',
-  'getManagedFolders', 'getPersistedUriList', 'importOpenedFile', 'readDir', 'unlink', 'mkdir', 'stat', 'hash',
+  'getManagedFolders', 'getPersistedUriList', 'importOpenedFile', 'exportFile', 'readDir', 'unlink', 'mkdir', 'stat', 'hash',
   'readFile', 'moveFile', 'gzipFile', 'unGzipFile', 'gzipString', 'unGzipString', 'existsFile',
   'rename', 'writeFile', 'appendFile', 'downloadFile', 'stopDownload',
 ]

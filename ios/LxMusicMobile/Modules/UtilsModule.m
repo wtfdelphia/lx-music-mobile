@@ -16,6 +16,10 @@
 @property (nonatomic, copy, nullable) NSString *selectFileToPath;
 @property (nonatomic, strong, nullable) UIDocumentPickerViewController *selectFilePicker;
 @property (nonatomic, assign) NSInteger selectFilePresentAttempts;
+// 系统另存为面板（任务 9.16）：export 模式选择器独立追踪，与导入选择器
+// 共用 delegate，回调按 controller 身份分流
+@property (nonatomic, copy, nullable) RCTPromiseResolveBlock exportFileResolve;
+@property (nonatomic, strong, nullable) UIDocumentPickerViewController *exportFilePicker;
 // 呈现管线（任务 9.4）当前拍正在尝试呈现的 VC：重试前据此清场防层叠
 @property (nonatomic, strong, nullable) UIViewController *lxPendingVC;
 // 分享探针最后一拍造的 VC：预算耗尽时分解存活判据（presenting / window）
@@ -812,6 +816,75 @@ RCT_EXPORT_METHOD(selectFile:(NSDictionary *)options
   }];
 }
 
+// 任务 9.16：导出走系统另存为面板（UIDocumentPickerViewController export
+// 模式）。内置目录浏览器只能浏览与写入应用自身沙箱，用户无法把歌单备份
+// 保存到「文件」App 的其他位置（iCloud、第三方存储提供者）；export 模式把
+// 沙箱内源文件 URL 交给系统面板，用户在系统面板任选位置、系统执行拷贝，
+// 是 iOS 上唯一合规的「保存到任意位置」路径。
+// 契约：取消时 resolve(null)（与 selectFile 对齐）；呈现预算耗尽走
+// reject；源文件必须存在，否则显式报错。呈现复用任务 9.4 的竞态安全管线，
+// 与导入选择器共用 delegate，回调按 controller 身份分流。
+// 注意：无头模拟器上不得真呈现 export 选择器（DocumentProvider XPC 残留
+// 会崩进程，与任务 9.4 同款），CI 判别面仅覆盖编译与 fs_exports。
+RCT_EXPORT_METHOD(exportFile:(NSDictionary *)options
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSString *srcPath = nil;
+  if ([options isKindOfClass:[NSDictionary class]] && [options[@"srcPath"] isKindOfClass:[NSString class]]) srcPath = options[@"srcPath"];
+  if (srcPath == nil || srcPath.length == 0) {
+    reject(@"invalid_args", @"srcPath is required", nil);
+    return;
+  }
+  if (![[NSFileManager defaultManager] fileExistsAtPath:srcPath]) {
+    reject(@"source_missing", @"export source file does not exist", nil);
+    return;
+  }
+  NSURL *srcURL = [NSURL fileURLWithPath:srcPath];
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [self presentExportPickerWithURL:srcURL resolver:resolve rejecter:reject];
+  });
+}
+
+- (void)presentExportPickerWithURL:(NSURL *)srcURL
+                          resolver:(RCTPromiseResolveBlock)resolve
+                          rejecter:(RCTPromiseRejectBlock)reject
+{
+  if (self.exportFileResolve != nil) {
+    // 上一个另存面板仍在显示，按取消处理
+    self.exportFileResolve([NSNull null]);
+  }
+  self.exportFileResolve = resolve;
+  self.exportFilePicker = nil;
+  NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:kLXPickerPresentBudget];
+  __weak typeof(self) weakSelf = self;
+  [self runPresentPipelineWithFactory:^UIViewController *{
+    UIDocumentPickerViewController *picker;
+    if (@available(iOS 14.0, *)) {
+      picker = [[UIDocumentPickerViewController alloc] initForExportingURLs:@[ srcURL ]];
+    } else {
+      picker = [[UIDocumentPickerViewController alloc] initWithURL:srcURL inMode:UIDocumentPickerModeExportToService];
+    }
+    picker.delegate = self;
+    return picker;
+  } deadline:deadline onFinish:^(UIViewController *vc, NSString *error) {
+    __strong typeof(weakSelf) self = weakSelf;
+    if (self == nil) return;
+    if (error == nil) {
+      self.exportFilePicker = (UIDocumentPickerViewController *)vc;
+      return;
+    }
+    [self clearExportFileState];
+    reject(@"picker_present_failed", error, nil);
+  }];
+}
+
+- (void)clearExportFileState
+{
+  self.exportFileResolve = nil;
+  self.exportFilePicker = nil;
+}
+
 // 竞态安全呈现管线（任务 9.4）：等视图层级稳定后呈现，呈现后存活校验，
 // 被并发退场吞掉或 completion 不回调则重试；重试前先清掉仍占位的上一拍
 // pending，避免层叠呈现。终局二选一：onFinish(vc, nil) 呈现存活、所有权
@@ -1420,6 +1493,20 @@ RCT_EXPORT_METHOD(importOpenedFile:(NSString *)rawPath
 
 - (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls
 {
+  if (controller == self.exportFilePicker) {
+    // export 模式：系统已把源文件拷贝到用户选定位置，urls 即目的地
+    RCTPromiseResolveBlock resolve = self.exportFileResolve;
+    [self clearExportFileState];
+    if (resolve == nil) return;
+    NSURL *dest = urls.firstObject;
+    if (dest == nil) {
+      resolve([NSNull null]);
+      return;
+    }
+    NSString *destStr = dest.isFileURL ? dest.path : dest.absoluteString;
+    resolve(@{ @"data": destStr != nil ? destStr : @"" });
+    return;
+  }
   RCTPromiseResolveBlock resolve = self.selectFileResolve;
   NSString *toPath = self.selectFileToPath;
   [self clearSelectFileState];
@@ -1477,6 +1564,12 @@ RCT_EXPORT_METHOD(importOpenedFile:(NSString *)rawPath
 
 - (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)controller
 {
+  if (controller == self.exportFilePicker) {
+    RCTPromiseResolveBlock resolve = self.exportFileResolve;
+    [self clearExportFileState];
+    if (resolve != nil) resolve([NSNull null]);
+    return;
+  }
   RCTPromiseResolveBlock resolve = self.selectFileResolve;
   [self clearSelectFileState];
   if (resolve != nil) resolve([NSNull null]);

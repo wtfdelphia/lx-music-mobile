@@ -76,6 +76,11 @@ export const selectFile = async(options: OpenDocumentOptions): Promise<{ data: s
     toPath: options.toPath ?? null,
   }) as Promise<{ data: string } | null>
 }
+// 系统另存为面板（任务 9.16）：把沙箱内源文件拷贝到用户选定位置
+// （「文件」App 任意目录 / iCloud / 第三方存储提供者）；取消时 resolve null
+export const exportFile = async(srcPath: string): Promise<{ data: string } | null> => {
+  return UtilsModule.exportFile({ srcPath }) as Promise<{ data: string } | null>
+}
 // 「文件」App in-place 打开递来的沙箱外安全作用域路径经原生暂存拷进沙箱
 // （任务 9.14）：启动阶段原生暂存拿不到访问（四轮真机实测），JS 处理深链
 // 时应用已完全启动、访问可发起；沙箱内路径原样返回零拷贝
