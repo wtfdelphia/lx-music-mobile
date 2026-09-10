@@ -1,38 +1,77 @@
 ---
 name: openspec-new-change
-description: Use when a new feature, cross-module change, or high-risk change must be captured as an OpenSpec change before implementation.
+description: Start a new OpenSpec change using the experimental artifact workflow. Use when the user wants to create a new feature, fix, or modification with a structured step-by-step approach.
+allowed-tools: Bash(openspec:*)
+license: MIT
+compatibility: Requires openspec CLI.
+metadata:
+  author: openspec
+  version: "1.0"
+  generatedBy: "1.8.0"
 ---
 
-# openspec-new-change
+Start a new change using the experimental artifact-driven approach.
 
-## 何时使用
+**Store selection:** If the user names a store (a store is a standalone OpenSpec repo registered on this machine) or the work lives in one, run `openspec store list --json` to discover registered store ids, then pass `--store <id>` on the commands that read or write specs and changes (`new change`, `status`, `instructions`, `list`, `show`, `validate`, `archive`, `doctor`, `context`, `view`). Once selected, treat `--store <id>` as sticky for the rest of the workflow. Every unscoped example of those commands below is shorthand: before running it, append the flag. For example, run `openspec status --change "<name>" --json --store "<id>"`, not the unscoped form shown below. Other commands do not take the flag. Hints printed by commands already carry the flag; keep it on follow-ups. Without a store, commands act on the nearest local `openspec/` root.
 
-用于 AGENTS.md 规定的高风险场景，或任何需要在实现前先明确范围、非目标、验收标准的需求。已有完整快捷流程时也可使用 openspec-propose，但产物必须等价。
+**Input**: The user's request should include a change name (kebab-case) OR a description of what they want to build.
 
-## 输入
+**Steps**
 
-- change name：短横线命名，能表达变更意图
-- 需求描述：背景、范围、非目标、验收标准
-- 影响面：涉及的 spec、README、源码模块或配置文件
-- 风险类型：协议、凭据、认证、Admin、模型映射、Docker/发布、配置 schema 或重构
+1. **If no clear input provided, ask what they want to build**
 
-## 步骤
+   Ask the user (open-ended, no preset options):
+   > "What change do you want to work on? Describe what you want to build or fix."
 
-1. 运行 openspec list --json，确认是否已有可复用或冲突的活跃 change。
-2. 运行 openspec new change <name>，或使用 openspec-propose 生成初稿。
-3. 补齐 proposal.md：背景、范围、非目标、假设、影响面、成功标准、风险。
-4. 补齐 design.md：当前实现、目标设计、数据流/影响面、异常路径、回滚、验证策略。
-5. 补齐 tasks.md：使用 - [ ] 任务清单，任务应能逐项验证。
-6. 补齐 specs/**/spec.md：使用 ADDED/MODIFIED/REMOVED Requirements，每个 Requirement 至少一个 Scenario。
-7. 运行 openspec validate --all，并把失败原因修到通过。
+   From their description, derive a kebab-case name (e.g., "add user authentication" → `add-user-auth`).
 
-## 必产出
+   **IMPORTANT**: Do NOT proceed without understanding what the user wants to build.
 
-openspec/changes/<name>/ 至少包含 proposal.md、design.md、tasks.md、specs/**/spec.md，且 openspec validate --all 通过。
+2. **Determine the workflow schema**
 
-## 停止条件
+   Use the default schema (omit `--schema`) unless the user explicitly requests a different workflow.
 
-- 范围、非目标、验收标准不清。
-- 变更会影响凭据、协议、发布或外部系统，但用户未确认边界。
-- 与已有活跃 change 冲突，且无法判断应合并还是新建。
-- validate 失败且错误原因无法从工件中修复。
+   **Use a different schema only if the user mentions:**
+   - A specific schema name → use `--schema <name>`
+   - "show workflows" or "what workflows" → run `openspec schemas --json` and let them choose
+
+   **Otherwise**: Omit `--schema` to use the default.
+
+3. **Create the change directory**
+   ```bash
+   openspec new change "<name>"
+   ```
+   Add `--schema <name>` only if the user requested a specific workflow.
+   This creates a scaffolded change in the planning home resolved by the CLI.
+
+4. **Show the artifact status**
+   ```bash
+   openspec status --change "<name>" --json
+   ```
+   Use the returned `planningHome`, `changeRoot`, `artifactPaths`, and `nextSteps` instead of assuming repo-local paths.
+
+5. **Get instructions for the first artifact**
+   The first artifact depends on the schema (e.g., `proposal` for spec-driven).
+   Check the status output to find the first artifact with status "ready".
+   ```bash
+   openspec instructions <first-artifact-id> --change "<name>"
+   ```
+   This outputs the template and context for creating the first artifact.
+
+6. **STOP and wait for user direction**
+
+**Output**
+
+After completing the steps, summarize:
+- Change name and location
+- Schema/workflow being used and its artifact sequence
+- Current status (0/N artifacts complete)
+- The template for the first artifact
+- Prompt: "Ready to create the first artifact? Just describe what this change is about and I'll draft it, or ask me to continue."
+
+**Guardrails**
+- Do NOT create any artifacts yet - just show the instructions
+- Do NOT advance beyond showing the first artifact template
+- If the name is invalid (not kebab-case), ask for a valid name
+- If a change with that name already exists, suggest continuing that change instead
+- Pass --schema if using a non-default workflow
