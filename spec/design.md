@@ -120,7 +120,7 @@ Android 侧加密为既有 Java 实现（`android/.../mobile/crypto/`）。iOS �
 | 债项 | 现状 | 影响 |
 |---|---|---|
 | `tsc --noEmit` 21 errors | 无 CI 覆盖 | 类型错误无拦截；修复需另立 change（加 `moduleSuffixes` 会使总数 21→23，新暴露 4 个被掩盖错误） |
-| lint 仅 PR→`dev` 触发 | `dev-ios` push 不跑 | iOS 适配期引入的风格违规无人拦截（已发生 2 处，2026-09-10 已清零） |
+| lint 仅 PR→`dev` 触发 | `main` / `dev-ios` push 都不跑 | 风格违规无人拦截（已发生 2 处，2026-09-10 已清零） |
 | ~~3 处 lint 违规~~ | 2026-09-10 已清零 | `npm run lint` 退出码 0 |
 | skills 三副本手工同步 | `.agents/` `.codex/` `.claude/` 各一份 | 漂移已实际发生：2026-08-24 `fa557d9` 升级 1.8.0 只覆盖 `.agents`/`.claude` 部分，`.codex` 停留 1.4.0，2026-09-10 复核时发现并以 `.agents` 为基准重新同步 |
 | iOS 桌面歌词桩化 | 无实现 | 功能缺口，非 bug |

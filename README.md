@@ -25,17 +25,20 @@
 
 - Android 5 及以上
 
-***注：HarmonyOS NEXT 暂无支持计划；iOS 适配已在本仓库 `dev-ios` 分支完成并归档（2026-09-09），见下文「iOS 适配状态」**。*<br>
+***注：HarmonyOS NEXT 暂无支持计划；iOS 适配已完成并归档（2026-09-09），2026-09-10 已并入 `main`，见下文「iOS 适配状态」**。*<br>
 *桌面版项目地址：<https://github.com/lyswhut/lx-music-desktop>*<br>
 *LX Music 项目发展调整与新项目计划：https://github.com/lyswhut/lx-music-desktop/issues/1912*
 
-软件变化请查看[更新日志](https://github.com/lyswhut/lx-music-mobile/blob/master/CHANGELOG.md)。
+软件变化请查看[更新日志](CHANGELOG.md)（上游记录见 [lyswhut/lx-music-mobile](https://github.com/lyswhut/lx-music-mobile/blob/master/CHANGELOG.md)）。
 
-软件下载请查看 [GitHub Releases](https://github.com/lyswhut/lx-music-mobile/releases)。
+软件下载：
+
+- iOS：本仓库 `ios-verify` 工作流的 Artifact（未签名 IPA），安装方式见下文「iOS 适配状态」
+- Android：上游 [GitHub Releases](https://github.com/lyswhut/lx-music-mobile/releases)，本 fork 不另行发布 Android 安装包
 
 使用常见问题请参阅[移动版常见问题](https://lyswhut.github.io/lx-music-doc/mobile/faq)。
 
-目前本项目的原始发布地址只有 [**GitHub**](https://github.com/lyswhut/lx-music-mobile/releases)，其他渠道均为第三方转载发布，与本项目无关！
+本 fork 的 iOS 产物只从本仓库的 GitHub Actions Artifact 获取，无其他发布渠道；其他渠道流传的安装包与本项目无关，请自行鉴别。
 
 为了提高使用门槛，本软件内的默认设置、UI 操作不以新手友好为目标，所以使用前建议先根据你的喜好浏览调整一遍软件设置，阅读一遍[音乐播放列表机制](https://lyswhut.github.io/lx-music-doc/mobile/faq/playlist)。
 
@@ -43,9 +46,9 @@
 
 从 v1.0.0 起，我们发布了一个独立的[数据同步服务](https://github.com/lyswhut/lx-music-sync-server#readme)。如果你有服务器，可以将其部署到服务器上作为私人多端同步服务使用，详情看该项目说明。
 
-### iOS 适配状态（dev-ios）
+### iOS 适配状态
 
-iOS 适配开发中（方案见 `docs/ios-optimal-plan.md`），不上架 App Store。
+iOS 适配已完成并归档（2026-09-09），2026-09-10 已并入 `main`，不上架 App Store。
 构建验证由 GitHub Actions macOS Runner 全自动完成，开发机无需 macOS：
 
 ```
@@ -134,7 +137,7 @@ tasks.md      可执行任务清单与勾选状态
 ```bash
 npm ci                              # 装依赖（不用 npm install）
 npm test                            # 单元测试
-npm run lint                        # 代码风格（dev-ios 分支的 push 不触发 CI lint，本地必跑）
+npm run lint                        # 代码风格（main / dev-ios 的 push 都不触发 CI lint，本地必跑）
 openspec list                       # 查看进行中的变更与任务进度
 openspec validate --all --strict    # 校验规格工件
 ```

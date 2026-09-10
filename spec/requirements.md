@@ -13,7 +13,7 @@
 | 平台 | 状态 | 约束 |
 |---|---|---|
 | Android 5+ | 正式支持 | 主干能力基线，任何改动不得回退 |
-| iOS | 适配已归档（2026-09-09，单设备验证通过，多设备覆盖为观察项），代码在 `dev-ios` 分支 | **不上架 App Store**，通过未签名 IPA + AltStore/SideStore 侧载分发 |
+| iOS | 适配已归档（2026-09-09，单设备验证通过，多设备覆盖为观察项），2026-09-10 并入 `main` | **不上架 App Store**，通过未签名 IPA + AltStore/SideStore 侧载分发 |
 | HarmonyOS NEXT | 无支持计划 | — |
 
 iOS 分发路径决定了两条硬约束：免费 Apple ID 签名有效期 7 天、同时最多 3 个应用；因此不得依赖 App Store 专属能力（IAP、TestFlight 分发假设）。
@@ -73,5 +73,5 @@ iOS 分发路径决定了两条硬约束：免费 Apple ID 签名有效期 7 天
 - 不提供、不代理、不缓存分发受版权保护的音频数据
 - 不追求新手友好的默认配置
 - 不支持 HarmonyOS NEXT
-- 不在 `dev-ios` 分支引入 Android 行为变更
+- 不引入 Android 行为变更（iOS 适配已并入 `main`，双端共用代码改动需评估双端影响）
 - 不接受商业合作与捐赠

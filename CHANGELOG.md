@@ -6,6 +6,27 @@ Project versioning adheres to [Semantic Versioning](http://semver.org/).
 Commit convention is based on [Conventional Commits](http://conventionalcommits.org).
 Change log format is based on [Keep a Changelog](http://keepachangelog.com/).
 
+## fork 变更（基于上游 v1.8.4）
+
+fork 不独立发版，版本号沿用 1.8.4。以下记录 fork 侧的变更，按时间倒序。
+
+### 2026-09-10 合并 dev-ios 进 main
+
+- 主干从 `master` 切换到 `main`，iOS 能力由 `main` 承载
+- 对齐上游 v1.8.4，合并解析上游 24 个提交与 `dev-ios` 的 117 个提交
+- 升级 `react-native-track-player` fork：`d4a062f` → `bfe3393`
+- `ios-verify`、`rust` 工作流触发分支加入 `main`
+- 归档 `bootstrap-ai-baseline`（AI 协作基线：OpenSpec 门禁、skills 三份副本、验证矩阵），见 `openspec/changes/archive/2026-09-10-bootstrap-ai-baseline/`
+
+### 2026-09-09 完成 iOS 适配
+
+- iOS 适配完成，不上架 App Store；分发未签名 IPA，经 AltStore / SideStore 重签安装
+- 构建验证由 GitHub Actions macOS Runner 全自动完成；`ios-verify` 工作流含 5 个并行门禁：JS 单测与双端打包、Rust iOS 交叉编译、设备未签名构建、模拟器冒烟（应用内 35 项自测）、Android release 回归
+- Rust 加密核心经桥对齐 Android 黄金基准
+- 修复真机四项缺陷：图标缺失、竖屏宽窄失真、点菜单图标开抽屉即崩、自定义源本地导入无反应
+- 修复 ATS 拦截明文 http 请求，恢复内置源搜索、榜单、播放链路
+- 任务清单见 `openspec/changes/archive/2026-09-09-add-ios-support/tasks.md`
+
 ## [1.8.4](https://github.com/lyswhut/lx-music-mobile/compare/v1.8.3...v1.8.4) - 2026-05-01
 
 我们很高兴地宣布新项目 Any Listen 的桌面版已发布，目前已支持列表跟随本地文件自动更新、加载并播放WebDAV上的歌曲等功能，更多功能仍在积极开发中，桌面版与Web版将同步更新。
