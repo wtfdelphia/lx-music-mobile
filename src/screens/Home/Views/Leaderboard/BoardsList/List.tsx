@@ -42,7 +42,9 @@ export default forwardRef<ListType, ListProps>(({ onBoundChange, onShowMenu }, r
 
   return (
     <ScrollView style={styles.scrollView} keyboardShouldPersistTaps={'always'}>
-      <View>
+      {/* CI 自测按此 testID 数原生视图树里的榜单条目（本 View 的直接子视图
+          即 ListItem）。命令式 setList 被 null ref 吞掉时子视图数为 0 */}
+      <View testID="lx-board-list-items">
         {
           list.map((item, index) => {
             return (

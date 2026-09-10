@@ -1,5 +1,6 @@
 import ChoosePath, { type ChoosePathType } from '@/components/common/ChoosePath'
 import { LXM_FILE_EXT_RXP } from '@/config/constant'
+import { systemExportPicker } from '@/utils/exportPicker'
 import { forwardRef, useImperativeHandle, useRef, useState } from 'react'
 import { handleExportList, handleImportList } from './actions'
 
@@ -53,6 +54,11 @@ export default forwardRef<ListImportExportType, {}>((props, ref) => {
     },
     export() {
       selectInfoRef.current.action = 'export'
+      if (systemExportPicker) {
+        // iOS：系统另存为面板直接选保存位置（任务 9.16），不经内置目录浏览器
+        handleExportList('')
+        return
+      }
       if (visible) {
         choosePathRef.current?.show({
           title: global.i18n.t('list_export_part_desc'),

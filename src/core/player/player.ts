@@ -607,6 +607,9 @@ export const play = () => {
  * 暂停播放
  */
 export const pause = async() => {
+  // 深链/线控可能在播放器初始化前到达（iOS 首启未播过歌），
+  // 此时直接调 TrackPlayer.pause() 会产生未初始化异常，无播放即无事可做
+  if (!isInitialized()) return
   await setPause()
 }
 
@@ -665,4 +668,3 @@ export const dislikeMusic = async() => {
   await addDislikeInfo([{ name: minfo.name, singer: minfo.singer }])
   await playNext(true)
 }
-

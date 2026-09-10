@@ -1,8 +1,8 @@
 import TrackPlayer, { Capability, Event, RepeatMode, State } from 'react-native-track-player'
 import BackgroundTimer from 'react-native-background-timer'
-import { playMusic as handlePlayMusic } from './playList'
+import { playMusic as handlePlayMusic, updateNowPlayingMetadataIOS, takeQueueSwitchGuard, resetQueueMirror } from './playList'
 import { existsFile, moveFile, privateStorageDirectoryPath, temporaryDirectoryPath } from '@/utils/fs'
-import { toast } from '@/utils/tools'
+import { isAndroid, toast } from '@/utils/tools'
 // import { PlayerMusicInfo } from '@/store/modules/player/playInfo'
 
 
@@ -158,8 +158,18 @@ export const setPlay = async() => TrackPlayer.play()
 export const getPosition = async() => TrackPlayer.getPosition()
 export const getDuration = async() => TrackPlayer.getDuration()
 export const setStop = async() => {
+  // 守卫窗口覆盖到下一次队列手术（见 playList.ts takeQueueSwitchGuard 注释）：
+  // stop 的空队列事件与后续重建之间可能隔着取链耗时，不得在本地释放
+  takeQueueSwitchGuard()
   await TrackPlayer.stop()
-  if (!isEmpty()) await TrackPlayer.skipToNext()
+  // fork 的 iOS stop() 已清空原生队列（见 resetQueueMirror 注释），
+  // 同步清空 JS 镜像，否则下次 add 后索引错位
+  resetQueueMirror()
+  // fork 的 iOS stop() 已清空队列（QueuedAudioPlayer.reset → clearQueue），
+  // 空队列上 skipToNext 命中原生 noNextItem 守卫 reject，打断
+  // handlePlay 的 await，后续歌曲永远拿不到 URL；Android 的 stop
+  // 保留队列，需跳到 default 轨标记「空」，保持原行为
+  if (isAndroid && !isEmpty()) await TrackPlayer.skipToNext()
 }
 export const setLoop = async(loop: boolean) => TrackPlayer.setRepeatMode(loop ? RepeatMode.Off : RepeatMode.Track)
 
@@ -176,14 +186,27 @@ export interface NowPlayingTitles {
 }
 export const updateNowPlayingTitles = async(titles: NowPlayingTitles) => {
   console.log('set playing titles', titles)
-  return TrackPlayer.updateNowPlayingTitles(titles)
+  // fork（bfe3393）iOS 侧仍未实现 updateNowPlayingTitles（Android 独有，
+  // 任务 5.4 实锤，新 fork 的 ios/ 与旧版逐字相同），iOS 改走已实现的
+  // 单参 metadata 通道（见 playList.ts 的 updateNowPlayingMetadataIOS），
+  // 歌名/歌手/专辑进锁屏 Now Playing 面板；lyric 字段 iOS 暂不消费
+  if (isAndroid) return TrackPlayer.updateNowPlayingTitles(titles)
+  updateNowPlayingMetadataIOS({
+    title: titles.title,
+    artist: titles.artist,
+    album: titles.album,
+  })
 }
 
 export const resetPlay = async() => Promise.all([setPause(), setCurrentTime(0)])
 
-export const isCached = async(url: string) => TrackPlayer.isCached(url)
-export const getCacheSize = async() => TrackPlayer.getCacheSize()
-export const clearCache = async() => TrackPlayer.clearCache()
+// 任务 5.5：fork 的缓存三方法仅 Android 侧实现，iOS 降级为安全值
+export const isCached = async(url: string) => isAndroid ? TrackPlayer.isCached(url) : false
+export const getCacheSize = async() => isAndroid ? TrackPlayer.getCacheSize() : 0
+export const clearCache = async() => {
+  if (!isAndroid) return
+  return TrackPlayer.clearCache()
+}
 export const migratePlayerCache = async() => {
   const newCachePath = privateStorageDirectoryPath + '/TrackPlayer'
   if (await existsFile(newCachePath)) return
@@ -200,7 +223,17 @@ export const migratePlayerCache = async() => {
 
 export const destroy = async() => {
   if (global.lx.playerStatus.isIniting || !global.lx.playerStatus.isInitialized) return
+  // 任务 9.18：destroy 内部经 player.stop() 清队列，逐件发射的
+  // PlaybackTrackChanged 事件形状与自然播完一致，不加守卫会被 service.ts
+  // 判为播完 → playerEnded → playNext → 重新 setup 并起播——真机「退出
+  // 应用后后台切歌播放」的直接根因。守卫语义与 setStop 同款：本地不释放，
+  // 由下一次队列手术的令牌释放兜住——destroy 的 stop() 事件经桥异步投递，
+  // 可能晚于 destroy() resolve 才到，立即释放会漏接；仅 iOS 生效
+  takeQueueSwitchGuard()
   await TrackPlayer.destroy()
+  // fork 的 iOS destroy 已清空原生队列，同步清 JS 镜像（同 setStop 口径），
+  // 否则播放器再次初始化后 add 会撞上残留镜像导致索引错位
+  resetQueueMirror()
   global.lx.playerStatus.isInitialized = false
 }
 

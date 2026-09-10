@@ -1,0 +1,1609 @@
+#import "UtilsModule.h"
+#import <UIKit/UIKit.h>
+#import <UserNotifications/UserNotifications.h>
+#import <MobileCoreServices/MobileCoreServices.h>
+#import <AVFoundation/AVFoundation.h>
+#import <MediaPlayer/MediaPlayer.h>
+#import <CoreText/CoreText.h>
+#import <ifaddrs.h>
+#import <arpa/inet.h>
+#import <net/if.h>
+#import <math.h>
+#import <unistd.h>
+
+@interface UtilsModule () <UIDocumentPickerDelegate>
+@property (nonatomic, copy, nullable) RCTPromiseResolveBlock selectFileResolve;
+@property (nonatomic, copy, nullable) NSString *selectFileToPath;
+@property (nonatomic, strong, nullable) UIDocumentPickerViewController *selectFilePicker;
+@property (nonatomic, assign) NSInteger selectFilePresentAttempts;
+// 系统另存为面板（任务 9.16）：export 模式选择器独立追踪，与导入选择器
+// 共用 delegate，回调按 controller 身份分流
+@property (nonatomic, copy, nullable) RCTPromiseResolveBlock exportFileResolve;
+@property (nonatomic, strong, nullable) UIDocumentPickerViewController *exportFilePicker;
+// 呈现管线（任务 9.4）当前拍正在尝试呈现的 VC：重试前据此清场防层叠
+@property (nonatomic, strong, nullable) UIViewController *lxPendingVC;
+// 分享探针最后一拍造的 VC：预算耗尽时分解存活判据（presenting / window）
+@property (nonatomic, strong, nullable) UIViewController *lxLastShareProbeVC;
+@end
+
+@implementation UtilsModule {
+  BOOL _hasListeners;
+}
+
+RCT_EXPORT_MODULE()
+
++ (BOOL)requiresMainQueueSetup
+{
+  return NO;
+}
+
+- (instancetype)init
+{
+  if (self = [super init]) {
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(screenDidUnlock)
+                                                 name:UIApplicationProtectedDataDidBecomeAvailable
+                                               object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(screenWillLock)
+                                                 name:UIApplicationProtectedDataWillBecomeUnavailable
+                                               object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(orientationDidChange)
+                                                 name:UIApplicationDidChangeStatusBarOrientationNotification
+                                               object:nil];
+  }
+  return self;
+}
+
+- (void)dealloc
+{
+  [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+
+#pragma mark - RCTEventEmitter
+
+- (NSArray<NSString *> *)supportedEvents
+{
+  return @[ @"screen-state", @"screen-size-changed" ];
+}
+
+- (void)startObserving
+{
+  _hasListeners = YES;
+}
+
+- (void)stopObserving
+{
+  _hasListeners = NO;
+}
+
+- (void)screenDidUnlock
+{
+  if (_hasListeners) [self sendEventWithName:@"screen-state" body:@{ @"state": @"ON" }];
+}
+
+- (void)screenWillLock
+{
+  if (_hasListeners) [self sendEventWithName:@"screen-state" body:@{ @"state": @"OFF" }];
+}
+
+// 与 getWindowSize 同口径：points * scale（JS 侧除以 scale 得 dp/pt）
+- (NSDictionary *)currentWindowSize
+{
+  CGRect bounds = [UIScreen mainScreen].bounds;
+  CGFloat scale = [UIScreen mainScreen].scale;
+  return @{
+    @"width": @((NSInteger)(bounds.size.width * scale)),
+    @"height": @((NSInteger)(bounds.size.height * scale)),
+  };
+}
+
+- (void)orientationDidChange
+{
+  if (_hasListeners) [self sendEventWithName:@"screen-size-changed" body:[self currentWindowSize]];
+}
+
+#pragma mark - 导出方法
+
+// 不覆写 addListener/removeListeners：RN 0.73 RCTEventEmitter 基类
+// 负责监听计数与 startObserving 触发，空覆写会吞掉全部事件。
+
+// 任务 9.17：iOS 不允许应用主动退出（exit(0) 会被系统当崩溃记录，
+// Apple 亦明确反对），语义统一收敛为「挂起到后台」——等同用户按
+// Home 键，与社区通行做法（react-native-exit-app）一致。
+// 两个消费面各自收敛：
+// - exitApp：「退出应用」按钮与启动失败退出路径经 core/common.ts
+//   先销毁播放器再调本方法，挂起前音频已干净停止；
+// - backHome：「返回桌面」按钮直达挂起，不动播放器（后台继续播，
+//   与 iOS 平台惯例一致）。
+// 注意：不得用 performSelector 调 suspend——其返回类型非对象，与
+// performSelector 的对象返回契约相悖，触发 ARC 报错；IMP 直调绕开
+// 该检查，行为完全一致
+RCT_EXPORT_METHOD(exitApp)
+{
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [self lx_suspend];
+  });
+}
+
+RCT_EXPORT_METHOD(backHome)
+{
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [self lx_suspend];
+  });
+}
+
+- (void)lx_suspend
+{
+  SEL suspendSel = NSSelectorFromString(@"suspend");
+  IMP suspendImp = [UIApplication instanceMethodForSelector:suspendSel];
+  if (suspendImp == NULL) return;
+  void (*suspendFn)(id, SEL) = (void (*)(id, SEL))suspendImp;
+  suspendFn([UIApplication sharedApplication], suspendSel);
+}
+
+RCT_EXPORT_METHOD(getSupportedAbis:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+#if defined(__arm64__)
+  resolve(@[ @"arm64" ]);
+#elif defined(__x86_64__)
+  resolve(@[ @"x86_64" ]);
+#else
+  resolve(@[ @"unknown" ]);
+#endif
+}
+
+// iOS 无法安装 APK；更新路径在 JS 侧改道（任务 7.3）
+RCT_EXPORT_METHOD(installApk:(NSString *)filePath
+                  authority:(NSString *)authority
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  reject(@"not_supported", @"Installing APK is not supported on iOS", nil);
+}
+
+RCT_EXPORT_METHOD(screenkeepAwake)
+{
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [UIApplication sharedApplication].idleTimerDisabled = YES;
+  });
+}
+
+RCT_EXPORT_METHOD(screenUnkeepAwake)
+{
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [UIApplication sharedApplication].idleTimerDisabled = NO;
+  });
+}
+
+RCT_EXPORT_METHOD(getWIFIIPV4Address:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSString *address = nil;
+  struct ifaddrs *interfaces = NULL;
+  if (getifaddrs(&interfaces) == 0) {
+    for (struct ifaddrs *ifa = interfaces; ifa != NULL; ifa = ifa->ifa_next) {
+      if (ifa->ifa_addr == NULL) continue;
+      if (!(ifa->ifa_flags & IFF_UP) || !(ifa->ifa_flags & IFF_RUNNING)) continue;
+      NSString *name = [NSString stringWithUTF8String:ifa->ifa_name];
+      if (![name hasPrefix:@"en"]) continue;
+      if (ifa->ifa_addr->sa_family != AF_INET) continue;
+      struct sockaddr_in *addr4 = (struct sockaddr_in *)ifa->ifa_addr;
+      char buf[INET_ADDRSTRLEN];
+      if (inet_ntop(AF_INET, &addr4->sin_addr, buf, sizeof(buf)) != NULL) {
+        address = [NSString stringWithUTF8String:buf];
+        break;
+      }
+    }
+    freeifaddrs(interfaces);
+  }
+  resolve(address != nil ? address : [NSNull null]);
+}
+
+RCT_EXPORT_METHOD(getDeviceName:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  resolve([[UIDevice currentDevice] name]);
+}
+
+RCT_EXPORT_METHOD(isNotificationsEnabled:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  [[UNUserNotificationCenter currentNotificationCenter] getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings *settings) {
+    BOOL enabled = settings.authorizationStatus == UNAuthorizationStatusAuthorized
+      || settings.authorizationStatus == UNAuthorizationStatusProvisional;
+    resolve(@(enabled));
+  }];
+}
+
+// Android 侧跳系统设置页；iOS 直接请求授权并返回结果
+RCT_EXPORT_METHOD(openNotificationPermissionActivity:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  UNAuthorizationOptions options = UNAuthorizationOptionAlert | UNAuthorizationOptionSound | UNAuthorizationOptionBadge;
+  [[UNUserNotificationCenter currentNotificationCenter] requestAuthorizationWithOptions:options completionHandler:^(BOOL granted, NSError *error) {
+    resolve(@(granted));
+  }];
+}
+
+// 任务 9.4 同类缺陷：旧实现直接把分享面板 present 到
+// `delegate.window.rootViewController`，与 selectFile 修复前完全同形。
+// 「导出日志」按钮位于设置页，点击时上层可能有正在退场的 Modal
+// （ConfirmAlert / Menu 都走 RN Modal），呈现命令与退场同拍时 UIKit
+// 静默吞掉面板：无回调、无报错。且旧实现是 fire-and-forget，没有
+// Promise 通道，失败在 JS 侧也无从察觉——真机「点导出没反应」即此。
+// 改为复用 runPresentPipelineWithFactory（等层级稳定→呈现→存活校验→
+// 重试），失败走 reject，不许静默吞。
+RCT_EXPORT_METHOD(shareText:(NSString *)shareTitle
+                  title:(NSString *)title
+                  text:(NSString *)text
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  if (text.length == 0) {
+    reject(@"share_empty", @"shareText called with empty text", nil);
+    return;
+  }
+  NSString *subject = shareTitle.length > 0 ? shareTitle : title;
+  dispatch_async(dispatch_get_main_queue(), ^{
+    self.selectFilePresentAttempts = 0;
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:kLXPickerPresentBudget];
+    __weak typeof(self) weakSelf = self;
+    [self runPresentPipelineWithFactory:^UIViewController *{
+      __strong typeof(weakSelf) self = weakSelf;
+      UIActivityViewController *controller = [[UIActivityViewController alloc] initWithActivityItems:@[ text ] applicationActivities:nil];
+      if (subject.length > 0) [controller setValue:subject forKey:@"subject"];
+      // iPad / 部分 iOS 26 形态下 UIActivityViewController 走 popover，
+      // 缺 sourceView 会直接抛异常，锚到当前稳定顶层 VC 的中心
+      if (controller.popoverPresentationController != nil) {
+        UIViewController *anchor = [self lx_stableTopViewController];
+        if (anchor != nil) {
+          controller.popoverPresentationController.sourceView = anchor.view;
+          controller.popoverPresentationController.sourceRect = CGRectMake(CGRectGetMidX(anchor.view.bounds), CGRectGetMidY(anchor.view.bounds), 0, 0);
+        }
+      }
+      return controller;
+    } deadline:deadline onFinish:^(UIViewController *vc, NSString *error) {
+      if (error == nil) {
+        resolve(@(YES));
+        return;
+      }
+      reject(@"share_present_failed", error, nil);
+    }];
+  });
+}
+
+RCT_EXPORT_METHOD(getSystemLocales:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSString *locale = [[NSLocale preferredLanguages] firstObject];
+  resolve(locale != nil ? locale : @"en-US");
+}
+
+RCT_EXPORT_METHOD(getWindowSize:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  resolve([self currentWindowSize]);
+}
+
+// CI 自测：字体注册检查（任务 1.5 豆腐块的根因判据）。
+// UIAppFonts 挂载失败时 fontWithName 返回 nil，图标字形无渲染源。
+// 注意：.m 文件里 `@(font != nil)` 的比较结果是 int，桥接转为 JS 数字
+// 1/0 而非布尔（run 33012088667：JS 侧 === true 误判未注册，字体其实
+// 已挂载）；三元表达式 `font != nil ? YES : NO` 同样会被 C 整型提升为
+// int（run 33021891043 复现），必须经 BOOL 变量装箱
+RCT_EXPORT_METHOD(isFontRegistered:(NSString *)name
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  UIFont *font = [UIFont fontWithName:(name ?: @"") size:12];
+  BOOL isRegistered = font != nil;
+  resolve(@(isRegistered));
+}
+
+// CI 自测：UIAppFonts 偶发不生效时的诊断 + 兜底挂载。
+// 返回当前 familyNames 中与文件名（去扩展名）相关的匹配（诊断面），
+// 并尝试用 CTFontManager 手动注册 bundle 内同名文件；结果由调用方复核。
+// 仅自测标记存在时生效，正式包恒拒绝。
+RCT_EXPORT_METHOD(registerBundledFont:(NSString *)fileName
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSString *tmp = NSTemporaryDirectory();
+  NSString *marker = [tmp stringByAppendingPathComponent:@".lx-ci-selftest"];
+  if (![[NSFileManager defaultManager] fileExistsAtPath:marker]) {
+    reject(@"not_allowed", @"font registration fallback requires the CI self-test marker", nil);
+    return;
+  }
+  NSString *stem = [fileName stringByDeletingPathExtension] ?: @"";
+  NSMutableArray *matched = [NSMutableArray array];
+  for (NSString *family in [UIFont familyNames]) {
+    if ([family rangeOfString:stem options:(NSCaseInsensitiveSearch)].location != NSNotFound) {
+      [matched addObject:family];
+    }
+  }
+  NSString *path = [[NSBundle mainBundle] pathForResource:stem
+                                                   ofType:[fileName pathExtension]];
+  BOOL registered = NO;
+  if (path.length) {
+    NSURL *url = [NSURL fileURLWithPath:path];
+    CFErrorRef error = NULL;
+    registered = CTFontManagerRegisterFontsForURL((__bridge CFURLRef)url,
+                                                  kCTFontManagerScopeProcess, &error);
+    if (!registered && error) CFRelease(error);
+  }
+  resolve(@{ @"matched": matched, @"registered": @(registered) });
+}
+
+// CI 自测：音频会话运行时类别（任务 5.2）。
+// setupPlayer(iosCategory: playback) 生效后应为 AVAudioSessionCategoryPlayback，
+// 这是后台出声的必要配置在运行时的直接证据。
+RCT_EXPORT_METHOD(getAudioSessionCategory:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  resolve([AVAudioSession sharedInstance].category);
+}
+
+// CI 自测（播放位置冻结判别）：裸 AVPlayer A/B 探针。
+// run 32982319768/33012088667 实锤：两轮不同采样率夹具位置都冻结在
+// ~0.027s（AVPlayer 报 playing 但时钟不走），疑似无头 runner 无音频
+// 输出设备 → 媒体时钟停摆。本探针脱离 track-player 栈直接采样裸
+// AVPlayer 位置：A 阶段复刻应用配置（automaticallyWaits=true），
+// B 阶段关等待。若两阶段均不走 → 环境约束（门禁软化并带证据）；
+// 若裸播放器走而应用栈不走 → 栈配置问题。附带会话路由诊断。
+RCT_EXPORT_METHOD(audioClockProbe:(NSString *)path
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSString *tmp = NSTemporaryDirectory();
+  NSString *marker = [tmp stringByAppendingPathComponent:@".lx-ci-selftest"];
+  if (![[NSFileManager defaultManager] fileExistsAtPath:marker]) {
+    reject(@"not_allowed", @"audio clock probe requires the CI self-test marker", nil);
+    return;
+  }
+  NSURL *fileURL = [NSURL URLWithString:path];
+  if (fileURL == nil) {
+    fileURL = [NSURL fileURLWithPath:(path ?: @"")];
+  }
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    // 会话诊断：路由/延迟/缓冲是「无输出设备」的直接读面
+    AVAudioSession *session = [AVAudioSession sharedInstance];
+    NSMutableArray *outputs = [NSMutableArray array];
+    for (AVAudioSessionPortDescription *port in session.currentRoute.outputs) {
+      [outputs addObject:@{ @"type": port.portType ?: @"?", @"name": port.portName ?: @"?" }];
+    }
+    NSDictionary *sessionInfo = @{
+      @"category": session.category ?: @"?",
+      @"mode": session.mode ?: @"?",
+      @"outputLatency": @(session.outputLatency),
+      @"ioBufferDuration": @(session.IOBufferDuration),
+      @"sampleRate": @(session.sampleRate),
+      @"outputs": outputs,
+    };
+
+    NSMutableArray *phases = [NSMutableArray array];
+    BOOL clockAdvances = NO;
+    NSString *probeError = nil;
+    @try {
+      for (int phase = 0; phase < 2; phase++) {
+        BOOL waits = (phase == 0);
+        AVURLAsset *asset = [AVURLAsset assetWithURL:fileURL];
+        AVPlayerItem *item = [AVPlayerItem playerItemWithAsset:asset];
+        AVPlayer *player = [AVPlayer playerWithPlayerItem:item];
+        player.automaticallyWaitsToMinimizeStalling = waits;
+        [player play];
+        usleep(300 * 1000);
+        NSMutableArray *samples = [NSMutableArray array];
+        for (int i = 0; i < 8; i++) {
+          // CMTime 是 C 结构体，ObjC 无 .seconds 属性，须经 CMTimeGetSeconds
+          double seconds = CMTimeGetSeconds(player.currentTime);
+          [samples addObject:@(isnan(seconds) ? 0.0 : seconds)];
+          usleep(400 * 1000);
+        }
+        [player pause];
+        double first = [samples.firstObject doubleValue];
+        double last = [samples.lastObject doubleValue];
+        double advance = last - first;
+        if (advance > 1.0) clockAdvances = YES;
+        [phases addObject:@{
+          @"waits": @(waits ? YES : NO),
+          @"samples": samples,
+          @"advance": @(advance),
+          @"timeControlStatus": @(player.timeControlStatus),
+        }];
+        player = nil;
+      }
+    } @catch (NSException *exception) {
+      probeError = [NSString stringWithFormat:@"%@: %@", exception.name, exception.reason];
+    }
+    NSMutableDictionary *out = [NSMutableDictionary dictionary];
+    out[@"session"] = sessionInfo;
+    out[@"phases"] = phases;
+    out[@"clockAdvances"] = @(clockAdvances ? YES : NO);
+    out[@"error"] = probeError ?: (id)[NSNull null];
+    resolve(out);
+  });
+}
+
+// CI 自测（任务 5.2 后台续播）：原生后台采样探针。
+// run 33233955428 实锤：应用切后台后 RN JS 线程被重度节流——AppState
+// 事件晚到 178s，JS 轮询等待与 JS 侧采样都不可靠。采样下沉到原生：
+// 裸 AVPlayer 接管夹具并循环播放（音频后台模式保活要求全程有声），
+// UIApplicationDidEnterBackground 观察者记录切后台时刻，并在其后
+// +2s/+14s 原生采样播放器位置。JS 何时醒来何时读，判据不依赖 JS 时序。
+static AVPlayer *lxciBgProbePlayer = nil;
+static NSMutableDictionary *lxciBgProbeState = nil;
+
+RCT_EXPORT_METHOD(startBgAudioProbe:(NSString *)path
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSString *tmp = NSTemporaryDirectory();
+  NSString *marker = [tmp stringByAppendingPathComponent:@".lx-ci-selftest"];
+  if (![[NSFileManager defaultManager] fileExistsAtPath:marker]) {
+    reject(@"not_allowed", @"bg audio probe requires the CI self-test marker", nil);
+    return;
+  }
+  NSURL *fileURL = [NSURL URLWithString:path];
+  if (fileURL == nil) {
+    fileURL = [NSURL fileURLWithPath:(path ?: @"")];
+  }
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    NSString *error = nil;
+    double posAfterStart = -1.0;
+    NSInteger timeControlStatus = -1;
+    @try {
+      // 状态先于观察者就位：后台事件可能在观察者注册后立即到达，
+      // 状态未就位会被观察者当作未启动丢弃
+      lxciBgProbeState = [NSMutableDictionary dictionary];
+      lxciBgProbeState[@"startedAt"] = @((long long)([[NSDate date] timeIntervalSince1970] * 1000.0));
+      lxciBgProbeState[@"samples"] = [NSMutableArray array];
+      AVURLAsset *asset = [AVURLAsset assetWithURL:fileURL];
+      AVPlayerItem *item = [AVPlayerItem playerItemWithAsset:asset];
+      AVPlayer *player = [AVPlayer playerWithPlayerItem:item];
+      lxciBgProbePlayer = player;
+      // 播完即回卷重播：夹具 90s，套件后台段可能持续数十分钟，
+      // 音频一停应用就可能被系统回收
+      [[NSNotificationCenter defaultCenter] addObserverForName:AVPlayerItemDidPlayToEndTimeNotification
+                                                        object:item
+                                                         queue:[NSOperationQueue mainQueue]
+                                                    usingBlock:^(NSNotification *note) {
+        [player seekToTime:kCMTimeZero];
+        [player play];
+      }];
+      [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidEnterBackgroundNotification
+                                                        object:nil
+                                                         queue:[NSOperationQueue mainQueue]
+                                                    usingBlock:^(NSNotification *note) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+          if (lxciBgProbeState == nil) return;
+          lxciBgProbeState[@"backgroundedAt"] = @((long long)([[NSDate date] timeIntervalSince1970] * 1000.0));
+          void (^sample)(double) = ^(double delay) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+              if (lxciBgProbeState == nil) return;
+              double seconds = CMTimeGetSeconds(player.currentTime);
+              [(NSMutableArray *)lxciBgProbeState[@"samples"] addObject:@{
+                @"delay": @(delay),
+                @"at": @((long long)([[NSDate date] timeIntervalSince1970] * 1000.0)),
+                @"pos": @(isnan(seconds) ? -1.0 : seconds),
+                @"rate": @(player.rate),
+              }];
+            });
+          };
+          sample(2.0);
+          sample(14.0);
+        });
+      }];
+      [player play];
+      usleep(300 * 1000);
+      posAfterStart = CMTimeGetSeconds(player.currentTime);
+      timeControlStatus = player.timeControlStatus;
+    } @catch (NSException *exception) {
+      error = [NSString stringWithFormat:@"%@: %@", exception.name, exception.reason];
+    }
+    resolve(@{
+      @"started": @(error == nil),
+      @"posAfterStart": @(isnan(posAfterStart) ? -1.0 : posAfterStart),
+      @"timeControlStatus": @(timeControlStatus),
+      @"error": error ?: (id)[NSNull null],
+    });
+  });
+}
+
+// CI 自测：读取后台探针结果。未启动（或初始化尚未落到主队列）返回
+// null；已启动则带回切后台时刻与原生采样（可能尚未采完，长度 0-2）。
+// 状态创建在后台队列、后续读写均在主队列，与观察者/采样块同队列免竞态。
+RCT_EXPORT_METHOD(getBgAudioProbeResult:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (lxciBgProbeState == nil) {
+      resolve([NSNull null]);
+      return;
+    }
+    double seconds = CMTimeGetSeconds(lxciBgProbePlayer.currentTime);
+    resolve(@{
+      @"startedAt": lxciBgProbeState[@"startedAt"] ?: [NSNull null],
+      @"backgroundedAt": lxciBgProbeState[@"backgroundedAt"] ?: [NSNull null],
+      @"samples": [(NSMutableArray *)lxciBgProbeState[@"samples"] copy],
+      @"posNow": @(isnan(seconds) ? -1.0 : seconds),
+      @"rateNow": @(lxciBgProbePlayer.rate),
+      @"playingNow": @(lxciBgProbePlayer.timeControlStatus == AVPlayerTimeControlStatusPlaying),
+    });
+  });
+}
+
+// CI 自测：锁屏/控制中心 Now Playing 面板内容（任务 5.3/5.4）。
+// 返回 MPNowPlayingInfoCenter 当前信息的可读子集；无内容时 resolve(null)。
+RCT_EXPORT_METHOD(getNowPlayingInfo:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSDictionary *info = [MPNowPlayingInfoCenter defaultCenter].nowPlayingInfo;
+  if (info == nil || info.count == 0) {
+    resolve([NSNull null]);
+    return;
+  }
+  NSMutableDictionary *out = [NSMutableDictionary dictionary];
+  id title = info[MPMediaItemPropertyTitle];
+  id artist = info[MPMediaItemPropertyArtist];
+  id album = info[MPMediaItemPropertyAlbumTitle];
+  id duration = info[MPMediaItemPropertyPlaybackDuration];
+  id elapsed = info[MPNowPlayingInfoPropertyElapsedPlaybackTime];
+  // 任务 9.11 判据：锁屏面板进度锚点两键（elapsed + rate）回读。
+  // 修复前面板没有锚点，两键恒缺席
+  id rate = info[MPNowPlayingInfoPropertyPlaybackRate];
+  id artwork = info[MPMediaItemPropertyArtwork];
+  if ([title isKindOfClass:[NSString class]]) out[@"title"] = title;
+  if ([artist isKindOfClass:[NSString class]]) out[@"artist"] = artist;
+  if ([album isKindOfClass:[NSString class]]) out[@"album"] = album;
+  if ([duration isKindOfClass:[NSNumber class]]) out[@"duration"] = duration;
+  if ([elapsed isKindOfClass:[NSNumber class]]) out[@"elapsed"] = elapsed;
+  if ([rate isKindOfClass:[NSNumber class]]) out[@"rate"] = rate;
+  out[@"hasArtwork"] = @([artwork isKindOfClass:[MPMediaItemArtwork class]]);
+  resolve(out);
+}
+
+// CI 自测：屏幕常亮开关回读（任务 6.6 常亮项的运行时判据）
+RCT_EXPORT_METHOD(isScreenKeepAwake:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  dispatch_async(dispatch_get_main_queue(), ^{
+    resolve(@([UIApplication sharedApplication].idleTimerDisabled));
+  });
+}
+
+// CI 自测（任务 9.12）：弹窗方向保持判别看回读。RN Modal 宿主 VC 的方向
+// 掩码来自 supportedOrientations，iPhone 上缺省为竖屏独占
+// （RCTModalHostView supportedOrientationsMask），横屏呈现弹窗会把界面
+// 当场转回竖屏（真机 2026-09-07：自定义源管理、排行榜音源下拉）。
+// presented 确认弹窗真已呈现（防用例在未渲染时假通过）；
+// presentedOrientations 为最顶层 presented VC 的
+// supportedInterfaceOrientations 掩码（旧实现 = 竖屏独占 2，修复后含
+// 横屏位）；interfaceOrientation 为当前 active 场景方向（弹窗呈现后
+// 应仍是横屏）。只读探针，正式包零影响
+RCT_EXPORT_METHOD(modalOrientationProbe:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  dispatch_async(dispatch_get_main_queue(), ^{
+    NSMutableDictionary *out = [NSMutableDictionary dictionary];
+    @try {
+      UIViewController *topPresented = nil;
+      for (UIWindow *window in [UIApplication sharedApplication].windows) {
+        UIViewController *vc = window.rootViewController;
+        if (vc == nil) continue;
+        while (vc.presentedViewController != nil) vc = vc.presentedViewController;
+        if (vc != window.rootViewController) { topPresented = vc; break; }
+      }
+      out[@"presented"] = @(topPresented != nil);
+      if (topPresented != nil) {
+        out[@"presentedOrientations"] = @((NSInteger)topPresented.supportedInterfaceOrientations);
+        // 类名回读：判据须确认顶层呈现 VC 是 RN Modal 宿主
+        // （RCTModalHostViewController），而非外层 RNN 模态 VC——
+        // 后者默认全方向，会让掩码断言假通过
+        out[@"presentedClass"] = NSStringFromClass([topPresented class]);
+      }
+      NSString *orientation = @"unknown";
+      for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+        UIWindowScene *windowScene = (UIWindowScene *)scene;
+        if (windowScene.activationState != UISceneActivationStateForegroundActive) continue;
+        switch (windowScene.interfaceOrientation) {
+          case UIInterfaceOrientationPortrait: orientation = @"portrait"; break;
+          case UIInterfaceOrientationPortraitUpsideDown: orientation = @"portrait-upside-down"; break;
+          case UIInterfaceOrientationLandscapeLeft: orientation = @"landscape-left"; break;
+          case UIInterfaceOrientationLandscapeRight: orientation = @"landscape-right"; break;
+          default: orientation = @"unknown"; break;
+        }
+        break;
+      }
+      out[@"interfaceOrientation"] = orientation;
+    } @catch (NSException *exception) {
+      out[@"error"] = exception.reason ?: @"exception";
+    }
+    resolve(out);
+  });
+}
+
+// CI 自测（任务 7.4 横屏）：强制旋转模拟器窗口。宿主侧无可靠的无头旋转
+// 通道（simctl 无 rotate 子命令，AppleScript 依赖 GUI 会话），改由应用内
+// 驱动：iOS 16+ 场景几何请求（requestGeometryUpdate）。
+// run 32995785233 实锤：KVC 写 UIDevice.orientation 在 iOS 16+ 模拟器上
+// 抛 NSUndefinedKeyException 直接崩进程（rotate 标记后 3s 崩溃）；
+// respondsToSelector 对 setValue:forKey: 恒真，形同虚设，已整段移除。
+// run 33012088667 实锤：无头模拟器上窗口场景处于 ForegroundInactive，
+// ForegroundActive 门控把场景全部滤掉（scenes=0）；且本应用为 legacy
+// 生命周期（无 scene manifest），场景须经 UIWindow.windowScene 兜底发现。
+// 双保险门控：仅当沙箱存在 .lx-ci-selftest 标记时生效，正式包恒拒绝。
+RCT_EXPORT_METHOD(setDeviceOrientation:(NSString *)name
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSString *tmp = NSTemporaryDirectory();
+  NSString *marker = [tmp stringByAppendingPathComponent:@".lx-ci-selftest"];
+  if (![[NSFileManager defaultManager] fileExistsAtPath:marker]) {
+    reject(@"not_allowed", @"orientation forcing requires the CI self-test marker", nil);
+    return;
+  }
+  BOOL landscape = [name isEqualToString:@"landscape"];
+  dispatch_async(dispatch_get_main_queue(), ^{
+    // CI 专用代码：全程 @try/@catch，异常转诊断返回而非崩进程
+    NSString *error = nil;
+    NSMutableArray<NSString *> *applied = [NSMutableArray array];
+    NSMutableArray<UIWindowScene *> *scenesFound = [NSMutableArray array];
+    NSMutableArray<NSString *> *sceneStates = [NSMutableArray array];
+    NSMutableArray<NSString *> *geoErrors = [NSMutableArray array];
+    @try {
+      for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if ([scene isKindOfClass:[UIWindowScene class]]) [scenesFound addObject:(UIWindowScene *)scene];
+      }
+      // legacy 生命周期应用 connectedScenes 可能为空，从窗口反查场景
+      if (scenesFound.count == 0) {
+        for (UIWindow *window in [UIApplication sharedApplication].windows) {
+          if (window.windowScene != nil && ![scenesFound containsObject:window.windowScene]) {
+            [scenesFound addObject:window.windowScene];
+          }
+        }
+      }
+      for (UIWindowScene *scene in scenesFound) {
+        NSString *stateName = scene.activationState == UISceneActivationStateForegroundActive ? @"active"
+          : scene.activationState == UISceneActivationStateForegroundInactive ? @"inactive"
+          : scene.activationState == UISceneActivationStateBackground ? @"background" : @"unattached";
+        [sceneStates addObject:[NSString stringWithFormat:@"%@(%@)", NSStringFromClass([scene class]), stateName]];
+      }
+      [UIViewController attemptRotationToDeviceOrientation];
+      [applied addObject:@"attemptRotation"];
+      if (@available(iOS 16.0, *)) {
+        UIInterfaceOrientationMask mask = landscape ? UIInterfaceOrientationMaskLandscape : UIInterfaceOrientationMaskPortrait;
+        UIWindowSceneGeometryPreferencesIOS *prefs =
+          [[UIWindowSceneGeometryPreferencesIOS alloc] initWithInterfaceOrientations:mask];
+        for (UIWindowScene *scene in scenesFound) {
+          [scene requestGeometryUpdateWithPreferences:prefs errorHandler:^(NSError *geoError) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+              [geoErrors addObject:geoError.localizedDescription ?: @"unknown"];
+            });
+          }];
+        }
+        [applied addObject:[NSString stringWithFormat:@"requestGeometryUpdate(scenes=%lu)", (unsigned long)scenesFound.count]];
+      } else {
+        error = @"iOS < 16: no headless rotation channel";
+      }
+    } @catch (NSException *exception) {
+      error = [NSString stringWithFormat:@"%@: %@", exception.name, exception.reason];
+    }
+    // 延迟 2s resolve：带回实际 interfaceOrientation 与异步 geoErrors，
+    // JS 侧断言文本即可判别「请求未送达 / 送达但场景拒绝 / 已生效」
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      NSString *orientNow = nil;
+      UIWindowScene *scene0 = scenesFound.firstObject;
+      if (scene0 != nil) {
+        orientNow = UIInterfaceOrientationIsLandscape(scene0.interfaceOrientation) ? @"landscape" : @"portrait";
+      }
+      resolve(@{
+        @"ok": @(error == nil),
+        @"applied": applied,
+        @"error": error ?: (id)[NSNull null],
+        @"sceneStates": sceneStates,
+        @"geoErrors": geoErrors,
+        @"interfaceOrientationAfter2s": orientNow ?: (id)[NSNull null],
+      });
+    });
+  });
+}
+
+// 观察者已在 init 注册，此处保留空实现以对齐 JS 调用面
+RCT_EXPORT_METHOD(listenWindowSizeChanged) {}
+
+// iOS 无 Doze 机制，语义上恒为"已忽略电池优化"
+RCT_EXPORT_METHOD(isIgnoringBatteryOptimization:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  resolve(@(YES));
+}
+
+RCT_EXPORT_METHOD(requestIgnoreBatteryOptimization:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  resolve(@(YES));
+}
+
+#pragma mark - 文件选择（任务 6.5，替代 Android SAF openDocument）
+
+// 扩展名 → UTI；未知扩展名（如 .lxmc）会得到 dyn.* 动态 UTI，过滤性差，退回 public.data
+- (NSString *)utiForExtension:(NSString *)ext
+{
+  NSString *uti = nil;
+  CFStringRef created = UTTypeCreatePreferredIdentifierForTag(kUTTagClassFilenameExtension, (__bridge CFStringRef)[ext lowercaseString], NULL);
+  if (created != NULL) {
+    uti = (__bridge_transfer NSString *)created;
+  }
+  if (uti == nil || [uti hasPrefix:@"dyn."]) uti = (__bridge NSString *)kUTTypeData;
+  return uti;
+}
+
+- (NSString *)mimeForExtension:(NSString *)ext
+{
+  NSString *uti = [self utiForExtension:ext];
+  NSString *mime = nil;
+  CFStringRef created = UTTypeCopyPreferredTagWithClass((__bridge CFStringRef)uti, kUTTagClassMIMEType);
+  if (created != NULL) {
+    mime = (__bridge_transfer NSString *)created;
+  }
+  return mime != nil ? mime : @"application/octet-stream";
+}
+
+// 转场稳定参数（任务 9.4）：预算需覆盖 RN Modal fade 退场（约 0.3s）加数轮重试
+static const NSTimeInterval kLXPickerWaitInterval = 0.15;
+static const NSTimeInterval kLXPickerPresentBudget = 3.0;
+static const NSTimeInterval kLXPickerAliveDelay = 0.25;
+static const NSTimeInterval kLXPickerCompletionWatchdog = 0.8;
+
+// 与 Android 契约对齐：取消时 resolve(null)；给定 toPath 时拷贝到 toPath/原文件名，
+// 返回 { data: 目标路径, ...文件信息 }。
+// 任务 9.4：真机（iPhone 17 Pro / iOS 26.6）自定义源本地导入无反应——
+// Menu.tsx menuPress 先触发 onPress（selectFile）再 onHide()（菜单 Modal
+// 退场），两条命令同拍到达原生主队列；旧实现把选择器直接 present 到正在
+// 退场的 VC 上，UIKit 静默吞掉呈现：无 delegate 回调、无报错，Promise 永挂。
+// 改为走等视图层级稳定后再呈现的管线（runPresentPipelineWithFactory），
+// 预算耗尽必须走 reject 通道（JS 侧 ChoosePath 已有回退内置浏览器弹窗），
+// 不许静默挂起。
+RCT_EXPORT_METHOD(selectFile:(NSDictionary *)options
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSArray<NSString *> *documentTypes = [self documentTypesFromOptions:options];
+  NSString *toPath = nil;
+  if ([options isKindOfClass:[NSDictionary class]] && [options[@"toPath"] isKindOfClass:[NSString class]]) toPath = options[@"toPath"];
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [self presentDocumentPickerWithTypes:documentTypes toPath:toPath resolver:resolve rejecter:reject];
+  });
+}
+
+- (NSArray<NSString *> *)documentTypesFromOptions:(NSDictionary *)options
+{
+  NSArray *extTypes = nil;
+  if ([options isKindOfClass:[NSDictionary class]] && [options[@"extTypes"] isKindOfClass:[NSArray class]]) extTypes = options[@"extTypes"];
+  NSMutableArray<NSString *> *documentTypes = [NSMutableArray array];
+  for (id ext in extTypes) {
+    if ([ext isKindOfClass:[NSString class]] && [ext length] > 0) {
+      NSString *uti = [self utiForExtension:ext];
+      if (![documentTypes containsObject:uti]) [documentTypes addObject:uti];
+    }
+  }
+  if (documentTypes.count == 0) [documentTypes addObject:(__bridge NSString *)kUTTypeItem];
+  return documentTypes;
+}
+
+// 稳定顶层 VC：presentedViewController 链上任一节点处于转场中（呈现/退场
+// 动画未结束）即返回 nil，由调用方重试；keyWindow 优先（RNN legacy 生命
+// 周期下 delegate.window 仍在），逐层上溯到最顶层
+- (UIViewController *)lx_stableTopViewController
+{
+  UIWindow *window = nil;
+  for (UIWindow *w in [UIApplication sharedApplication].windows) {
+    if (w.isKeyWindow) { window = w; break; }
+  }
+  if (window == nil) window = [UIApplication sharedApplication].delegate.window;
+  UIViewController *vc = window.rootViewController;
+  while (vc != nil) {
+    if (vc.isBeingPresented || vc.isBeingDismissed || vc.isMovingFromParentViewController || vc.isMovingToParentViewController) return nil;
+    if (vc.presentedViewController == nil) return vc;
+    vc = vc.presentedViewController;
+  }
+  return nil;
+}
+
+- (void)presentDocumentPickerWithTypes:(NSArray<NSString *> *)documentTypes
+                                toPath:(NSString *)toPath
+                              resolver:(RCTPromiseResolveBlock)resolve
+                              rejecter:(RCTPromiseRejectBlock)reject
+{
+  if (self.selectFileResolve != nil) {
+    // 上一个选择器仍在显示，按取消处理
+    self.selectFileResolve([NSNull null]);
+  }
+  self.selectFileResolve = resolve;
+  self.selectFileToPath = toPath;
+  self.selectFilePicker = nil;
+  self.selectFilePresentAttempts = 0;
+  NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:kLXPickerPresentBudget];
+  __weak typeof(self) weakSelf = self;
+  [self runPresentPipelineWithFactory:^UIViewController *{
+    __strong typeof(weakSelf) self = weakSelf;
+    UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initWithDocumentTypes:documentTypes inMode:UIDocumentPickerModeImport];
+    picker.delegate = self;
+    return picker;
+  } deadline:deadline onFinish:^(UIViewController *vc, NSString *error) {
+    __strong typeof(weakSelf) self = weakSelf;
+    if (self == nil) return;
+    if (error == nil) {
+      self.selectFilePicker = (UIDocumentPickerViewController *)vc;
+      return;
+    }
+    // 预算耗尽：清状态并走 reject；JS 侧 ChoosePath 已有回退弹窗，不许静默挂起
+    [self clearSelectFileState];
+    reject(@"picker_present_failed", error, nil);
+  }];
+}
+
+// 任务 9.16：导出走系统另存为面板（UIDocumentPickerViewController export
+// 模式）。内置目录浏览器只能浏览与写入应用自身沙箱，用户无法把歌单备份
+// 保存到「文件」App 的其他位置（iCloud、第三方存储提供者）；export 模式把
+// 沙箱内源文件 URL 交给系统面板，用户在系统面板任选位置、系统执行拷贝，
+// 是 iOS 上唯一合规的「保存到任意位置」路径。
+// 契约：取消时 resolve(null)（与 selectFile 对齐）；呈现预算耗尽走
+// reject；源文件必须存在，否则显式报错。呈现复用任务 9.4 的竞态安全管线，
+// 与导入选择器共用 delegate，回调按 controller 身份分流。
+// 注意：无头模拟器上不得真呈现 export 选择器（DocumentProvider XPC 残留
+// 会崩进程，与任务 9.4 同款），CI 判别面仅覆盖编译与 fs_exports。
+RCT_EXPORT_METHOD(exportFile:(NSDictionary *)options
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSString *srcPath = nil;
+  if ([options isKindOfClass:[NSDictionary class]] && [options[@"srcPath"] isKindOfClass:[NSString class]]) srcPath = options[@"srcPath"];
+  if (srcPath == nil || srcPath.length == 0) {
+    reject(@"invalid_args", @"srcPath is required", nil);
+    return;
+  }
+  if (![[NSFileManager defaultManager] fileExistsAtPath:srcPath]) {
+    reject(@"source_missing", @"export source file does not exist", nil);
+    return;
+  }
+  NSURL *srcURL = [NSURL fileURLWithPath:srcPath];
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [self presentExportPickerWithURL:srcURL resolver:resolve rejecter:reject];
+  });
+}
+
+- (void)presentExportPickerWithURL:(NSURL *)srcURL
+                          resolver:(RCTPromiseResolveBlock)resolve
+                          rejecter:(RCTPromiseRejectBlock)reject
+{
+  if (self.exportFileResolve != nil) {
+    // 上一个另存面板仍在显示，按取消处理
+    self.exportFileResolve([NSNull null]);
+  }
+  self.exportFileResolve = resolve;
+  self.exportFilePicker = nil;
+  NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:kLXPickerPresentBudget];
+  __weak typeof(self) weakSelf = self;
+  [self runPresentPipelineWithFactory:^UIViewController *{
+    UIDocumentPickerViewController *picker;
+    if (@available(iOS 14.0, *)) {
+      picker = [[UIDocumentPickerViewController alloc] initForExportingURLs:@[ srcURL ]];
+    } else {
+      picker = [[UIDocumentPickerViewController alloc] initWithURL:srcURL inMode:UIDocumentPickerModeExportToService];
+    }
+    picker.delegate = self;
+    return picker;
+  } deadline:deadline onFinish:^(UIViewController *vc, NSString *error) {
+    __strong typeof(weakSelf) self = weakSelf;
+    if (self == nil) return;
+    if (error == nil) {
+      self.exportFilePicker = (UIDocumentPickerViewController *)vc;
+      return;
+    }
+    [self clearExportFileState];
+    reject(@"picker_present_failed", error, nil);
+  }];
+}
+
+- (void)clearExportFileState
+{
+  self.exportFileResolve = nil;
+  self.exportFilePicker = nil;
+}
+
+// 竞态安全呈现管线（任务 9.4）：等视图层级稳定后呈现，呈现后存活校验，
+// 被并发退场吞掉或 completion 不回调则重试；重试前先清掉仍占位的上一拍
+// pending，避免层叠呈现。终局二选一：onFinish(vc, nil) 呈现存活、所有权
+// 交给调用方；onFinish(nil, error) 预算耗尽，管线已清场。
+// vcFactory 让生产路径与 CI 探针共用同一管线：生产造真选择器，探针造
+// 普通 VC——无头模拟器上 UIDocumentPickerViewController 依赖 DocumentProvider
+// XPC，呈现 completion 不回调且残留连接会在旋转时崩进程
+// （run 33498023646 实锤：DOCWeakProxy SIGABRT），探针必须绕开。
+- (void)runPresentPipelineWithFactory:(UIViewController *(^)(void))vcFactory
+                             deadline:(NSDate *)deadline
+                             onFinish:(void (^)(UIViewController *vc, NSString *error))onFinish
+{
+  self.selectFilePresentAttempts += 1;
+  // 上一拍 pending 仍占位：先清场再等稳定，防止在旧 VC 上层叠新呈现
+  if (self.lxPendingVC.presentingViewController != nil) {
+    UIViewController *stale = self.lxPendingVC;
+    self.lxPendingVC = nil;
+    [stale dismissViewControllerAnimated:NO completion:nil];
+  }
+  UIViewController *top = [self lx_stableTopViewController];
+  if (top == nil) {
+    if ([deadline timeIntervalSinceNow] <= 0) {
+      onFinish(nil, @"no stable view controller within budget (modal transition never settled)");
+      return;
+    }
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kLXPickerWaitInterval * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      [self runPresentPipelineWithFactory:vcFactory deadline:deadline onFinish:onFinish];
+    });
+    return;
+  }
+  UIViewController *vc = vcFactory();
+  self.lxPendingVC = vc;
+  __block BOOL completionFired = NO;
+  __weak typeof(self) weakSelf = self;
+  [top presentViewController:vc animated:YES completion:^{
+    completionFired = YES;
+    // completion 不等于存活：被并发退场吞掉时 completion 照样回调，VC 随后被收走
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kLXPickerAliveDelay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      __strong typeof(weakSelf) self = weakSelf;
+      if (self == nil) return;
+      BOOL alive = vc.presentingViewController != nil && vc.view.window != nil;
+      if (alive) {
+        if (self.lxPendingVC == vc) self.lxPendingVC = nil; // 所有权移交调用方
+        onFinish(vc, nil);
+        return;
+      }
+      if (self.lxPendingVC == vc) self.lxPendingVC = nil;
+      if ([deadline timeIntervalSinceNow] <= 0) {
+        onFinish(nil, @"presented but swallowed by concurrent dismiss");
+        return;
+      }
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kLXPickerWaitInterval * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [self runPresentPipelineWithFactory:vcFactory deadline:deadline onFinish:onFinish];
+      });
+    });
+  }];
+  // completion 看门狗：目标 VC 已不在窗口层级时 UIKit 根本不回调 completion，
+  // 没有看门狗重试链会停在这里，成为另一处静默挂起
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kLXPickerCompletionWatchdog * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    __strong typeof(weakSelf) self = weakSelf;
+    if (self == nil || completionFired) return;
+    // 呈现被吞但 VC 可能仍半挂层级：先清场再重试
+    if (vc.presentingViewController != nil) [vc dismissViewControllerAnimated:NO completion:nil];
+    if (self.lxPendingVC == vc) self.lxPendingVC = nil;
+    if ([deadline timeIntervalSinceNow] <= 0) {
+      onFinish(nil, @"present completion never fired within watchdog");
+      return;
+    }
+    [self runPresentPipelineWithFactory:vcFactory deadline:deadline onFinish:onFinish];
+  });
+}
+
+- (void)clearSelectFileState
+{
+  self.selectFileResolve = nil;
+  self.selectFileToPath = nil;
+  self.selectFilePicker = nil;
+}
+
+// CI 自测：等模态残留清空，最多 timeoutMs；超时前逐层强制撤场。
+// 动因（run 34036942428）：shareTextRaceProbe 真呈现出分享面板后，
+// UIActivityViewController 只支持竖屏，残留在层级里会让紧随其后的
+// landscape 用例拿到「Supported: portrait」而判负。探针内的 dismiss 是
+// 异步的、且该环境下 completion 不可靠（run 34023702163 即挂死在此），
+// 所以恢复现场不能赌回调，只能由调用方轮询确认。
+// 双保险门控：仅沙箱存在 .lx-ci-selftest 标记时生效。
+RCT_EXPORT_METHOD(waitModalDismissed:(double)timeoutMs
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSString *marker = [NSTemporaryDirectory() stringByAppendingPathComponent:@".lx-ci-selftest"];
+  if (![[NSFileManager defaultManager] fileExistsAtPath:marker]) {
+    reject(@"not_allowed", @"waitModalDismissed requires the CI self-test marker", nil);
+    return;
+  }
+  NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:timeoutMs / 1000.0];
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [self lx_waitModalClearedUntil:deadline resolve:resolve];
+  });
+}
+
+- (void)lx_waitModalClearedUntil:(NSDate *)deadline resolve:(RCTPromiseResolveBlock)resolve
+{
+  UIViewController *root = [UIApplication sharedApplication].delegate.window.rootViewController;
+  UIViewController *modal = root.presentedViewController;
+  if (modal == nil) {
+    resolve(@{ @"cleared": @(YES), @"forced": @(NO), @"top": @"" });
+    return;
+  }
+  NSString *topName = NSStringFromClass([modal class]);
+  if ([deadline timeIntervalSinceNow] > 0) {
+    __weak typeof(self) weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kLXPickerWaitInterval * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      __strong typeof(weakSelf) self = weakSelf;
+      if (self == nil) {
+        resolve(@{ @"cleared": @(NO), @"forced": @(NO), @"top": topName });
+        return;
+      }
+      [self lx_waitModalClearedUntil:deadline resolve:resolve];
+    });
+    return;
+  }
+  // 超时：强制撤掉整条模态链，不阻塞后续用例（回报 forced 供取证）
+  [root dismissViewControllerAnimated:NO completion:nil];
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kLXPickerAliveDelay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    UIViewController *r = [UIApplication sharedApplication].delegate.window.rootViewController;
+    resolve(@{ @"cleared": @(r.presentedViewController == nil), @"forced": @(YES), @"top": topName });
+  });
+}
+
+// CI 自测：验证 shareText 的分享面板在「Modal 退场同拍」下真能呈现。
+// 旧实现直接 present 到 delegate.window.rootViewController，此场景下被
+// UIKit 静默吞掉且无 Promise 通道，故本探针在旧实现上必然判负——
+// 这正是原用例（只断言 `typeof shareText === 'function'`）缺失的判别力。
+// 与 selectFileRaceProbe 同构：先呈现临时 VC，completion 内同拍退场并
+// 立即调 shareText，呈现存活后立刻撤掉分享面板，不留残留。
+// 双保险门控：仅沙箱存在 .lx-ci-selftest 标记时生效，正式包恒拒绝。
+RCT_EXPORT_METHOD(shareTextRaceProbe:(NSString *)text
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSString *tmp = NSTemporaryDirectory();
+  NSString *marker = [tmp stringByAppendingPathComponent:@".lx-ci-selftest"];
+  if (![[NSFileManager defaultManager] fileExistsAtPath:marker]) {
+    reject(@"not_allowed", @"shareTextRaceProbe requires the CI self-test marker", nil);
+    return;
+  }
+  dispatch_async(dispatch_get_main_queue(), ^{
+    UIViewController *top = [self lx_stableTopViewController];
+    if (top == nil) {
+      resolve(@{ @"presented": @(NO), @"elapsedMs": @0, @"error": @"no stable top view controller to stage race" });
+      return;
+    }
+    NSTimeInterval t0 = [NSDate date].timeIntervalSince1970;
+    UIViewController *transient = [[UIViewController alloc] init];
+    transient.modalPresentationStyle = UIModalPresentationFullScreen;
+    transient.view.backgroundColor = [UIColor clearColor];
+    __weak typeof(self) weakSelf = self;
+    [top presentViewController:transient animated:YES completion:^{
+      __strong typeof(weakSelf) self = weakSelf;
+      if (self == nil) return;
+      // 同一拍：退场临时 VC + 发起分享（复刻真机「点导出时上层 Modal 正退场」）
+      [transient dismissViewControllerAnimated:YES completion:nil];
+      self.selectFilePresentAttempts = 0;
+      NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:kLXPickerPresentBudget];
+      [self runPresentPipelineWithFactory:^UIViewController *{
+        __strong typeof(weakSelf) self = weakSelf;
+        UIActivityViewController *controller = [[UIActivityViewController alloc] initWithActivityItems:@[ text ?: @"lx ci probe" ] applicationActivities:nil];
+        if (controller.popoverPresentationController != nil) {
+          UIViewController *anchor = [self lx_stableTopViewController];
+          if (anchor != nil) {
+            controller.popoverPresentationController.sourceView = anchor.view;
+            controller.popoverPresentationController.sourceRect = CGRectMake(CGRectGetMidX(anchor.view.bounds), CGRectGetMidY(anchor.view.bounds), 0, 0);
+          }
+        }
+        // 留存最后一拍造的 VC：预算耗尽时用于分解存活判据的两个分量
+        if (self != nil) self.lxLastShareProbeVC = controller;
+        return controller;
+      } deadline:deadline onFinish:^(UIViewController *vc, NSString *error) {
+        __strong typeof(weakSelf) self = weakSelf;
+        NSTimeInterval elapsedMs = ([NSDate date].timeIntervalSince1970 - t0) * 1000.0;
+        NSInteger attempts = self == nil ? 0 : self.selectFilePresentAttempts;
+        if (vc != nil) {
+          // 判活成功：立即撤掉分享面板恢复现场，不残留进入后续用例
+          [vc dismissViewControllerAnimated:NO completion:nil];
+          resolve(@{ @"presented": @(YES), @"attempts": @(attempts), @"elapsedMs": @(elapsedMs),
+                     @"lastHasPresenting": @(YES), @"lastHasWindow": @(YES), @"error": [NSNull null] });
+          return;
+        }
+        // 预算耗尽：把管线存活判据的两个分量分开回报。
+        // UIActivityViewController 的内容由独立进程的远程视图服务渲染，
+        // 宿主进程侧 vc.view 只是容器——无头模拟器上远程服务起不来时
+        // view.window 恒 nil，而 presentingViewController 仍在。
+        // 二者分开才能区分「呈现真被并发退场吞掉」（两者皆 nil）与
+        // 「仅远程视图服务不可用」（有 presenting、无 window，属无头环境
+        // 限制，非生产缺陷）。合成一个 bool 时这两种情形不可分辨。
+        UIViewController *lastVC = self == nil ? nil : self.lxLastShareProbeVC;
+        BOOL hasPresenting = lastVC != nil && lastVC.presentingViewController != nil;
+        BOOL hasWindow = lastVC != nil && lastVC.view.window != nil;
+        if (self != nil) self.lxLastShareProbeVC = nil;
+        if (lastVC != nil && lastVC.presentingViewController != nil) [lastVC dismissViewControllerAnimated:NO completion:nil];
+        resolve(@{ @"presented": @(NO), @"attempts": @(attempts), @"elapsedMs": @(elapsedMs),
+                   @"lastHasPresenting": @(hasPresenting), @"lastHasWindow": @(hasWindow),
+                   @"error": error ?: @"unknown" });
+      }];
+    }];
+  });
+}
+
+// CI 自测（任务 9.4）：无头复现「下拉退场与呈现命令同拍」。从稳定顶层 VC
+// 呈现临时 VC，动画完成后同一主队列拍内先退场、再启动呈现管线——时序等价
+// Menu.tsx menuPress 的 onPress → onHide。管线用普通 VC 走与生产同一套
+// 「等稳定→呈现→存活校验→重试」逻辑：旧式直接呈现会落在正在退场的临时
+// VC 上被 UIKit 吞掉，判负；管线必须等层级稳定后呈现判活。判活后立即
+// 退场探针 VC，无残留、不碰 DocumentProvider XPC（run 33498023646 实锤：
+// 无头模拟器上真选择器呈现不回调且残留连接崩进程）。
+// 双保险门控：仅沙箱存在 .lx-ci-selftest 标记时生效，正式包恒拒绝。
+RCT_EXPORT_METHOD(selectFileRaceProbe:(NSDictionary *)options
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSString *tmp = NSTemporaryDirectory();
+  NSString *marker = [tmp stringByAppendingPathComponent:@".lx-ci-selftest"];
+  if (![[NSFileManager defaultManager] fileExistsAtPath:marker]) {
+    reject(@"not_allowed", @"selectFileRaceProbe requires the CI self-test marker", nil);
+    return;
+  }
+  dispatch_async(dispatch_get_main_queue(), ^{
+    UIViewController *top = [self lx_stableTopViewController];
+    if (top == nil) {
+      resolve(@{ @"presented": @(NO), @"attempts": @0, @"elapsedMs": @0, @"error": @"no stable top view controller to stage race" });
+      return;
+    }
+    NSTimeInterval t0 = [NSDate date].timeIntervalSince1970;
+    UIViewController *transient = [[UIViewController alloc] init];
+    transient.modalPresentationStyle = UIModalPresentationFullScreen;
+    transient.view.backgroundColor = [UIColor clearColor];
+    __weak typeof(self) weakSelf = self;
+    [top presentViewController:transient animated:YES completion:^{
+      __strong typeof(weakSelf) self = weakSelf;
+      if (self == nil) return;
+      // 同一拍：先退场临时 VC，再启动管线（复刻 onPress 与 onHide 同拍）
+      [transient dismissViewControllerAnimated:YES completion:nil];
+      self.selectFilePresentAttempts = 0;
+      NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:kLXPickerPresentBudget];
+      [self runPresentPipelineWithFactory:^UIViewController *{
+        UIViewController *probe = [[UIViewController alloc] init];
+        probe.modalPresentationStyle = UIModalPresentationFullScreen;
+        probe.view.backgroundColor = [UIColor clearColor];
+        return probe;
+      } deadline:deadline onFinish:^(UIViewController *vc, NSString *error) {
+        NSTimeInterval elapsedMs = ([NSDate date].timeIntervalSince1970 - t0) * 1000.0;
+        NSInteger attempts = self.selectFilePresentAttempts;
+        if (vc != nil) {
+          // 判活成功：退场探针 VC 恢复现场，无残留进入后续用例
+          [vc dismissViewControllerAnimated:NO completion:nil];
+          resolve(@{ @"presented": @(YES), @"attempts": @(attempts), @"elapsedMs": @(elapsedMs), @"error": [NSNull null] });
+          return;
+        }
+        resolve(@{ @"presented": @(NO), @"attempts": @(attempts), @"elapsedMs": @(elapsedMs), @"error": error ?: @"unknown" });
+      }];
+    }];
+  });
+}
+
+// 网络原生探针（任务 9.6）：绕过 RN fetch 栈，用原生 NSURLSession
+// 直接打同一个 URL，返回 NSError 的 domain/code/description。
+// RN 的 Networking 把原生错误吞成 "Network request failed"，这个
+// 探针负责把真实错误文本带出来：交叉对照「RN 失败 / 原生通」可把
+// 故障收敛到 RN 网络栈配置层（ATS、session 配置、拦截器），而非
+// 系统网络能力。无标记门控：正式包也可用，供真机复测取证。
+RCT_EXPORT_METHOD(httpProbe:(NSString *)url
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSURL *target = [NSURL URLWithString:url];
+  if (target == nil || target.scheme == nil) {
+    reject(@"bad_url", @"invalid probe url", nil);
+    return;
+  }
+  NSTimeInterval t0 = [NSDate date].timeIntervalSince1970;
+  NSURLSessionConfiguration *config = [NSURLSessionConfiguration defaultSessionConfiguration];
+  config.timeoutIntervalForRequest = 12;
+  NSURLSession *session = [NSURLSession sessionWithConfiguration:config];
+  NSURLSessionDataTask *task = [session dataTaskWithURL:target
+      completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+    NSTimeInterval elapsedMs = ([NSDate date].timeIntervalSince1970 - t0) * 1000.0;
+    [session finishTasksAndInvalidate];
+    if (error != nil) {
+      // description 而非 localizedDescription：后者常只是一句
+      // 「网络连接似乎已断开」，归因价值低；description 带完整
+      // userInfo（含 NSUnderlyingError），DNS / ATS / 连接层差异可读
+      NSString *desc = error.description ?: @"";
+      resolve(@{
+        @"ok": @(NO),
+        @"domain": error.domain ?: @"",
+        @"code": @(error.code),
+        @"desc": [desc substringToIndex:MIN((NSUInteger)500, desc.length)],
+        @"bytes": @0,
+        @"status": @0,
+        @"elapsedMs": @(elapsedMs),
+      });
+      return;
+    }
+    NSInteger status = 0;
+    if ([response isKindOfClass:[NSHTTPURLResponse class]]) {
+      status = ((NSHTTPURLResponse *)response).statusCode;
+    }
+    resolve(@{
+      @"ok": @(YES),
+      @"domain": @"",
+      @"code": @0,
+      @"desc": @"",
+      @"bytes": @(data.length),
+      @"status": @(status),
+      @"elapsedMs": @(elapsedMs),
+    });
+  }];
+  [task resume];
+}
+
+// CI 自测 / 真机归因（任务 9.8）：媒体通道 ATS 判别探针。
+// NSURLSession 数据路径与 AVFoundation 媒体路径受不同 ATS 辖区治理
+// （声明 audio 后台模式时媒体通道另由 NSAllowsArbitraryLoadsForMedia
+// 管辖）：数据通道已放行（任务 9.7 后搜索恢复）不代表媒体通道放行。
+// 探针用裸 AVPlayer 装载目标 URL，等待加载到可播或失败，带回
+// NSError domain/code——code -1022 即媒体通道被 ATS 拦截的确定性
+// 本地信号（评估发生在 DNS/连接之前，与外网可达性无关）。
+// 装载失败（-1022 之外的错误码）与装载成功的对比，把「播放仍失败」
+// 的归因拆成三叉：媒体通道 ATS / 远程流装载管线 / 上游取链。
+// 与 httpProbe 同口径：无标记门控，真机正式包可用
+RCT_EXPORT_METHOD(avStreamProbe:(NSString *)url
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSURL *target = [NSURL URLWithString:url];
+  if (target == nil || target.scheme == nil) {
+    reject(@"bad_url", @"invalid probe url", nil);
+    return;
+  }
+  NSTimeInterval t0 = [NSDate date].timeIntervalSince1970;
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    NSString *status = @"unknown";
+    NSString *errorDomain = @"";
+    NSInteger errorCode = 0;
+    NSString *errorDesc = @"";
+    @try {
+      AVURLAsset *asset = [AVURLAsset assetWithURL:target];
+      AVPlayerItem *item = [AVPlayerItem playerItemWithAsset:asset];
+      AVPlayer *player = [AVPlayer playerWithPlayerItem:item];
+      player.volume = 0.0f; // 探针不出声
+      // ATS 拦截在加载早期即以 failed 状态 + NSError 落地；
+      // 可播与失败都判装载完成，只超时判待定
+      NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:6];
+      while ([deadline timeIntervalSinceNow] > 0) {
+        if (item.status == AVPlayerItemStatusReadyToPlay) { status = @"ready"; break; }
+        if (item.status == AVPlayerItemStatusFailed) {
+          status = @"failed";
+          NSError *err = item.error;
+          if (err != nil) {
+            errorDomain = err.domain ?: @"";
+            errorCode = err.code;
+            NSString *desc = err.description ?: @"";
+            errorDesc = [desc substringToIndex:MIN((NSUInteger)500, desc.length)];
+            // ATS 拦截常以嵌套形式落地：AVFoundationErrorDomain 外层
+            // 包裹 NSURLErrorDomain/-1022，拦截信号在内层。外层域不携带
+            // 该信号时向内层提取，断言端只认 -1022
+            NSError *underlying = (NSError *)err.userInfo[NSUnderlyingErrorKey];
+            if (underlying != nil && errorCode != -1022 && underlying.code == -1022) {
+              errorDomain = [NSString stringWithFormat:@"%@>%@", errorDomain, underlying.domain ?: @""];
+              errorCode = underlying.code;
+            }
+          }
+          break;
+        }
+        [NSThread sleepForTimeInterval:0.2];
+      }
+      if ([status isEqualToString:@"unknown"]) status = @"timeout";
+      // 彻底释放：悬挂的 AVPlayer 实例占用媒体会话与网络句柄，
+      // 套件内探针连续发射（ATS + 流两段）时会叠加成拥塞源
+      [player pause];
+      [player replaceCurrentItemWithPlayerItem:nil];
+      player = nil;
+      item = nil;
+      asset = nil;
+    } @catch (NSException *exception) {
+      status = @"exception";
+      errorDesc = [NSString stringWithFormat:@"%@: %@", exception.name, exception.reason];
+    }
+    NSTimeInterval elapsedMs = ([NSDate date].timeIntervalSince1970 - t0) * 1000.0;
+    resolve(@{
+      @"status": status,
+      @"errorDomain": errorDomain,
+      @"errorCode": @(errorCode),
+      @"errorDesc": errorDesc,
+      @"elapsedMs": @(elapsedMs),
+    });
+  });
+}
+
+// CI 自测：按 testID 在真机视图树里取视图的实际 frame。
+// 排行榜空列表与播放页无歌词都是「视图挂载 / 尺寸」缺陷：JS 侧看不到——
+// 抽屉面板条件渲染时 ref 恒为 null，命令式 setList 被 ?. 静默吞掉；
+// PagerView 子页缺 flex 时 iOS 侧 Yoga 把高度算成 0，歌词 FlatList 无
+// 可绘区。两者在 JS 状态上都「正常」，只有原生 frame 能判真伪。
+// RN 把 testID 映射为 reactAccessibilityElement.accessibilityIdentifier
+// （RCTViewManager.m:202），故按该属性广度优先搜索。
+// found=NO 与 zero-size 是两种不同事实，分别回报，断言端各自判别。
+// 门控：仅沙箱存在 .lx-ci-selftest 标记时生效，正式包恒拒绝。
+RCT_EXPORT_METHOD(viewTreeProbe:(NSString *)testID
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSString *marker = [NSTemporaryDirectory() stringByAppendingPathComponent:@".lx-ci-selftest"];
+  if (![[NSFileManager defaultManager] fileExistsAtPath:marker]) {
+    reject(@"not_allowed", @"view tree probe requires the CI self-test marker", nil);
+    return;
+  }
+  if (testID.length == 0) {
+    reject(@"bad_arg", @"testID required", nil);
+    return;
+  }
+  dispatch_async(dispatch_get_main_queue(), ^{
+    NSMutableArray<UIView *> *roots = [NSMutableArray array];
+    for (UIWindow *window in [UIApplication sharedApplication].windows) {
+      [roots addObject:window];
+    }
+    // 广度优先：命中即停。同 testID 多实例时取最先命中者，
+    // 并回报 matches 总数供断言端识别意外重复挂载
+    NSMutableArray<UIView *> *queue = [roots mutableCopy];
+    NSMutableArray<UIView *> *matches = [NSMutableArray array];
+    NSUInteger visited = 0;
+    while (queue.count > 0 && visited < 20000) {
+      UIView *view = queue.firstObject;
+      [queue removeObjectAtIndex:0];
+      visited++;
+      if ([view.accessibilityIdentifier isEqualToString:testID]) [matches addObject:view];
+      for (UIView *sub in view.subviews) [queue addObject:sub];
+    }
+    UIView *hit = matches.firstObject;
+    if (hit == nil) {
+      resolve(@{ @"found": @NO, @"matches": @(0), @"visited": @(visited) });
+      return;
+    }
+    CGRect frame = hit.frame;
+    // 屏幕坐标：面板关闭时靠 translateX 移出容器，frame.origin 仍是
+    // 布局位置，故同时回报换算到窗口的可见原点，供位移判别
+    CGRect inWindow = [hit convertRect:hit.bounds toView:nil];
+    BOOL hidden = hit.isHidden;
+    resolve(@{
+      @"found": @YES,
+      @"matches": @(matches.count),
+      @"visited": @(visited),
+      @"width": @(frame.size.width),
+      @"height": @(frame.size.height),
+      @"windowX": @(inWindow.origin.x),
+      @"windowY": @(inWindow.origin.y),
+      @"hidden": @(hidden),
+      @"alpha": @(hit.alpha),
+      @"subviews": @(hit.subviews.count),
+    });
+  });
+}
+
+// 任务 9.14 第五轮：JS 时点暂存兜底。原生启动阶段暂存在冷启动拿不到
+// in-place 文档的安全作用域访问（三轮真机实测失败）；JS 处理深链时应用
+// 已完全启动、FileProvider 已物化、可发起访问。重试覆盖物化延迟，每步
+// 写 Documents/lx-open-log.txt（「文件」App 本应用共享目录可见），失败
+// 的 reject 带逐步诊断（错误弹窗真机直接可见）。
+// 沙箱内路径（共享文档、已暂存产物、CI 探针）原样返回零拷贝。
+RCT_EXPORT_METHOD(importOpenedFile:(NSString *)rawPath
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSString *path = [rawPath isKindOfClass:[NSString class]] ? rawPath : @"";
+  if ([path hasPrefix:@"file://"]) path = [path substringFromIndex:7];
+  [self lx_writeOpenLog:[NSString stringWithFormat:@"jsImport: enter path=%@", path]];
+  if (path.length == 0) {
+    reject(@"import_opened_file_failed", @"importOpenedFile: empty path", nil);
+    return;
+  }
+  if ([path hasPrefix:NSHomeDirectory()]) {
+    [self lx_writeOpenLog:@"jsImport: sandbox passthrough"];
+    resolve(@{ @"path": path, @"staged": @(NO), @"attempts": @0 });
+    return;
+  }
+  // 冷启动领取：授权窗口只在 openURL 回调内，JS 运行时（作用域已关、
+  // FileProvider 项未物化）拷贝必然失败——真机 scoped=no + no such file
+  // 实锤。openURL 暂存成功的产物经 NSUserDefaults 登记，此处按源 URL 领取
+  NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+  NSString *rawAbs = [rawPath isKindOfClass:[NSString class]] ? rawPath : @"";
+  NSString *pathAbs = [path hasPrefix:@"/"] ? [@"file://" stringByAppendingString:path] : path;
+  NSURL *url = [NSURL fileURLWithPath:path];
+  NSString *name = url.lastPathComponent.length > 0 ? url.lastPathComponent : @"opened-file";
+  NSString *destDir = [[NSTemporaryDirectory() stringByAppendingPathComponent:@"lx-opened-files"]
+                       stringByAppendingPathComponent:
+                       [NSString stringWithFormat:@"%.0f", [[NSDate date] timeIntervalSince1970] * 1000.0]];
+  NSString *destPath = [destDir stringByAppendingPathComponent:name];
+  NSMutableArray<NSString *> *diag = [NSMutableArray array];
+  [[NSFileManager defaultManager] createDirectoryAtPath:destDir withIntermediateDirectories:YES attributes:nil error:nil];
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    [self lx_stageAttempt:url destPath:destPath diag:diag attempt:1 resolve:resolve reject:reject
+                 pickupSourceURLs:@[rawAbs, pathAbs]];
+  });
+}
+
+- (void)lx_stageAttempt:(NSURL *)url destPath:(NSString *)destPath
+                   diag:(NSMutableArray<NSString *> *)diag attempt:(NSInteger)attempt
+                resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
+       pickupSourceURLs:(NSArray<NSString *> *)pickupSourceURLs
+{
+  static const NSInteger kMaxAttempts = 5;
+  static const NSTimeInterval kRetryDelay = 0.4;
+  // openURL 暂存产物领取（冷启动主路径）：每拍先查登记表，命中即返回；
+  // 未命中才走下面的现场拷贝。产物可能晚于 JS 启动才登记，随拍轮询
+  NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+  NSString *stagedDest = [ud stringForKey:@"lxStagedFilePath"];
+  NSString *stagedSource = [ud stringForKey:@"lxStagedFileSourceURL"];
+  if (stagedDest.length > 0 && stagedSource.length > 0) {
+    for (NSString *candidate in pickupSourceURLs) {
+      if (candidate.length > 0 && [stagedSource isEqualToString:candidate]) {
+        [self lx_writeOpenLog:[NSString stringWithFormat:@"jsImport: picked staged artifact attempt=%ld dest=%@", (long)attempt, stagedDest]];
+        [ud removeObjectForKey:@"lxStagedFilePath"];
+        [ud removeObjectForKey:@"lxStagedFileSourceURL"];
+        resolve(@{ @"path": stagedDest, @"staged": @(YES), @"attempts": @(attempt) });
+        return;
+      }
+    }
+  }
+  NSFileManager *fm = [NSFileManager defaultManager];
+  BOOL scoped = [url startAccessingSecurityScopedResource];
+  [diag addObject:[NSString stringWithFormat:@"a%ld scoped=%@", (long)attempt, scoped ? @"yes" : @"no"]];
+  __block BOOL copied = NO;
+  // 块内回写经 __block 中间变量；方法作用域的 & 参数一律用普通局部，
+  // 规避 __block 变量取址的 __autoreleasing 转换限制
+  __block NSError *blockCopyError = nil;
+  NSError *error = nil;
+  // 重试复用同一目标路径：先清上一轮可能残留的半成品，防「文件已存在」
+  [fm removeItemAtPath:destPath error:nil];
+  // 裸拷贝先行：物化已完成时不依赖作用域授予即可读（冷启动 FileProvider
+  // 已物化但作用域未授的形态）
+  copied = [fm copyItemAtPath:url.path toPath:destPath error:&error];
+  if (scoped) {
+    if (!copied) {
+      // NSFileCoordinator：FileProvider in-place 文档的文档化访问通道
+      NSFileCoordinator *coordinator = [[NSFileCoordinator alloc] initWithFilePresenter:nil];
+      [coordinator coordinateReadingItemAtURL:url options:0 error:&error byAccessor:^(NSURL *readURL) {
+        NSError *copyErr = nil;
+        copied = [fm copyItemAtURL:readURL toURL:[NSURL fileURLWithPath:destPath] error:&copyErr];
+        if (!copied) blockCopyError = copyErr;
+      }];
+    }
+    [url stopAccessingSecurityScopedResource];
+  } else if (!copied) {
+    // 无作用域也走一遍协调器：覆盖物化已完成、作用域未授的形态
+    NSFileCoordinator *coordinator = [[NSFileCoordinator alloc] initWithFilePresenter:nil];
+    [coordinator coordinateReadingItemAtURL:url options:0 error:&error byAccessor:^(NSURL *readURL) {
+      NSError *copyErr = nil;
+      copied = [fm copyItemAtURL:readURL toURL:[NSURL fileURLWithPath:destPath] error:&copyErr];
+      if (!copied) blockCopyError = copyErr;
+    }];
+  }
+  if (blockCopyError != nil) error = blockCopyError;
+  if (copied) {
+    [self lx_writeOpenLog:[NSString stringWithFormat:@"jsImport: staged attempt=%ld dest=%@", (long)attempt, destPath]];
+    resolve(@{ @"path": destPath, @"staged": @(YES), @"attempts": @(attempt) });
+    return;
+  }
+  [diag addObject:[NSString stringWithFormat:@"copyErr=%@", error.localizedDescription ?: @"<nil>"]];
+  if (attempt >= kMaxAttempts) {
+    NSString *message = [NSString stringWithFormat:@"importOpenedFile failed: %@", [diag componentsJoinedByString:@"; "]];
+    [self lx_writeOpenLog:[NSString stringWithFormat:@"jsImport: FAILED %@", message]];
+    reject(@"import_opened_file_failed", message, nil);
+    return;
+  }
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kRetryDelay * NSEC_PER_SEC)), dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    [self lx_stageAttempt:url destPath:destPath diag:diag attempt:attempt + 1 resolve:resolve reject:reject
+         pickupSourceURLs:pickupSourceURLs];
+  });
+}
+
+// 真机归因日志（与 AppDelegate lx_logOpen 同一文件）：落 Documents 目录，
+// UIFileSharingEnabled 使其出现在「文件」App 本应用共享目录，复测失败
+// 时直接取出回传即可定位
+- (void)lx_writeOpenLog:(NSString *)message
+{
+  NSString *docs = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
+  if (docs.length == 0) return;
+  NSString *logPath = [docs stringByAppendingPathComponent:@"lx-open-log.txt"];
+  NSDateFormatter *fmt = [[NSDateFormatter alloc] init];
+  [fmt setDateFormat:@"yyyy-MM-dd HH:mm:ss.SSS"];
+  NSString *line = [NSString stringWithFormat:@"%@ %@\n", [fmt stringFromDate:[NSDate date]], message];
+  NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
+  NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:logPath];
+  if (handle) {
+    @try {
+      [handle seekToEndOfFile];
+      [handle writeData:data];
+    } @finally {
+      [handle closeFile];
+    }
+  } else {
+    [data writeToFile:logPath atomically:YES];
+  }
+}
+
+- (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls
+{
+  if (controller == self.exportFilePicker) {
+    // export 模式：系统已把源文件拷贝到用户选定位置，urls 即目的地
+    RCTPromiseResolveBlock resolve = self.exportFileResolve;
+    [self clearExportFileState];
+    if (resolve == nil) return;
+    NSURL *dest = urls.firstObject;
+    if (dest == nil) {
+      resolve([NSNull null]);
+      return;
+    }
+    NSString *destStr = dest.isFileURL ? dest.path : dest.absoluteString;
+    resolve(@{ @"data": destStr != nil ? destStr : @"" });
+    return;
+  }
+  RCTPromiseResolveBlock resolve = self.selectFileResolve;
+  NSString *toPath = self.selectFileToPath;
+  [self clearSelectFileState];
+  if (resolve == nil) return;
+
+  NSURL *url = urls.firstObject;
+  if (url == nil) {
+    resolve([NSNull null]);
+    return;
+  }
+
+  BOOL scoped = [url startAccessingSecurityScopedResource];
+  NSString *name = url.lastPathComponent.length > 0 ? url.lastPathComponent : @"file";
+
+  if (toPath == nil) {
+    NSData *data = [NSData dataWithContentsOfURL:url];
+    if (scoped) [url stopAccessingSecurityScopedResource];
+    if (data == nil) {
+      resolve([NSNull null]);
+      return;
+    }
+    NSString *content = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    resolve(@{ @"data": content != nil ? content : @"" });
+    return;
+  }
+
+  NSString *destPath = [toPath stringByAppendingPathComponent:name];
+  NSURL *destURL = [NSURL fileURLWithPath:destPath];
+  NSString *ext = name.pathExtension;
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSError *error = nil;
+    [fm createDirectoryAtPath:toPath withIntermediateDirectories:YES attributes:nil error:&error];
+    [fm removeItemAtPath:destPath error:nil];
+    BOOL copied = [fm copyItemAtURL:url toURL:destURL error:&error];
+    if (scoped) [url stopAccessingSecurityScopedResource];
+    if (!copied) {
+      resolve([NSNull null]);
+      return;
+    }
+    NSDictionary *attrs = [fm attributesOfItemAtPath:destPath error:nil];
+    resolve(@{
+      @"data": destPath,
+      @"name": name,
+      @"path": destPath,
+      @"isDirectory": @(NO),
+      @"isFile": @(YES),
+      @"mimeType": [self mimeForExtension:ext],
+      @"size": attrs[NSFileSize] != nil ? attrs[NSFileSize] : @0,
+      @"lastModified": attrs[NSFileModificationDate] != nil ? @([attrs[NSFileModificationDate] timeIntervalSince1970] * 1000) : @0,
+      @"canRead": @(YES),
+    });
+  });
+}
+
+- (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)controller
+{
+  if (controller == self.exportFilePicker) {
+    RCTPromiseResolveBlock resolve = self.exportFileResolve;
+    [self clearExportFileState];
+    if (resolve != nil) resolve([NSNull null]);
+    return;
+  }
+  RCTPromiseResolveBlock resolve = self.selectFileResolve;
+  [self clearSelectFileState];
+  if (resolve != nil) resolve([NSNull null]);
+}
+
+@end

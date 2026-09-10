@@ -1,0 +1,49 @@
+# CI 验证证据：iOS Verify（2026-08-24）
+
+- 运行：[actions/runs/32705189097](https://github.com/wtfdelphia/lx-music-mobile/actions/runs/32705189097)
+  （`dev-ios` @ `1dbb577`，工作流 `.github/workflows/ios-verify.yml`）
+- Runner：GitHub Actions `macos-15`（arm64）
+- 工具链：Xcode 16.4（Build 16F6）、CocoaPods 1.17.0、Node v18（.nvmrc）
+
+## 结果
+
+| 验证项 | 对应任务 | 结果 |
+|---|---|---|
+| `cargo build --locked --release --target aarch64-apple-ios` | 3.1（编译部分） | ✅ 39s |
+| `cargo test --locked`（macOS 宿主黄金基准） | 3.3 复证 | ✅ |
+| `npm ci` → `pod install`（`NO_FLIPPER=1`）→ `xcodebuild` 模拟器 Release，`CODE_SIGNING_ALLOWED=NO` | 7.5 / R8 门槛 | ✅ 21m14s，`** BUILD SUCCEEDED **`，产物 `LxMusicMobile.app` |
+
+## 结论
+
+- RN 0.73.11 × Xcode 16.4 编译级兼容成立，Phase 0 的 Xcode 版本风险降级
+  （运行时级兼容仍需模拟器/真机验证）。
+- 任务 3.1 的 D2 退路条件未触发；剩余"哑函数经桥调通"属交互式验证，
+  待本机macOS（macOS 15 / Intel）环境。
+- 首次 `npm ci` 失败源于 vitest 引入时 lockfile 未同步，已由 `1dbb577`
+  以 `--package-lock-only` 修复。
+
+## 第二轮：设备版 IPA 流水线（2026-08-24）
+
+- 运行：[actions/runs/32707901201](https://github.com/wtfdelphia/lx-music-mobile/actions/runs/32707901201)
+  （`dev-ios` @ `0b54897`）
+- 结果：
+  - Rust iOS target 交叉编译 ✅（38s）
+  - iOS unsigned build（模拟器）✅ 18m41s
+  - iOS unsigned IPA（设备）✅ 12m31s，Artifact
+    `LxMusicMobile-unsigned-ipa`（11,079,292 bytes，保留 30 天）
+- 结论：用户侧流水线（push → macOS Runner → IPA → Artifact → 重签侧载）
+  全链路验证成立。设备版构建快于模拟器版且与分发物一致，随后将
+  双 job 归并为单 job（门禁 = 产物），消除重复的 npm ci / pod install。
+
+## 第三轮：原生模块面批量落地（2026-08-24）
+
+- 运行：[actions/runs/32716727526](https://github.com/wtfdelphia/lx-music-mobile/actions/runs/32716727526)
+  与 [actions/runs/32717009005](https://github.com/wtfdelphia/lx-music-mobile/actions/runs/32717009005)，均 ✅
+- 编译级验证通过的模块面：UtilsModule、CryptoModule（Rust staticlib
+  链接）、UserApiModule（JSC 沙箱）、CacheModule、GzipModule（libz
+  windowBits=31），以及 fs.ios.ts / lyricDesktop.ios.ts / version.ios.js /
+  播放器配置（iosCategory + UIBackgroundModes）。
+- 期间修复：`RCT_EXPORT_METHOD` 宏只生成声明、方法体须自带 `{}`；
+  `JSValue.toNumber` 返回 `NSNumber*`；ObjC 字符串字面量 `@` 前缀。
+- 结论：Linux 编写 + GH Actions 编译验证的循环成立；剩余验证均为
+  运行时级（模拟器/真机），归本机 macOS 环境。

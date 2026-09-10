@@ -1,5 +1,6 @@
 import { LIST_IDS } from '@/config/constant'
 import { createList, getListMusics, overwriteList, overwriteListFull, overwriteListMusics } from '@/core/list'
+import { saveViaSystemExportPicker, systemExportPicker } from '@/utils/exportPicker'
 import { filterMusicList, fixNewMusicInfoQuality, toNewMusicInfo } from '@/utils'
 import { log } from '@/utils/log'
 import { confirmDialog, handleReadFile, handleSaveFile, showImportTip, toast } from '@/utils/tools'
@@ -191,15 +192,23 @@ const exportAllList = async(path: string) => {
     data: await getAllLists(),
   }))
 
+  // iOS 走系统另存为面板（任务 9.16）：用户可把备份存到「文件」App
+  // 任意位置，不再限于应用沙箱；返回值为是否已保存（用户取消不算失败）
+  if (systemExportPicker) {
+    return saveViaSystemExportPicker('lx_list.lxmc', data).then(({ saved }) => saved)
+  }
+
   try {
     await handleSaveFile(path + '/lx_list.lxmc', data)
   } catch (error: any) {
     log.error(error.stack)
   }
+  return true
 }
 export const handleExportList = (path: string) => {
   toast(global.i18n.t('setting_backup_part_export_list_tip_zip'))
-  void exportAllList(path).then(() => {
+  void exportAllList(path).then(saved => {
+    if (!saved) return
     toast(global.i18n.t('setting_backup_part_export_list_tip_success'))
   }).catch((err: any) => {
     log.error(err.message)

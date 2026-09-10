@@ -1,0 +1,176 @@
+// CI 自测报告断言（宿主侧）：读取应用内自测报告与 Tab 截图，任一失败则退出码 1。
+// 用法：node test/ci-report-assert.js <ci-report.json> [tab-*.png ...]
+const fs = require('fs')
+const path = require('path')
+const crypto = require('crypto')
+const zlib = require('zlib')
+
+const [,, reportFile, ...tabPngs] = process.argv
+if (!reportFile) {
+  console.error('usage: node test/ci-report-assert.js <ci-report.json> [tab-*.png ...]')
+  process.exit(2)
+}
+if (!fs.existsSync(reportFile)) {
+  console.error(`FAIL: report not found: ${reportFile}（应用内自测未完成）`)
+  process.exit(1)
+}
+
+const report = JSON.parse(fs.readFileSync(reportFile, 'utf8'))
+const failures = []
+
+// finished=false：应用增量写的部分报告（套件中途崩溃，如 run 32995785233
+// 旋转通道崩进程）。照常断言已有结果，并显式判套件未完成
+if (report.finished === false) {
+  failures.push('suite_incomplete: 部分报告（应用中途退出，未见 lx-ci-done 标记）')
+}
+
+console.log(`report v${report.v} ok=${report.ok} duration=${(report.durationMs / 1000).toFixed(1)}s`)
+for (const r of report.results) {
+  console.log(`  [${r.ok ? 'PASS' : 'FAIL'}] ${r.id} (${r.ms}ms)`)
+  if (!r.ok) failures.push(`${r.id}: ${typeof r.detail === 'string' ? r.detail : JSON.stringify(r.detail)}`)
+}
+
+// 验证矩阵 runtime 钉死：报告自报执行环境（env.ciRuntime）必须与宿主
+// 钉死目标一致——镜像换预装 runtime 时，绿灯含义不得静默漂移。
+// 未传 IOS_RUNTIME 时不做核对（本地手跑报告场景）
+const EXPECTED_RUNTIME = process.env.IOS_RUNTIME
+if (EXPECTED_RUNTIME) {
+  const got = report.env && report.env.ciRuntime
+  if (!got) {
+    failures.push('ci_runtime_missing: 报告无 env.ciRuntime（宿主 runtime 标识未投递或应用未回读）')
+  } else if (!String(got).includes(EXPECTED_RUNTIME)) {
+    failures.push(`ci_runtime_mismatch: 钉死目标 iOS ${EXPECTED_RUNTIME}，报告自报 ${got}`)
+  } else {
+    console.log(`  [PASS] ci_runtime_pinned (${got})`)
+  }
+}
+
+// 远程流播放门禁（任务 9.8）：CI 环境宿主恒起 loopback 媒体服务，
+// remote_stream_playback 是硬门禁——skipped 说明 loopback 未起或
+// 应用侧没跑到，绿灯含义出现新漂移口，必须红。本地手跑（未传
+// IOS_RUNTIME）允许 skipped，只打印供判读
+const remoteStream = report.results.find(r => r.id === 'remote_stream_playback')
+if (remoteStream && remoteStream.detail && remoteStream.detail.skipped === true) {
+  if (EXPECTED_RUNTIME) {
+    failures.push(`remote_stream_required: CI 上 remote_stream_playback 被跳过（${JSON.stringify(remoteStream.detail.reason ?? '')}）`)
+  } else {
+    console.log(`  [SKIP] remote_stream_playback (${String(remoteStream.detail.reason)})`)
+  }
+}
+
+// UI 回归门禁：榜单列表空白与播放页无歌词两条用例必须在报告里出现。
+// 上面的遍历只对「跑了但失败」判红，用例整体缺席（注册块中断、早退）
+// 时报告里没有该条目，遍历判不出来——这两条正是真机实测出的回归，
+// 缺席即绿灯含义漂移，必须红
+// log_export 同理必须在场：它是真机取证入口本身，坏掉会掩盖其他所有
+// 真机故障的诊断（原用例只断言 `typeof shareText === 'function'`，
+// 旧实现上恒真，缺陷因此逃逸）
+for (const id of ['leaderboard_drawer', 'lyric_page', 'log_export']) {
+  if (!report.results.some(r => r.id === id)) {
+    failures.push(`${id}_missing: 报告缺少该用例结果（未执行或套件早退）`)
+  }
+}
+
+// 导出日志三层判据逐项复核：detail 缺字段或判据为假即红，
+// 防「用例在场但断言被弱化」的绿灯漂移
+const logExport = report.results.find(r => r.id === 'log_export')
+if (logExport && logExport.ok) {
+  const d = logExport.detail || {}
+  if (d.markerFound !== true) failures.push('log_export_source: 日志文件未收到标记（导出源为空）')
+  if (!(d.logLen > 0)) failures.push(`log_export_len: 日志内容长度非正 logLen=${d.logLen}`)
+  // 错误通道是本轮修复的核心：旧实现 fire-and-forget，失败时调用方无从
+  // 察觉，这才是「点导出没反应」的成因。它可判、必须判。
+  if (d.errorChannelOk !== true) failures.push('log_export_channel: shareText 无错误通道（空文本未 reject，退回 fire-and-forget）')
+  if (d.markerFound === true && d.errorChannelOk === true && d.logLen > 0) console.log('  [PASS] log_export_gates')
+  // 呈现结果不判红判绿：三轮实测（34019867067 / 34021736928 / 34023702163）
+  // 分别是「被吞」「completion 未触发」「探针自身挂死」三种形态，说明该无头
+  // 环境上 UIActivityViewController 的呈现与退场回调本就不可靠——内容由独立
+  // 进程的远程视图服务渲染。管线的竞态安全性由 file_picker_race（普通 VC，
+  // 同一条管线，attempts=1 通过）保证，不靠这里。
+  console.log(`  [NOTE] log_export: 分享面板呈现结果仅采集不判定 reachedHierarchy=${d.reachedHierarchy} attempts=${d.attempts ?? 'n/a'} probeError=${d.probeError ?? 'null'}；真机面板可见性待用户复测`)
+  // 现场恢复要判：分享面板只支持竖屏，残留会让紧随其后的 landscape 判负
+  // （run 34036942428 即此）。这层是可判的，与呈现结果不同。
+  if (d.modalCleared !== true) failures.push(`log_export_residue: 分享面板未清场，会污染后续用例 residue=${d.modalResidue ?? 'unknown'}`)
+  if (d.modalForcedDismiss === true) console.log('  [NOTE] log_export: 模态残留经强制撤场清空（探针自身 dismiss 未按期完成）')
+}
+
+// gzip 交叉验证：设备端 gzipString 产物必须能被宿主标准 gunzip 解压（iOS→Android 互操作）
+const gzipResult = report.results.find(r => r.id === 'gzip_contract')
+if (gzipResult && gzipResult.ok && gzipResult.detail && gzipResult.detail.gzipOutB64) {
+  try {
+    const text = zlib.gunzipSync(Buffer.from(gzipResult.detail.gzipOutB64, 'base64')).toString('utf8')
+    if (text !== gzipResult.detail.expectText) {
+      failures.push(`gzip_host_crosscheck: 文本不一致: ${text}`)
+    } else console.log('  [PASS] gzip_host_crosscheck')
+  } catch (err) {
+    failures.push(`gzip_host_crosscheck: 宿主 gunzip 失败: ${err.message}`)
+  }
+} else {
+  failures.push('gzip_host_crosscheck: 缺少 gzip_contract 结果')
+}
+
+// Tab 截图必须互不相同（证明切换确实触发了重新渲染）
+const hashes = []
+for (const p of tabPngs) {
+  if (!fs.existsSync(p)) {
+    failures.push(`tab 截图缺失: ${p}`)
+    continue
+  }
+  hashes.push({ p: path.basename(p), h: crypto.createHash('md5').update(fs.readFileSync(p)).digest('hex') })
+}
+for (let i = 0; i < hashes.length; i++) {
+  for (let j = i + 1; j < hashes.length; j++) {
+    if (hashes[i].h === hashes[j].h) failures.push(`tab 截图相同（未重新渲染？）: ${hashes[i].p} == ${hashes[j].p}`)
+  }
+}
+const tabPairsFailed = hashes.length >= 2 && hashes.some((a, i) => hashes.slice(i + 1).some(b => a.h === b.h))
+if (hashes.length >= 4 && !tabPairsFailed) console.log('  [PASS] tab_screenshots_differ')
+
+console.log('env: isAgreePact=%s langId=%s bootLogTail=%j',
+  report.env && report.env.isAgreePact,
+  report.env && report.env.langId,
+  String((report.env && report.env.bootLog) || '').slice(-120))
+console.log('alerts=%d overlays=%s linkingListeners=%s',
+  (report.alerts || []).length,
+  JSON.stringify((report.overlays || []).map(o => `${o.name}${o.dismissed ? '(dismissed)' : ''}`)),
+  JSON.stringify((report.env && report.env.linkingListeners) || []))
+
+// 脚本回归集通过率摘要（G1 雏形）：硬断言失败已由 runTest 计入 failures，
+// 这里仅呈现逐脚本结果供 design.md D6 判读
+const regression = report.results.find(r => r.id === 'user_api_regression')
+if (regression && regression.detail && Array.isArray(regression.detail.results)) {
+  console.log(`\nscripts regression: ${regression.detail.inited}/${regression.detail.total} inited (hard-required ${regression.detail.hardRequired})`)
+  for (const r of regression.detail.results) {
+    const tag = r.ok ? 'INITED' : (r.expectInited ? 'HARD-FAIL' : 'soft')
+    console.log(`  [${tag}] ${r.script} (${r.ms}ms, sources=${r.sources}${r.error ? ', ' + String(r.error).slice(0, 80) : ''})`)
+  }
+}
+
+// 任务 4.4 取证：内置源真实搜索返回（mainflow_local 用例写入）
+if (Array.isArray(report.searchHits) && report.searchHits.length) {
+  console.log('\nsearch hits (task 4.4):')
+  for (const h of report.searchHits) console.log(`  [${h.source}] ${h.name} - ${h.singer} (id=${h.id})`)
+}
+
+// 任务 5.2 取证：全程 AppState 序列须出现 background（后台续播放生效）
+if (Array.isArray(report.appStates) && report.appStates.length) {
+  const seq = report.appStates.map(e => e.s).join(' -> ')
+  console.log(`\napp state trail (task 5.2): ${seq}`)
+}
+
+// 播放位置冻结判别：裸 AVPlayer 音频时钟探针（环境约束 / 播放栈问题）
+if (report.audioClockProbe) {
+  const p = report.audioClockProbe
+  console.log(`\naudio clock probe: clockAdvances=${p.clockAdvances} error=${p.error ?? 'null'}`)
+  console.log(`  session: ${p.session.category}/${p.session.mode} latency=${p.session.outputLatency}s outputs=${JSON.stringify(p.session.outputs)}`)
+  for (const ph of p.phases) {
+    console.log(`  phase waits=${ph.waits} advance=${ph.advance.toFixed(3)}s timeControl=${ph.timeControlStatus} samples=[${ph.samples.map(s => s.toFixed(2)).join(',')}]`)
+  }
+}
+
+if (failures.length) {
+  console.error(`\nFAIL (${failures.length}):`)
+  for (const f of failures) console.error('  - ' + f)
+  process.exit(1)
+}
+console.log('\nALL CI SELF-TEST ASSERTIONS PASSED')

@@ -1,0 +1,169 @@
+# 横屏用例失败根因：非 active 场景不重排版（2026-08-28）
+
+关联任务：7.4 横屏 / iPad 布局。
+
+## 现象
+
+run 33144095295 的 `landscape` 用例失败：
+
+```
+window size did not flip to landscape (402x874)
+rot={"sceneStates":["UIWindowScene(inactive)"],"geoErrors":[],
+     "interfaceOrientationAfter2s":"landscape",
+     "applied":["attemptRotation","requestGeometryUpdate(scenes=1)"],
+     "ok":1,"error":null}
+```
+
+旋转请求全部成功：`geoErrors` 为空，`interfaceOrientation` 已变为
+landscape。但 `windowSizeTools.getSize()` 仍是 402x874，宿主截图
+`landscape.png` 为 1206x2622（402x874 @3x）竖屏画面。
+
+## 根因
+
+场景停在 `inactive`，RN 不给非 active 的场景重排版：`Dimensions` 不发变更
+事件，`SizeView.onLayout` 不触发，窗口尺寸不更新，画面也不转。
+
+场景为何 inactive：`testDeeplink` 在 +79.55s 调
+`Linking.openURL('lxmusic://player/pause')`（`openurl-native.log` 时间戳
+1787895995123），走 SpringBoard 往返；`appStates` 在 +81.2s 转 inactive
+后再未回 active。
+
+原本应由后台阶段末尾的唤回 launch 恢复，但该阶段在 `bg-ready` TIMEOUT 时
+`exit 0` 早退（`bg-phase.log` 仅一行 `bg-ready marker: TIMEOUT`），
+第 314 行的 `simctl launch` 从未执行。而 `bg-ready` 之所以 TIMEOUT，是
+`background_play` 被秒/毫秒单位错配卡在位置断言上（见
+[playback-clock-units.md](playback-clock-units.md)）。
+
+先前一度归因于「深链导入确认弹窗常驻把场景压成 inactive」，该判断已证伪：
+本轮弹窗只记录未呈现，且弹窗时间（+87.0s）比 inactive（+81.2s）晚 5.8s。
+
+## 修复
+
+宿主侧横屏阶段开头无条件 `simctl launch` 唤回一次，再置 rotate-phase 标记。
+launch 对已在前台的应用是幂等激活，不重启进程，自测状态与报告不丢。
+应用侧等 `AppState` 回 active（上限 30s）再驱动旋转，并把旋转时的
+`appState` 带进失败文本。
+
+## 不采用的方案
+
+改断言 `interfaceOrientation` 而非窗口尺寸：本轮数据正好证明该字段在画面
+未转时也报 landscape，用它当判据会得到假通过。7.4 的门槛是布局不错位，
+窗口尺寸翻转是其必要条件，断言口径不放宽。
+
+## 第二轮：唤回 launch 不切前台（run 33157696254）
+
+单位修复后后台阶段跑完全程（`bg-ready` READY、`bg-done` DONE），末尾的
+唤回 launch 也执行了，但应用没回前台：
+
+```
+appStates:  -25.1s inactive → -25.1s active → +53.5s inactive → +79.7s background
+background_play: host never returned app to foreground
+landscape:  window size did not flip (402x874) appState=background
+```
+
+`bg-phase.log` 两次 launch 都返回同一 pid 63664。`landscape.png` 显示前台
+是 iOS 设置页。
+
+根因：`simctl launch` 对已在运行的挂起进程只返回原 pid，不做前台切换。
+占着前台的 `com.apple.Preferences` 没被终掉，应用就一直留在 background。
+
+修法：两处唤回前都先 `simctl terminate com.apple.Preferences`，再 launch。
+横屏阶段保留这一步作兜底——后台阶段若在 TIMEOUT 处早退，设置页会一路占着
+前台带进横屏阶段。`terminate` 对未运行的 bundle 报错无害。
+
+## 第三轮：terminate 生效但应用仍不回前台（run 33160865120）
+
+`terminate com.apple.Preferences` 确实执行了——横屏阶段的兜底 terminate 报
+`found nothing to terminate`，证明后台阶段那次已把设置页终掉。但应用还是
+没回前台：
+
+```
+appStates:  -25.0s inactive → -25.0s active → +77.7s inactive → +107.8s background
+background_play: host never returned app to foreground
+             (states=inactive,active,inactive,background current=background)
+```
+
+`bg-phase.log` 中 launch 返回 pid 51308，与首次启动同一进程。
+
+所以「Preferences 占前台」只是表层：终掉它之后，`simctl launch` 对已挂起的
+进程依旧不做前台切换。前台推进需要另找通道，尚未定位。
+
+同轮套件未跑完：`finished: false`，21 个用例（应为 25），`durationMs`
+809.6s 对用例耗时之和 393.2s。停在 `background_play` 之后，`landscape` 及
+其后 4 个用例（`user_api_import` / `mainflow_local` / `user_api_regression`）
+未执行。`background_play` 本身耗时 296.8s，含 180s 的唤回空等。
+
+横屏用例本轮没有取到新数据，前一轮的 inactive 结论未被推进也未被推翻。
+
+## 判读边界
+
+`landscape` 在 run 33160865120 中未执行，7.4 无 CI 取证。宿主前台切换通道
+待查。iPad 布局与真机横屏行为不在模拟器单机型可验范围，仍留手测。
+
+## 策略转向：放弃唤回通道，后台段收尾（2026-08-29）
+
+三轮取证已穷尽宿主侧常规通道：`simctl launch` 对挂起进程不做前台切换
+（终掉占前台的 Preferences 后依旧不切，run 33160865120）；`simctl openurl`
+对自定义 scheme 在 iOS 18.5 模拟器静默吞件（run 32834027405/32836063520）。
+不再寻找唤回通道，改为完全绕开唤回：
+
+- `background_play` 用例移到套件末尾（`user_api_regression` 之后），删除
+  「等宿主唤回前台」断言与收尾 `setPause`。断言通过后套件在后台写终局
+  报告 + `lx-ci-done` 标记收尾——只需秒级；夹具 90s、后台采样消耗不足
+  40s，剩余时长足够覆盖。音频后台模式保持进程存活到落盘，进程随后随
+  模拟器销毁被回收。
+- 宿主后台阶段改为「等 bg-ready → 切前台到系统设置 → 等 bg-done」，
+  不再有唤回动作。bg-ready 现在要等横屏/导入/主流程/回归集全跑完才出现，
+  等待窗口放宽到 25 分钟，套件已写终局报告而 bg-ready 未出现则早退。
+- 横屏阶段前移到后台阶段之前：此时应用尚未切后台，`simctl launch` 的
+  幂等激活足以恢复深链往返后可能停在 inactive 的场景（第一轮根因的
+  既有对策继续有效）。删除兜底 `terminate Preferences`（该阶段 Preferences
+  尚未启动）。
+
+代价与边界：
+
+- 套件一轮只能取一次后台证据——后台用例之前的任何用例失败或挂死，本轮
+  即无后台取证（增量部分报告仍可判读到失败点）。
+- 模拟器侧「把挂起应用唤回前台」的能力缺口保持未解决，但套件内已无
+  其他用例需要它。真机后台出声（5.2）与锁屏控制（5.3）不在模拟器可验
+  范围，仍留手测。
+
+## 第五轮：套件跑整，暴露后台 JS 节流（run 33233955428，2026-08-29）
+
+策略转向生效：25 个用例全部执行（`finished: true`，23 PASS），不再停在
+后台用例。剩余 2 项失败的根因链：
+
+1. `landscape`：深链用例（套件序在其前）的 SpringBoard 往返把场景压成
+   inactive（appStates +55.4s inactive），其后旋转被接受但不重排版——
+   与第一轮同型（失败文本 `appState=inactive`）。宿主 launch 没能把前台
+   但 inactive 的场景激活回 active，上一轮「幂等激活足以恢复」的设想
+   证伪：inactive 出现在深链用例内、早于横屏阶段的唤回动作。
+2. `background_play`：宿主切 Preferences 后 ~2s 应用已真进后台，但
+   AppState 事件晚到 178s（`states=inactive,active,inactive,background`
+   的 background 恰在 180s 等待出窗后 ~0.2s 才被 JS 处理）——切后台后
+   RN JS 线程被重度节流。终局报告同样拖到套件起始 +1434s 才落盘
+   （用例耗时之和仅 ~594s），后台段 JS 收尾按分钟级爬行。
+3. 宿主横屏阶段失败尾 270s（shot 等待 180s + 复原等待 90s）级联压缩
+   后台阶段窗口，与 2 叠加成 0.2s 失配。
+
+修复（不与节流对抗，绕开它）：
+
+- 后台采样下沉原生：UtilsModule 新增 `startBgAudioProbe` /
+  `getBgAudioProbeResult`（自测标记门控）。裸 AVPlayer 接管夹具循环
+  播放（音频一停进程就可能被回收），`UIApplicationDidEnterBackground`
+  原生记录切后台时刻，+2s/+14s 原生 `dispatch_after` 采样位置。JS 何时
+  醒来何时读，判据不依赖 JS 时序；探针结果同时进 `collectEnv`，用例没
+  读完也随报告落盘。
+- 用例序改 `…tab_switch → landscape → auto_theme → deeplink → … →
+  background_play`：横屏趁场景还 active、赶在深链探针之前（file://
+  探针的导入弹窗会撞横屏无弹窗断言）；宿主阶段序同步（横屏 → 深链
+  探针 → 后台）。深色切换随深链探针步骤后移，auto_theme 窗口（180s）
+  覆盖该偏移。
+- 宿主横屏阶段 shot TIMEOUT 时不再等复原（清相位标记即走），失败尾
+  270s → 180s。
+- 预算：后台用例 30min、套件 watchdog 45min、宿主报告轮询 60min，
+  覆盖节流后的分钟级爬行。
+
+判读边界：本轮证明「切后台后 JS 不可靠」，未证明节流的确切机制
+（定时器合并 / 优先级压低 / 场景态耦合，候选未区分）。原生探针绕过该
+问题，不解释它。

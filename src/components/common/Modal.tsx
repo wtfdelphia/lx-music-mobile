@@ -85,6 +85,13 @@ export default forwardRef<ModalType, ModalProps>(({
       transparent={true}
       hardwareAccelerated={true}
       statusBarTranslucent={true}
+      // iPhone 上 RN Modal 的宿主 VC 方向掩码来自 supportedOrientations，
+      // 缺省时 RCTModalHostView 返回竖屏独占（RCTModalHostView.m:211-215）
+      // ——横屏下任何弹窗一呈现就被系统强制转回竖屏（真机 2026-09-07：
+      // 自定义源管理、排行榜音源下拉均因此无法在横屏操作）。与
+      // Info.plist 的 UISupportedInterfaceOrientations 三口径对齐；
+      // Android 侧无此原生属性，行为不变
+      supportedOrientations={['portrait', 'landscape-left', 'landscape-right']}
       visible={visible}
       onRequestClose={handleRequestClose}
       {...props}

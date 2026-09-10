@@ -6,6 +6,7 @@ import { View, FlatList } from 'react-native'
 
 import ListItem, { type PathItem } from './ListItem'
 import LoadingMask, { type LoadingMaskType } from '@/components/common/LoadingMask'
+import { useWindowSize } from '@/utils/hooks'
 
 
 export default ({ list, loading, onSetPath, toParentDir }: {
@@ -17,7 +18,9 @@ export default ({ list, loading, onSetPath, toParentDir }: {
   const t = useI18n()
   const theme = useTheme()
   const loadingMaskRef = useRef<LoadingMaskType>(null)
-  const rowInfo = useRef(getRowInfo('full'))
+  // 排数跟随旋转：同歌单列表修法（useWindowSize 订阅尺寸事件）
+  const windowSize = useWindowSize()
+  const rowInfo = useMemo(() => getRowInfo('full', windowSize), [windowSize])
   const fullRow = useRef({ rowNum: undefined, rowWidth: '100%' } as const)
 
   const ParentItemComponent = useMemo(() => (
@@ -37,15 +40,16 @@ export default ({ list, loading, onSetPath, toParentDir }: {
 
   const ListComponent = useMemo(() => (
     <FlatList
+      key={String(rowInfo.rowNum ?? 1)}
       keyboardShouldPersistTaps={'always'}
       style={styles.list}
       data={list}
-      numColumns={rowInfo.current.rowNum}
-      renderItem={({ item }) => <ListItem item={item} rowInfo={rowInfo.current} onPress={onSetPath} />}
+      numColumns={rowInfo.rowNum}
+      renderItem={({ item }) => <ListItem item={item} rowInfo={rowInfo} onPress={onSetPath} />}
       keyExtractor={item => item.path + '/' + item.name}
       removeClippedSubviews={true}
     />
-  ), [list, onSetPath])
+  ), [list, onSetPath, rowInfo])
 
   // const dirList = useMemo(() => [parentDir, ...list], [list, parentDir])
 
@@ -70,4 +74,3 @@ const styles = createStyle({
     flexShrink: 1,
   },
 })
-

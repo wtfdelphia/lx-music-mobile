@@ -2,14 +2,36 @@
 // import progress from 'request-progress'
 import BackgroundTimer from 'react-native-background-timer'
 import { requestMsg } from './message'
+import { DeviceEventEmitter, Platform } from 'react-native'
 import { bHh } from './musicSdk/options'
 import { deflateRaw } from 'pako'
+import { log } from './log'
+import { fireNativeNetworkProbe } from './nativeNetworkProbe'
 
 const defaultHeaders = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/69.0.3497.100 Safari/537.36',
 }
 // var proxyUrl = "http://" + user + ":" + password + "@" + host + ":" + port;
 // var proxiedRequest = request.defaults({'proxy': proxyUrl});
+
+// RN Networking 把 NSError 吞成 "Network request failed"，真正的原生
+// 错误文本（DNS 解析 / ATS 拦截 / 连接重置）在 didCompleteNetworkResponse
+// 事件负载里。订阅并落错误日志，供真机归因（「设置-错误日志」可见
+// [native network] 行）；成功请求零输出。仅 iOS 启用——Android 侧
+// 请求错误本就可读，无需重复记录
+if (Platform.OS === 'ios') {
+  const requestUrls = new Map()
+  DeviceEventEmitter.addListener('didReceiveNetworkResponse', (args) => {
+    const [requestId, , , responseURL] = args
+    if (typeof responseURL === 'string') requestUrls.set(requestId, responseURL)
+  })
+  DeviceEventEmitter.addListener('didCompleteNetworkResponse', (args) => {
+    const [requestId, error] = args
+    const url = requestUrls.get(requestId) ?? '<no-response>'
+    requestUrls.delete(requestId)
+    if (error) log.error(`[native network] ${url} -> ${error}`)
+  })
+}
 
 
 /**
@@ -204,6 +226,12 @@ const fetchData = (url, { timeout = 15000, ...options }) => {
         }
       }).catch(err => {
         // console.log(err, err.code, err.message)
+        // 失败原因此前无处可见（iOS 真机首次真实出站请求只能靠猜），
+        // 写入错误日志供「设置-错误日志」反馈；仅失败路径，成功零开销
+        log.error(`[request] ${(options.method ?? 'get').toUpperCase()} ${url} failed: ${err?.name ? `${err.name}: ` : ''}${err?.message ?? String(err)}`)
+        // RN Networking 把 NSError 吞成无文本消息，原生探针重打同一
+        // URL 把真实错误文本追加进同一份日志（任务 9.6）
+        fireNativeNetworkProbe(url, msg => log.error(msg))
         return Promise.reject(err)
       }).finally(() => {
         if (id == null) return

@@ -1,0 +1,502 @@
+name: iOS Verify
+
+on:
+  push:
+    branches:
+      - master
+      - dev-ios
+      - main
+    paths:
+      - 'ios/**'
+      - 'rust/**'
+      - 'src/**'
+      - 'test/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.nvmrc'
+      - 'index.js'
+      - 'android/**'
+      - 'assets/**'
+      - '.github/workflows/ios-verify.yml'
+  pull_request:
+    paths:
+      - 'ios/**'
+      - 'rust/**'
+      - 'src/**'
+      - 'test/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.nvmrc'
+      - 'index.js'
+      - 'android/**'
+      - 'assets/**'
+      - '.github/workflows/ios-verify.yml'
+
+jobs:
+  js-verify:
+    name: JS 门禁（单测 + Metro 双端打包）
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out git repository
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: 安装 JS 依赖
+        run: npm ci
+
+      - name: 单元测试（黄金基准文件完整性）
+        run: npm test
+
+      - name: Metro 打包（iOS / Android）
+        run: |
+          npx react-native bundle --platform ios --dev false --entry-file index.js \
+            --bundle-output /tmp/index.ios.bundle --assets-dest /tmp/lxm-assets-ios
+          npx react-native bundle --platform android --dev false --entry-file index.js \
+            --bundle-output /tmp/index.android.bundle --assets-dest /tmp/lxm-assets-android
+
+  rust-ios-target:
+    name: Rust iOS target 交叉编译
+    runs-on: macos-15
+    steps:
+      - name: Check out git repository
+        uses: actions/checkout@v7
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios
+
+      - name: 构建 staticlib（aarch64-apple-ios）
+        working-directory: rust/lxcore
+        run: cargo build --locked --release --target aarch64-apple-ios
+
+      - name: 构建 staticlib（模拟器切片）
+        working-directory: rust/lxcore
+        run: cargo build --locked --release --target aarch64-apple-ios-sim --target x86_64-apple-ios
+
+      - name: macOS 宿主黄金基准
+        working-directory: rust/lxcore
+        run: cargo test --locked
+
+  ios-build:
+    name: iOS unsigned 构建（设备 / IPA）
+    runs-on: macos-15
+    steps:
+      - name: Check out git repository
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: 安装 JS 依赖
+        run: npm ci
+
+      - name: pod install（关 Flipper）
+        working-directory: ios
+        env:
+          NO_FLIPPER: '1'
+        run: pod install
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios
+
+      - name: 构建 lxcore staticlib（iOS）
+        run: bash rust/build-ios-libs.sh
+
+      - name: 打印工具链版本
+        run: |
+          xcodebuild -version
+          pod --version
+
+      - name: unsigned 构建（设备）
+        working-directory: ios
+        run: >
+          xcodebuild
+          -workspace LxMusicMobile.xcworkspace
+          -scheme LxMusicMobile
+          -configuration Release
+          -sdk iphoneos
+          -derivedDataPath build
+          CODE_SIGNING_ALLOWED=NO
+          COMPILER_INDEX_STORE_ENABLE=NO
+          build
+
+      - name: 打包 IPA
+        working-directory: ios/build/Build/Products/Release-iphoneos
+        run: |
+          mkdir Payload
+          cp -r LxMusicMobile.app Payload/
+          zip -qry LxMusicMobile-unsigned.ipa Payload
+
+      - name: 上传 Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: LxMusicMobile-unsigned-ipa
+          path: ios/build/Build/Products/Release-iphoneos/LxMusicMobile-unsigned.ipa
+          retention-days: 30
+
+  ios-simulator-smoke:
+    name: iOS 模拟器冒烟（启动到首页）
+    runs-on: macos-15
+    steps:
+      - name: Check out git repository
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: 安装 JS 依赖
+        run: npm ci
+
+      - name: pod install（关 Flipper）
+        working-directory: ios
+        env:
+          NO_FLIPPER: '1'
+        run: pod install
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios
+
+      - name: 构建 lxcore staticlib（iOS）
+        run: bash rust/build-ios-libs.sh
+
+      - name: Release 构建（模拟器）
+        working-directory: ios
+        run: >
+          xcodebuild
+          -workspace LxMusicMobile.xcworkspace
+          -scheme LxMusicMobile
+          -configuration Release
+          -sdk iphonesimulator
+          -destination 'generic/platform=iOS Simulator'
+          -derivedDataPath build
+          CODE_SIGNING_ALLOWED=NO
+          COMPILER_INDEX_STORE_ENABLE=NO
+          build
+
+      - name: 启动模拟器并安装（写入自测标记）
+        working-directory: ios/build/Build/Products/Release-iphonesimulator
+        run: |
+          # 钉死模拟器 runtime：head -1 跟随镜像预装列表，镜像更换时 32 项
+          # 自测的绿灯含义会静默漂移（见 docs/ios-multi-version-plan.md §2.1）。
+          # 找不到目标 runtime 必须失败退出——静默回退等于把洞换个地方开
+          RUNTIME="18.5"
+          UDID=$(xcrun simctl list devices available -j | node -e '
+            const d = JSON.parse(require("fs").readFileSync(0, "utf8")).devices
+            const want = process.argv[1]
+            const key = Object.keys(d).find(k => k.includes(want.replace(/\./g, "-")))
+            if (!key) { console.error("FATAL: simulator runtime not found: " + want); process.exit(1) }
+            const dev = d[key].find(x => x.name.startsWith("iPhone") && x.isAvailable)
+            if (!dev) { console.error("FATAL: no available iPhone in runtime " + key); process.exit(1) }
+            console.error("selected runtime: " + key + " device: " + dev.name)
+            process.stdout.write(dev.udid)
+          ' "$RUNTIME")
+          [ -n "$UDID" ] || { echo "FATAL: simulator selection failed"; exit 1; }
+          echo "Simulator: $UDID (iOS $RUNTIME)"
+          echo "UDID=$UDID" >> "$GITHUB_ENV"
+          echo "IOS_RUNTIME=$RUNTIME" >> "$GITHUB_ENV"
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl install "$UDID" LxMusicMobile.app
+          # 自测标记 + 文件深链探针：须在 launch 前写入（install 后容器目录已存在）
+          CONTAINER=$(xcrun simctl get_app_container "$UDID" cn.toside.music.mobile data)
+          echo "CONTAINER=$CONTAINER" >> "$GITHUB_ENV"
+          mkdir -p "$CONTAINER/tmp"
+          # runtime 标识投递应用沙箱：自测报告 env.ciRuntime 回带，
+          # 宿主断言端核对「钉死目标 == 实际执行环境」
+          echo "iOS $RUNTIME" > "$CONTAINER/tmp/lx-ci-runtime"
+          touch "$CONTAINER/tmp/.lx-ci-selftest"
+          echo 'lx-ci probe lxmc' > "$CONTAINER/tmp/lx-ci-probe.lxmc"
+          # 任务 2.3 一键入口：回归脚本 + 断言清单投递沙箱，
+          # 应用内 user_api_regression 用例逐个跑 加载→inited
+          cp "$GITHUB_WORKSPACE"/test/scripts-regression/candidates/*.js "$CONTAINER/tmp/"
+          cp "$GITHUB_WORKSPACE"/test/scripts-regression/ci-expect.json "$CONTAINER/tmp/lx-ci-regression-manifest.json"
+          # CI 夹具：确定性本地音源（起播/后台续播，零外网依赖）+ 封面图（锁屏元数据）
+          cp "$GITHUB_WORKSPACE/test/fixtures/lx-ci-song.wav" "$CONTAINER/tmp/"
+          cp "$GITHUB_WORKSPACE/test/fixtures/lx-ci-pic.png" "$CONTAINER/tmp/"
+          # 任务 9.8：loopback 媒体服务。模拟器与宿主共享网络栈，
+          # remote_stream_playback 用例从 127.0.0.1:8790 装载夹具——
+          # 「远程 http URL → AVPlayer 装载」生产链路的确定性运行时
+          # 证据，零外网依赖。AVPlayer 流式装载首包发 Range 请求，
+          # python 自带 http.server 不支持 206，用仓库内 Range 服务
+          python3 "$GITHUB_WORKSPACE/test/range-http-server.py" "$GITHUB_WORKSPACE/test/fixtures" 8790 > range-server.log 2>&1 &
+          echo $! > range-server.pid
+          xcrun simctl launch "$UDID" cn.toside.music.mobile | tee launch.txt
+          APP_PID=$(grep -oE '[0-9]+' launch.txt | head -1 || true)
+          echo "$APP_PID" > app-pid.txt
+          echo "App PID: ${APP_PID:-UNKNOWN}"
+
+      - name: 首页取证（启动到首页）
+        working-directory: ios/build/Build/Products/Release-iphonesimulator
+        run: |
+          APP_PID=$(cat app-pid.txt 2>/dev/null || true)
+          sleep 10
+          xcrun simctl io "$UDID" screenshot screenshot-early.png || true
+          { echo '--- process check @10s ---'
+            [ -n "$APP_PID" ] && { kill -0 "$APP_PID" 2>/dev/null && echo "PID_ALIVE" || echo "PID_DEAD"; }
+            pgrep -l LxMusicMobile || echo "PGREP_NO_MATCH"; } | tee proc-10s.txt
+          sleep 15
+          xcrun simctl io "$UDID" screenshot screenshot-home.png || true
+          { echo '--- process check @25s ---'
+            [ -n "$APP_PID" ] && { kill -0 "$APP_PID" 2>/dev/null && echo "PID_ALIVE" || echo "PID_DEAD"; }
+            pgrep -l LxMusicMobile || echo "PGREP_NO_MATCH"; } | tee proc-25s.txt
+
+      - name: Tab 截图握手（应用内标记文件驱动）
+        working-directory: ios/build/Build/Products/Release-iphonesimulator
+        run: |
+          for id in nav_search nav_songlist nav_love nav_setting; do
+            marker="$CONTAINER/tmp/lx-ci-tab-$id"
+            ok=0
+            for i in $(seq 1 90); do [ -f "$marker" ] && { ok=1; break; }; sleep 2; done
+            echo "tab marker $id: $([ "$ok" = 1 ] && echo READY || echo TIMEOUT)"
+            xcrun simctl io "$UDID" screenshot "tab-$id.png" || true
+            rm -f "$marker"
+          done
+
+      - name: 横屏阶段（标记握手：应用内驱动旋转，宿主截图取证）
+        working-directory: ios/build/Build/Products/Release-iphonesimulator
+        run: |
+          rotate_phase="$CONTAINER/tmp/lx-ci-rotate-phase"
+          shot="$CONTAINER/tmp/lx-ci-landscape-shot"
+          { echo "--- landscape phase ---"
+            # 横屏在深链探针之前：深链的 SpringBoard 往返会把场景压成
+            # inactive，RN 不给非 active 场景重排版——旋转请求会被接受
+            # （interfaceOrientation 报 landscape、geoErrors 为空）但画面不转
+            # （run 33144095295/33233955428）。此刻应用仍在前台且场景
+            # active，launch 仅幂等激活兜底。本阶段还须赶在深链探针前：
+            # file:// 探针的导入弹窗会撞横屏用例的无弹窗断言
+            xcrun simctl launch "$UDID" cn.toside.music.mobile 2>&1 || echo "ROTATE_WAKE_FAILED"
+            sleep 3
+            echo "landscape $(date +%s)" > "$rotate_phase"
+            ok=0
+            for i in $(seq 1 90); do [ -f "$shot" ] && { ok=1; break; }; sleep 2; done
+            echo "landscape-shot marker: $([ "$ok" = 1 ] && echo READY || echo TIMEOUT)"
+            echo "shot content: $(cat "$shot" 2>/dev/null || echo '<none>')"
+            xcrun simctl io "$UDID" screenshot landscape.png || echo "LANDSCAPE_SHOT_FAILED"
+            rm -f "$shot"
+            if [ "$ok" = 1 ]; then
+              # 等应用复原竖屏（应用复原后删除 rotate-phase）
+              ok=0
+              for i in $(seq 1 45); do [ ! -f "$rotate_phase" ] && { ok=1; break; }; sleep 2; done
+              echo "portrait restored: $([ "$ok" = 1 ] && echo YES || echo TIMEOUT)"
+            else
+              # 截图未至（横屏用例已提前失败）：不复原等待，清相位标记，
+              # 避免失败尾延迟后续阶段（run 33233955428：270s 尾部
+              # 压缩后台握手窗口直至失配）
+              rm -f "$rotate_phase"
+              echo "portrait restored: SKIPPED (shot timeout)"
+            fi; } | tee landscape-phase.log
+
+      - name: 深链探针（等待 Tab 阶段结束后发送）
+        working-directory: ios/build/Build/Products/Release-iphonesimulator
+        run: |
+          tabs_done="$CONTAINER/tmp/lx-ci-tabs-done"
+          for i in $(seq 1 30); do [ -f "$tabs_done" ] && break; sleep 2; done
+          echo "tabs-done marker: $([ -f "$tabs_done" ] && echo YES || echo NO)"
+          # 任务 6.8 深色跟随：横屏阶段结束后切设备外观为 dark，
+          # 应用内 auto_theme 用例轮询 Appearance 翻转与主题 isDark
+          xcrun simctl ui "$UDID" appearance dark 2>&1 || echo "APPEARANCE_SWITCH_FAILED"
+          APP_PID=$(cat app-pid.txt 2>/dev/null || true)
+          { echo '--- process check pre-probe ---'
+            [ -n "$APP_PID" ] && { kill -0 "$APP_PID" 2>/dev/null && echo "PID_ALIVE" || echo "PID_DEAD"; }
+            pgrep -l LxMusicMobile || echo "PGREP_NO_MATCH"; } | tee proc-preprobe.txt
+          # run 32834027405/32836063520 实锤：iOS 18.5 模拟器上
+          # `simctl openurl` 对自定义 scheme 静默吞件（前台直发与后台
+          # 唤醒均成功返回、AppDelegate 零收件），file:// 文档通道正常。
+          # lxmusic:// 全链路改由应用内 Linking.openURL 自投递验证；
+          # 宿主保留对照组 + 假 scheme 诊断（判别 simctl 是否校验路由）。
+          { echo "--- openurl lxmusic (simctl control) ---"
+            xcrun simctl openurl "$UDID" "lxmusic://player/pause" 2>&1 || echo "OPENURL_FAILED_FG"
+            echo "--- openurl bogus scheme (routing diagnostic) ---"
+            xcrun simctl openurl "$UDID" "lxcibogus://probe" 2>&1 || echo "BOGUS_OPENURL_FAILED"
+            sleep 3
+            # 文件导入走 file:// 分支（runLinkAction 对非 lxmusic:// 才进 handleFileAction）
+            echo "--- openurl file://probe.lxmc ---"
+            xcrun simctl openurl "$UDID" "file://$CONTAINER/tmp/lx-ci-probe.lxmc" 2>&1 || echo "OPENURL_FAILED_FILE"; } | tee openurl-probe.log
+          sleep 3
+          xcrun simctl io "$UDID" screenshot deeplink.png || true
+          cp "$CONTAINER/tmp/lx-ci-openurl.log" openurl-native.log 2>/dev/null || echo "NO_NATIVE_OPENURL_LOG"
+          # 通知应用内自测：探针已发送，可进入报告阶段
+          touch "$CONTAINER/tmp/.lx-ci-probe-sent"
+
+      - name: 后台续播阶段（起播就绪→切后台；采样在原生探针）
+        working-directory: ios/build/Build/Products/Release-iphonesimulator
+        run: |
+          bg_ready="$CONTAINER/tmp/lx-ci-bg-ready"
+          suite_done="$CONTAINER/tmp/lx-ci-done"
+          { echo "--- background phase ---"
+            ok=0
+            # 后台续播是套件最后一个用例（切后台后 JS 被重度节流，套件就地
+            # 写报告收尾），bg-ready 要等横屏/深链/导入/主流程/回归集全跑完
+            # 才出现，等待窗口 25 分钟；套件已写完终局报告而 bg-ready 始终
+            # 未出现（后台用例未跑到）则早退
+            for i in $(seq 1 750); do
+              [ -f "$bg_ready" ] && { ok=1; break; }
+              [ -f "$suite_done" ] && break
+              sleep 2
+            done
+            echo "bg-ready marker: $([ "$ok" = 1 ] && echo READY || echo TIMEOUT)"
+            [ "$ok" = 1 ] || exit 0
+            # 把前台切到系统设置，应用进入后台（音频后台模式应续播）。
+            # 切后台时刻与位置采样由原生探针记录（run 33233955428 实锤
+            # JS 侧采样不可靠），宿主无回握标记可等，切完即走；套件在后台
+            # 写完终局报告 + lx-ci-done，由报告采集步骤收口
+            xcrun simctl launch "$UDID" com.apple.Preferences 2>&1 || echo "BG_LAUNCH_FAILED"; } | tee bg-phase.log
+
+      - name: 采集自测报告并断言
+        working-directory: ios/build/Build/Products/Release-iphonesimulator
+        run: |
+          REPORT="$CONTAINER/tmp/lx-ci-report.json"
+          DONE="$CONTAINER/tmp/lx-ci-done"
+          APP_PID=$(cat app-pid.txt 2>/dev/null || true)
+          ok=0
+          # 等套件完成标记（应用每用例增量落盘部分报告，报告文件存在
+          # 不再是完成信号；lx-ci-done 仅在套件跑完时写）。应用进程
+          # 崩溃则提前退出轮询——部分报告 + 崩溃文件即完整取证面。
+          # 窗口 60min：后台用例受 JS 节流影响，探针等待 + 报告落盘
+          # 全套最坏 ~45min（应用侧 watchdog 45min 须先于本窗口开火）
+          for i in $(seq 1 720); do
+            [ -f "$DONE" ] && { ok=1; break; }
+            if [ -n "$APP_PID" ] && ! kill -0 "$APP_PID" 2>/dev/null; then
+              echo "app PID $APP_PID died at poll $i - breaking wait"
+              break
+            fi
+            sleep 5
+          done
+          echo "suite done marker: $ok"
+          [ -f "$REPORT" ] && cp "$REPORT" ci-report.json
+          { echo '--- process check final ---'
+            [ -n "$APP_PID" ] && { kill -0 "$APP_PID" 2>/dev/null && echo "PID_ALIVE" || echo "PID_DEAD"; }
+            pgrep -l LxMusicMobile || echo "PGREP_NO_MATCH"; } | tee proc-final.txt
+          # 崩溃报告采集（run 32995785233 最大信息缺口）：.ips 全文进
+          # artifact，异常类型 + 崩溃线程栈摘要直接进日志
+          crash_count=0
+          for ips in ~/Library/Logs/DiagnosticReports/*LxMusicMobile*.ips; do
+            [ -f "$ips" ] || continue
+            crash_count=$((crash_count + 1))
+            cp "$ips" "crash-${crash_count}.ips"
+            echo "=== crash report $crash_count: $ips ==="
+            node "$GITHUB_WORKSPACE/test/crash-summary.js" "$ips" || true
+          done
+          echo "crash reports collected: $crash_count"
+          ls -la ~/Library/Logs/DiagnosticReports/ 2>/dev/null | grep -i lxmusic || echo "NO_CRASH_REPORTS"
+          # 宿主侧外网三角定位（任务 9.6）：应用内自测的网络探针失败时，
+          # 判据依赖「同一外网端点经宿主系统网络是否可达」来分清
+          # 「系统网络不通」与「RN 网络栈配置问题」。宿主侧用 curl 直接
+          # 打探针同一组 URL（http qukudata 排行榜族 + https yy.zddyr.top
+          # 星海后端 + https apple.com 系统级对照组），结果落日志并进
+          # artifact。curl 通而应用内探针失败即收敛到应用网络栈；两边都
+          # 不通则出口网络本身不通，报告判读不得归因应用。不阻断：外网
+          # 端点非门禁，失败只记录
+          {
+            echo '--- host curl triangulation (task 9.6) ---'
+            for probe_url in \
+              'http://qukudata.kuwo.cn/q.k?op=query&cont=tree&node=2&pn=0&rn=1&fmt=json&level=2' \
+              'https://yy.zddyr.top/ip.php' \
+              'https://www.apple.com/'; do
+              echo "probe: $probe_url"
+              curl -sS -m 12 -o /dev/null -w '  status=%{http_code} total=%{time_total}s dns=%{time_namelookup}s\n' "$probe_url" \
+                || echo '  curl_failed'
+            done
+            echo '--- loopback media server check (task 9.8) ---'
+            # 宿主侧对照：应用内装载失败时，宿主同端点是否可取
+            curl -sS -m 8 -o /dev/null -w 'loopback 127.0.0.1:8790 status=%{http_code} total=%{time_total}s\n' \
+              'http://127.0.0.1:8790/lx-ci-song.wav' || echo '  loopback_curl_failed'
+            if [ -f range-server.pid ] && kill -0 "$(cat range-server.pid)" 2>/dev/null; then
+              kill "$(cat range-server.pid)" 2>/dev/null || true
+              echo 'range server stopped'
+            else
+              echo 'range server not running (see range-server.log)'
+            fi
+          } | tee host-curl-triangulation.txt
+          node "$GITHUB_WORKSPACE/test/ci-report-assert.js" ci-report.json \
+            tab-nav_search.png tab-nav_songlist.png tab-nav_love.png tab-nav_setting.png
+
+      - name: 上传冒烟证据
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ios-simulator-smoke
+          path: |
+            ios/build/Build/Products/Release-iphonesimulator/launch.txt
+            ios/build/Build/Products/Release-iphonesimulator/proc-*.txt
+            ios/build/Build/Products/Release-iphonesimulator/screenshot-*.png
+            ios/build/Build/Products/Release-iphonesimulator/tab-*.png
+            ios/build/Build/Products/Release-iphonesimulator/deeplink.png
+            ios/build/Build/Products/Release-iphonesimulator/landscape.png
+            ios/build/Build/Products/Release-iphonesimulator/bg-phase.log
+            ios/build/Build/Products/Release-iphonesimulator/landscape-phase.log
+            ios/build/Build/Products/Release-iphonesimulator/ci-report.json
+            ios/build/Build/Products/Release-iphonesimulator/openurl-probe.log
+            ios/build/Build/Products/Release-iphonesimulator/openurl-native.log
+            ios/build/Build/Products/Release-iphonesimulator/host-curl-triangulation.txt
+            ios/build/Build/Products/Release-iphonesimulator/range-server.log
+            ios/build/Build/Products/Release-iphonesimulator/crash-*.ips
+          retention-days: 30
+
+  android-regression:
+    name: Android release 回归（preload 入包校验）
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out git repository
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: 安装 JS 依赖
+        run: npm ci
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+          cache-dependency-path: |
+            android/*.gradle
+            android/app/*.gradle
+            android/gradle/wrapper/gradle-wrapper.properties
+
+      - name: 生成一次性签名
+        working-directory: android/app
+        run: >
+          keytool -genkeypair -v -storetype PKCS12
+          -keystore ci-release.keystore -storepass cipass -keypass cipass
+          -alias ci -keyalg RSA -keysize 2048 -validity 10
+          -dname "CN=CI Regression, OU=CI, O=CI, L=CI, S=CI, C=CN"
+
+      - name: Gradle assembleRelease
+        working-directory: android
+        run: >
+          ./gradlew assembleRelease --no-daemon
+          -PMYAPP_UPLOAD_STORE_FILE=ci-release.keystore
+          -PMYAPP_UPLOAD_STORE_PASSWORD=cipass
+          -PMYAPP_UPLOAD_KEY_ALIAS=ci
+          -PMYAPP_UPLOAD_KEY_PASSWORD=cipass
+
+      - name: 校验 preload 入包
+        working-directory: android
+        run: |
+          APK=$(find app/build/outputs/apk/release -name '*universal*release.apk' | head -1)
+          if [ -z "$APK" ]; then APK=$(find app/build/outputs/apk/release -name '*.apk' | head -1); fi
+          echo "APK: $APK"
+          unzip -l "$APK" | grep 'assets/script/user-api-preload.js' || { echo "PRELOAD_NOT_IN_APK"; exit 1; }

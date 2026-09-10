@@ -2,6 +2,7 @@ import ChoosePath, { type ChoosePathType } from '@/components/common/ChoosePath'
 import { LXM_FILE_EXT_RXP } from '@/config/constant'
 import { forwardRef, useImperativeHandle, useRef, useState } from 'react'
 import { handleExport, handleImport, handleImportMediaFile } from './listAction'
+import { systemExportPicker } from '@/utils/exportPicker'
 
 export interface SelectInfo {
   listInfo: LX.List.MyListInfo
@@ -61,6 +62,11 @@ export default forwardRef<ListImportExportType, {}>((props, ref) => {
         action: 'export',
         listInfo,
         index,
+      }
+      if (systemExportPicker) {
+        // iOS：系统另存为面板直接选保存位置（任务 9.16），不经内置目录浏览器
+        handleExport(selectInfoRef.current.listInfo, '')
+        return
       }
       if (visible) {
         choosePathRef.current?.show({

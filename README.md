@@ -25,7 +25,7 @@
 
 - Android 5 及以上
 
-***注：目前没有计划支持 iOS 和 HarmonyOS NEXT**。*<br>
+***注：HarmonyOS NEXT 暂无支持计划；iOS 适配已在本仓库 `dev-ios` 分支完成并归档（2026-09-09），见下文「iOS 适配状态」**。*<br>
 *桌面版项目地址：<https://github.com/lyswhut/lx-music-desktop>*<br>
 *LX Music 项目发展调整与新项目计划：https://github.com/lyswhut/lx-music-desktop/issues/1912*
 
@@ -42,6 +42,104 @@
 ### 数据同步服务
 
 从 v1.0.0 起，我们发布了一个独立的[数据同步服务](https://github.com/lyswhut/lx-music-sync-server#readme)。如果你有服务器，可以将其部署到服务器上作为私人多端同步服务使用，详情看该项目说明。
+
+### iOS 适配状态（dev-ios）
+
+iOS 适配开发中（方案见 `docs/ios-optimal-plan.md`），不上架 App Store。
+构建验证由 GitHub Actions macOS Runner 全自动完成，开发机无需 macOS：
+
+```
+Windows / Linux
+     │ git push
+     ▼
+GitHub ──► GitHub Actions
+                 │
+                 └── macOS Runner（macos-15 / Xcode 16）
+                         ├── Node.js（JS 依赖与 bundle）
+                         ├── Rust（加密核心交叉编译）
+                         ├── CocoaPods（pod install）
+                         └── Xcode（unsigned 构建）
+                               │
+                               ▼
+                         LxMusicMobile.ipa（未签名）
+                               │
+                               ▼
+                     GitHub Actions Artifact
+                               │
+                               ▼
+                   Windows / Linux 下载 IPA
+                               │
+                               ▼
+                  AltStore / SideStore 重签侧载
+                               │
+                               ▼
+                            iPhone
+```
+
+说明：
+
+- `ios-verify` 工作流含 5 个并行门禁：JS 门禁（单测 + Metro 双端打包）、
+  Rust iOS 交叉编译（含宿主黄金基准）、设备未签名构建（产出 IPA）、
+  模拟器冒烟（启动到首页 + 进程判活 + 应用内 35 项自测 + 深链探针）、Android release 回归
+  （守护双端共用的 `assets/script/user-api-preload.js`）；
+- CI 产物为**未签名设备包**（`ios-verify` 工作流 Artifact，保留 30 天），
+  下载后用个人免费 Apple ID 经 AltStore / SideStore 重签安装；
+- 免费账号签名有效期 7 天、同时最多 3 个应用，需用电脑端
+  AltServer / SideServer 定期刷新；
+- 当前进度：设备版未签名 IPA 与模拟器冒烟（启动到首页、进程稳定存活、
+  无崩溃、应用内自测 35 项全过）均通过。加密核心（Rust）经桥对齐
+  Android 黄金基准、自定义源沙箱、播放、后台续播、横屏、四 Tab 切换、
+  深链（含 `.lxmc` 导入弹窗）已在模拟器运行时逐项验证。另有 iPhone 17 Pro
+  真机反馈的四项缺陷修复（图标缺失、竖屏宽窄失真、点菜单图标开抽屉即崩、
+  自定义源本地导入无反应）已落地并通过真机判据，对应任务 9.1 / 9.2 / 9.3 / 9.4；
+  排行榜加载失败与播放循环切歌（2026-09-02）已归因并修复：原生探针实锤
+  全部明文 `http` 请求被 ATS 拦截（`NSAllowsArbitraryLoads` 与
+  `NSAllowsLocalNetworking` 并存时前者被系统忽略），移除冲突键后内置源
+  搜索/榜单/播放链路恢复，防回归断言见任务 9.5 / 9.6 / 9.7。该变更已于
+  2026-09-09 归档（62 项任务全勾），任务清单见
+  `openspec/changes/archive/2026-09-09-add-ios-support/tasks.md`。
+
+## AI 辅助开发工作流（SpecCoding）
+
+本项目采用规格驱动（spec-driven）的 AI 协作流程。人负责判断与决策，AI 负责实现与验证，规格文件是双方的共同事实源。
+
+事实源分三层，按序阅读，不跳级：
+
+| 层 | 位置 | 内容 |
+|---|---|---|
+| 入口 | `README.md` | 项目说明、命令、本工作流入口 |
+| 规则 | [`AGENTS.md`](AGENTS.md) | 全部 agent 通用规则：门禁、验证矩阵、高风险清单、安全边界 |
+| 架构 | [`spec/`](spec/) | 长期事实：[需求边界](spec/requirements.md)、[架构决策](spec/design.md)、[目录职责](spec/structure.md) |
+
+客户端专属差异写在各自文件（如 [`CLAUDE.md`](CLAUDE.md)）；工具版本与安装口径见 [`docs/tooling-sources.md`](docs/tooling-sources.md)。
+
+单次变更的过程事实放在 `openspec/changes/<change-name>/`，含四个顺序依赖的工件：
+
+```
+proposal.md   为什么改、改什么、非目标
+      ↓
+specs/*/spec.md   需求与验收场景（SHALL / Scenario）
+      ↓
+design.md     怎么实现、影响面、回滚策略
+      ↓
+tasks.md      可执行任务清单与勾选状态
+```
+
+完成后归档到 `openspec/changes/archive/`，其中的长期结论回写到 `AGENTS.md` 与 `spec/`。
+
+需要建 change 的场景（新能力、跨模块、原生模块、加密、沙箱、播放链路、CI、发布配置、依赖变更等）与完整门禁矩阵见 [`AGENTS.md`](AGENTS.md)。拼写修正、注释小修一类无行为变化的改动不需建 change。
+
+常用命令：
+
+```bash
+npm ci                              # 装依赖（不用 npm install）
+npm test                            # 单元测试
+npm run lint                        # 代码风格（dev-ios 分支的 push 不触发 CI lint，本地必跑）
+openspec list                       # 查看进行中的变更与任务进度
+openspec validate --all --strict    # 校验规格工件
+```
+
+`AGENTS.md` 的验证矩阵标注了每项门禁的真实 CI 执行位置与已知红项。已知红项不是生效中的门禁，不要当作通过依据。
 
 ## 贡献代码
 

@@ -3,6 +3,9 @@ import { AppState, NativeEventEmitter, NativeModules } from 'react-native'
 const { UtilsModule } = NativeModules
 
 export const exitApp = UtilsModule.exitApp
+// 返回桌面（挂起到后台），iOS 原生实现见任务 9.17；Android 的 UtilsModule
+// 没有该方法，可选调用保无操作（Android 的返回桌面走 BackHandler.exitApp）
+export const backHome = () => UtilsModule.backHome?.()
 
 export const getSupportedAbis = UtilsModule.getSupportedAbis
 
@@ -44,8 +47,14 @@ export const requestNotificationPermission = async() => new Promise<boolean>((re
   })
 })
 
+// iOS 侧走呈现管线并返回 Promise（见 UtilsModule.m shareText）：旧实现
+// fire-and-forget，面板被 UIKit 吞掉时调用方无从察觉。这里 await 把失败
+// 交给调用方（Log.tsx / tools.ts shareMusic 均已接 catch）。
+// 平台差异：Android 侧仍是 void 无 Promise 方法，await undefined 立即完成、
+// 不报错，但也没有错误通道——iOS 独有的呈现竞态才是本次修复的动因，
+// 未改 Android 实现
 export const shareText = async(shareTitle: string, title: string, text: string): Promise<void> => {
-  UtilsModule.shareText(shareTitle, title, text)
+  await UtilsModule.shareText(shareTitle, title, text)
 }
 
 export const getSystemLocales = async(): Promise<string> => {

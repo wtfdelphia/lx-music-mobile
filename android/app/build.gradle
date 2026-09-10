@@ -117,6 +117,15 @@ android {
         versionName verName
     }
 
+    sourceSets {
+        main {
+            // 与 iOS 共用同一份 user-api-preload.js：仓库根 assets/ 以 assets 形式入包，
+            // 包内路径保持 script/user-api-preload.js（QuickJS.java 按此读取）。
+            // 注意：该目录下新增的任何文件都会进 APK（见 ios-support-plan.md R7）
+            assets.srcDirs += ['../../assets']
+        }
+    }
+
     splits {
         abi {
             reset()

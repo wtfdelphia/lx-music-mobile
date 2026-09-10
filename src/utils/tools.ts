@@ -1,9 +1,9 @@
-import { Platform, ToastAndroid, BackHandler, Linking, Dimensions, Alert, Appearance, PermissionsAndroid, AppState, StyleSheet, type ScaledSize } from 'react-native'
+import { Platform, BackHandler, Linking, Dimensions, Alert, Appearance, PermissionsAndroid, AppState, StyleSheet, type ScaledSize } from 'react-native'
 // import ExtraDimensions from 'react-native-extra-dimensions-android'
 import Clipboard from '@react-native-clipboard/clipboard'
 import { storageDataPrefix } from '@/config/constant'
 import { gzipFile, readFile, temporaryDirectoryPath, unGzipFile, unlink, writeFile } from '@/utils/fs'
-import { getSystemLocales, isIgnoringBatteryOptimization, isNotificationsEnabled, requestNotificationPermission, requestIgnoreBatteryOptimization, shareText } from '@/utils/nativeModules/utils'
+import { backHome, getSystemLocales, isIgnoringBatteryOptimization, isNotificationsEnabled, requestNotificationPermission, requestIgnoreBatteryOptimization, shareText } from '@/utils/nativeModules/utils'
 import musicSdk from '@/utils/musicSdk'
 import { getData, removeData, saveData } from '@/plugins/storage'
 import BackgroundTimer from 'react-native-background-timer'
@@ -11,6 +11,10 @@ import { scaleSizeH, scaleSizeW, setSpText } from './pixelRatio'
 import { toOldMusicInfo } from './index'
 import { stringMd5 } from 'react-native-quick-md5'
 import { windowSizeTools } from '@/utils/windowSizeTools'
+// toast 按平台实现：Android 走 ToastAndroid（./toast.android.ts），iOS 走 RNN overlay（./toast.ios.tsx）。
+// 注意：基名必须一致且基名文件不能同时存在（否则无平台后缀的 .ts
+// 会在 Metro 解析中先命中，遮蔽 .ios 变体——CI 自测实证）
+import { toast } from './toast'
 
 
 // https://stackoverflow.com/a/47349998
@@ -56,9 +60,11 @@ export const TEMP_FILE_PATH = temporaryDirectoryPath + '/tempFile'
 //   // return windowSize
 // }
 
-export const checkStoragePermissions = async() => PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE)
+// iOS 无运行时存储权限概念（沙箱内直接可读写），恒为已授权
+export const checkStoragePermissions = async() => isAndroid ? PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE) : true
 
 export const requestStoragePermission = async() => {
+  if (!isAndroid) return true
   const isGranted = await checkStoragePermissions()
   if (isGranted) return isGranted
 
@@ -98,42 +104,7 @@ export const requestStoragePermission = async() => {
 }
 
 
-/**
- * 显示toast
- * @param message 消息
- * @param duration 时长
- * @param position 位置
- */
-export const toast = (message: string, duration: 'long' | 'short' = 'short', position: 'top' | 'center' | 'bottom' = 'bottom') => {
-  let _duration
-  switch (duration) {
-    case 'long':
-      _duration = ToastAndroid.LONG
-      break
-    case 'short':
-    default:
-      _duration = ToastAndroid.SHORT
-      break
-  }
-  let _position
-  let offset: number
-  switch (position) {
-    case 'top':
-      _position = ToastAndroid.TOP
-      offset = 120
-      break
-    case 'center':
-      _position = ToastAndroid.CENTER
-      offset = 0
-      break
-    case 'bottom':
-    default:
-      _position = ToastAndroid.BOTTOM
-      offset = 120
-      break
-  }
-  ToastAndroid.showWithGravityAndOffset(message, _duration, _position, 0, offset)
-}
+export { toast }
 
 export const openUrl = async(url: string): Promise<void> => Linking.canOpenURL(url).then(async() => Linking.openURL(url))
 
@@ -147,7 +118,14 @@ export const assertApiSupport = (source: LX.Source): boolean => {
 // }
 
 export const exitApp = () => {
-  BackHandler.exitApp()
+  if (isAndroid) {
+    BackHandler.exitApp()
+    return
+  }
+  // iOS：BackHandler.exitApp 是 Android 专属空操作，点了无任何效果（任务
+  // 9.17 真机反馈「显示返回桌面按钮」无效）；收敛为挂起到后台，播放器与
+  // 后台播放不受影响，与 Android 的 moveTaskToBack 语义对齐
+  backHome()
 }
 
 export const handleSaveFile = async(path: string, data: any) => {
@@ -341,7 +319,10 @@ export const shareMusic = (shareType: LX.ShareType, downloadFileName: LX.AppSett
   const musicTitle = formatMusicName(downloadFileName, name, singer)
   switch (shareType) {
     case 'system':
-      void shareText(global.i18n.t('share_card_title_music', { name }), global.i18n.t('share_title_music'), `${musicTitle.replace(/\s/g, '')}${detailUrl ? '\n' + detailUrl : ''}`)
+      // shareText 现在会在呈现失败时 reject（见 UtilsModule.m），必须接住：
+      // 否则是未捕获的 Promise rejection，且用户仍看不到失败原因
+      shareText(global.i18n.t('share_card_title_music', { name }), global.i18n.t('share_title_music'), `${musicTitle.replace(/\s/g, '')}${detailUrl ? '\n' + detailUrl : ''}`)
+        .catch((err: any) => { toast(String(err?.message ?? err)) })
       break
     case 'clipboard':
       clipboardWriteText(`${musicTitle}${detailUrl ? '\n' + detailUrl : ''}`)
@@ -368,10 +349,10 @@ export const onAppearanceChange = (callback: (colorScheme: Parameters<Parameters
 let isSupportedAutoTheme: boolean | null = null
 export const getIsSupportedAutoTheme = () => {
   if (isSupportedAutoTheme == null) {
-    const osVerNum = parseInt(osVer)
-    isSupportedAutoTheme = isAndroid
-      ? osVerNum >= 5
-      : osVerNum >= 13
+    // Platform.constants.Release 为 Android 独有（iOS 上 undefined，
+    // parseInt 得 NaN 会让本函数在 iOS 恒为 false）；
+    // iOS 用 Platform.Version（形如 "18.5"，parseInt 取主版本）
+    isSupportedAutoTheme = isAndroid ? parseInt(osVer) >= 5 : parseInt(String(Platform.Version), 10) >= 13
   }
   return isSupportedAutoTheme
 }
@@ -534,8 +515,7 @@ export interface RowInfo {
 
 export type RowInfoType = 'full' | 'medium'
 
-export const getRowInfo = (type: RowInfoType = 'full'): RowInfo => {
-  const win = windowSizeTools.getSize()
+export const getRowInfo = (type: RowInfoType = 'full', win: { width: number, height: number } = windowSizeTools.getSize()): RowInfo => {
   let isMultiRow = isHorizontalMode(win.width, win.height)
   if (type == 'medium' && win.width / win.height < 1.8) isMultiRow = false
   // console.log('getRowInfo')

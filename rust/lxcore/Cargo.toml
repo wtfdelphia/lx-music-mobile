@@ -1,0 +1,7 @@
+[workspace]
+members = ["lxcore-crypto"]
+resolver = "2"
+
+[profile.release]
+lto = true
+strip = true

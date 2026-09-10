@@ -25,6 +25,16 @@ export const getExternalStoragePaths = async(is_removable?: boolean) => _getExte
 
 export const selectManagedFolder = async(isPersist: boolean = false) => AndroidScoped.openDocumentTree(isPersist)
 export const selectFile = async(options: OpenDocumentOptions) => AndroidScoped.openDocument(options)
+// iOS 专属的系统另存为面板（任务 9.16）；Android 导出保持选目录→写入，
+// 本函数不会被调用
+export const exportFile = async(_srcPath: string): Promise<{ data: string } | null> => {
+  throw new Error('exportFile is iOS only')
+}
+// iOS 专属的暂存兜底（任务 9.14）：Android 侧 file:// / content:// 由 fs 层
+// 直接可读，恒等透传
+export const importOpenedFile = async(path: string): Promise<{ path: string, staged: boolean, attempts: number }> => {
+  return { path, staged: false, attempts: 0 }
+}
 export const removeManagedFolder = async(path: string) => AndroidScoped.releasePersistableUriPermission(path)
 export const getManagedFolders = async() => AndroidScoped.getPersistedUriPermissions()
 
