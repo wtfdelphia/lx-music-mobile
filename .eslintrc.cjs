@@ -80,5 +80,7 @@ module.exports = {
     '*.min.js',
     'test.js',
     '*Test.ts',
+    // 第三方社区音源脚本原文，按原样入库用于回归断言，不受本项目风格规则治理
+    'test/scripts-regression/candidates',
   ],
 }

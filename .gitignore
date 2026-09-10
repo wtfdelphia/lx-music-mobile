@@ -76,3 +76,7 @@ ios/rust-libs/
 
 # 回归集脚本的原始压缩包（入库的是解压后的 .js）
 test/scripts-regression/candidates/*.zip
+
+# AI 工具本地产物（不依赖用户级 git ignore 兜底）
+.worktrees/
+.claude/settings.local.json

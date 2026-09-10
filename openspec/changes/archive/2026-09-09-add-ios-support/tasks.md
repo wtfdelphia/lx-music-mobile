@@ -1,5 +1,3 @@
-* [ ]
-
 ## 1. Phase 0：能跑起来
 
 - [X] 1.1 `pod install` 通过（关 Flipper），`ios/Pods` 生成无 error（CI run 32746235295 双 macOS job 均以 `NO_FLIPPER=1` 通过）
