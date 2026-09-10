@@ -1,7 +1,7 @@
 # ios-distribution Specification
 
 ## Purpose
-保证 iOS 侧代码不因无人维护而再次腐化，并将分发严格限定在合规的内部路径。
+保证 iOS 侧代码不因无人维护而再次腐化：构建回归持续覆盖编译面，分发路径严格限定在源码自编译、TestFlight 内部测试与自签三条合规通道内，明文请求与本地网络权限的平台约束显式声明并持续断言。
 ## Requirements
 ### Requirement: 构建回归
 
@@ -38,4 +38,3 @@ CI SHALL 包含 iOS unsigned 编译回归 job，代码合入即验证可编译�
 
 - **WHEN** 应用对局域网内主机地址（`http://<内网IP>:<端口>`）发起同步鉴权或 WebSocket 连接
 - **THEN** 首次连接时系统弹出本地网络权限授权提示；授权后连接可达，失败原因不得是权限缺失导致的静默断连
-

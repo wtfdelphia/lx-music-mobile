@@ -53,9 +53,12 @@
 
 | 文件 | 差异原因 |
 |---|---|
+| `src/components/common/DrawerLayoutFixed.ios.tsx` | iOS 上 `DrawerLayoutAndroid` 解析为桩，用同接口自绘抽屉（任务 9.3） |
+| `src/utils/exportPicker.ios.ts` | iOS 导出走系统另存为面板（任务 9.16），Android 用内置目录浏览器 |
 | `src/utils/fs.ios.ts` | 文件系统路径与沙箱语义不同 |
 | `src/utils/localMediaMetadata.ios.ts` | 本地媒体元数据读取 API 不同 |
 | `src/utils/nativeModules/lyricDesktop.ios.ts` | iOS 无桌面歌词，桩化 |
+| `src/utils/statusbarHeight.ios.ts` | iOS 无 `StatusBar.currentHeight`，经 `StatusBarManager.getHeight` 读真实高度（任务 9.2） |
 | `src/utils/toast.android.ts` / `toast.ios.tsx` | Android 用原生 Toast，iOS 需自绘 |
 | `src/utils/version.ios.js` | 更新检查改道应用内（无 App Store 通道） |
 
@@ -116,8 +119,8 @@ Android 侧加密为既有 Java 实现（`android/.../mobile/crypto/`）。iOS �
 
 | 债项 | 现状 | 影响 |
 |---|---|---|
-| `tsc --noEmit` 23 errors | 无 CI 覆盖 | 类型错误无拦截；修复需另立 change（加 `moduleSuffixes` 会使总数变 25） |
-| lint 仅 PR→`dev` 触发 | `dev-ios` push 不跑 | iOS 适配期引入的风格违规无人拦截（已发生 2 处） |
-| 3 处 lint 违规 | 已登记，见 `AGENTS.md` | 门禁 exit=1 |
-| skills 三副本手工同步 | `.agents/` `.codex/` `.claude/` 各一份 | 有漂移风险 |
+| `tsc --noEmit` 21 errors | 无 CI 覆盖 | 类型错误无拦截；修复需另立 change（加 `moduleSuffixes` 会使总数 21→23，新暴露 4 个被掩盖错误） |
+| lint 仅 PR→`dev` 触发 | `dev-ios` push 不跑 | iOS 适配期引入的风格违规无人拦截（已发生 2 处，2026-09-10 已清零） |
+| ~~3 处 lint 违规~~ | 2026-09-10 已清零 | `npm run lint` 退出码 0 |
+| skills 三副本手工同步 | `.agents/` `.codex/` `.claude/` 各一份 | 漂移已实际发生：2026-08-24 `fa557d9` 升级 1.8.0 只覆盖 `.agents`/`.claude` 部分，`.codex` 停留 1.4.0，2026-09-10 复核时发现并以 `.agents` 为基准重新同步 |
 | iOS 桌面歌词桩化 | 无实现 | 功能缺口，非 bug |

@@ -145,3 +145,19 @@
 复验命令（2026-09-10 实跑）：`npm run lint` exit 0、`npx vitest run` 1 文件 4 用例、`openspec validate --all` 7 passed、`git check-ignore -v` 命中仓库 `.gitignore:81,82`。
 
 归档判断更新：文档欠账已清，待实现产物随提交入库后即可归档。
+
+---
+
+## 六、深度审核与修复（2026-09-10）
+
+按 `spec-compliance-check` 六维审查（`tasks.md` 第 9 节），发现 7 项问题并全部修复：
+
+- skills 三副本漂移：7 个 openspec skills 的 `.codex` 停留 1.4.0（`fa557d9` 升级遗漏），以 `.agents` 1.8.0 为基准重新同步，12×3 md5 全同
+- tsc 数字失真：基线 23→21、`moduleSuffixes` 实验 23→25 改 21→23（重跑实测），`spec/design.md`、`docs/tooling-sources.md` 同步
+- 平台扩展清单 6→9（补任务 9.2/9.3/9.16 引入的三个 `.ios` 文件）
+- `spec/structure.md` 文件数 `utils/` 133、`components/` 72
+- `openspec validate --all --strict` 两个主规范 Purpose 过短，扩写后 7/7 通过
+- `spec/design.md` 已知技术债表按现状更新
+- `proposal.md` 增范围演进记录（两轮经用户指示的扩展）
+
+完整六维表与证据见 `evidence/spec-compliance-report.md`，总体状态 PASS。

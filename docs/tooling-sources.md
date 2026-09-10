@@ -14,7 +14,7 @@
 | npm | 随 Node | 本机 12.0.2 | `npm -v` | 依赖管理。**用 `npm ci` 而非 `npm install`**，避免动 lock |
 | vitest | `^4.1.11` | 4.1.11 | `npx vitest --version` | 单元测试，`npm test` |
 | eslint | 由 `@react-native/eslint-config` 传递引入（未直接声明） | 8.57.1 | `npx eslint --version` | 代码风格，`npm run lint` |
-| TypeScript | `^5.9.3` | 5.9.3 | `npx tsc --version` | 类型检查（当前 23 errors，无 CI 覆盖，见 `AGENTS.md`） |
+| TypeScript | `^5.9.3` | 5.9.3 | `npx tsc --version` | 类型检查（当前 21 errors，无 CI 覆盖，见 `AGENTS.md`） |
 
 eslint 配置链：`.eslintrc.cjs` → `@react-native/eslint-config` + `eslint-config-standard` `^17.1.0` + `eslint-config-standard-with-typescript` `^43.0.1`。eslint 本体没在 `package.json` 直接声明，是配置包的传递依赖——升级 RN 或配置包时可能连带变主版本，改 lint 规则前先确认实装版本。
 

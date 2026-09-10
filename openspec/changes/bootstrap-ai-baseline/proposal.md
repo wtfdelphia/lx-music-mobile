@@ -72,3 +72,10 @@
   - 缓解：`AGENTS.md` 只写项目事实与项目门禁，行为纪律引用而不重述；`CLAUDE.md` 显式声明以 `AGENTS.md` 为准
 - 风险：`spec/` 写入未核验事实，成为新的幻觉源
   - 缓解：每条事实标注来源（文件路径或本次实跑命令）；不确定处标「待核验」
+
+## 范围演进记录（交付后补记）
+
+原始范围与「非目标」以上文为准，交付后有两轮经用户指示的范围扩展，均已在 `tasks.md` 与 `evidence/` 登记：
+
+1. 2026-09-10 验证跟进（`tasks.md` 第 8 节）：清零三处登记 lint 债（触碰 `src/` 3 个文件，均无行为变化，与原非目标「不修 `src/` 3 处 lint 违规」相悖，用户明确要求修复）；同步 `add-ios-support` 归档后的数字与路径欠账。
+2. 2026-09-10 深度审核修复（`tasks.md` 第 9 节）：修复审核发现的文档失真（平台扩展清单 6→9、tsc 数字 23→21 与 `moduleSuffixes` 实验数字、`structure.md` 文件数、`tooling-sources.md`）；同步 skills 三副本漂移（7 个 openspec skills 停在 1.4.0，与原非目标「不改动三套 skills」相悖，漂移本身违反 `AGENTS.md` 同步纪律，以 `.agents` 1.8.0 为基准修复）；扩写 `openspec/specs/` 两个主规范 Purpose 使 `--strict` 通过。

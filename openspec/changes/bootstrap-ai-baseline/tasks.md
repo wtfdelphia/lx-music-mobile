@@ -54,3 +54,13 @@
 - [X] 8.3 删除归档副本 `2026-09-09-add-ios-support/tasks.md` 复发的脚手架脏行 `* [ ]`（任务 1.4 的删除在归档时未随工作区带入，归档后复发）
 - [X] 8.4 `spec/structure.md` 标注 `ios/rust-libs/` 为 macOS Runner 构建期产物（无构建环境本地不存在）
 - [X] 8.5 复验：`npm run lint` exit 0、`npx vitest run` 1 文件 4 用例、`openspec validate --all` 通过、`npx tsc --noEmit` 仍 21 errors 无新增
+
+## 9. 深度审核修复（2026-09-10，`spec-compliance-check` 六维审查发现项）
+
+- [X] 9.1 补全平台扩展清单：`AGENTS.md` 与 `spec/design.md` 从 6 个补到 9 个（补 `DrawerLayoutFixed.ios.tsx`、`exportPicker.ios.ts`、`statusbarHeight.ios.ts`，均为 `add-ios-support` 归档任务引入）
+- [X] 9.2 修正 tsc 数字失真：基线 23→21（`AGENTS.md`、`spec/design.md`、`docs/tooling-sources.md`）；`moduleSuffixes` 实验数字 23→25 改 21→23（本次重跑实测：新暴露 `core/common.ts` 2、`ChoosePath/index.tsx` 1、`OpenStorageModal.tsx` 1）
+- [X] 9.3 修正 `spec/structure.md` 文件数：`utils/` 128→133、`components/` 71→72
+- [X] 9.4 同步 skills 三副本漂移：7 个 openspec skills 的 `.codex` 停留 1.4.0（`fa557d9` 升级遗漏），部分 `.claude` 副本含客户端差异行；以 `.agents` 1.8.0 为基准覆盖，12×3 md5 全同
+- [X] 9.5 修 `openspec validate --all --strict` 失败：`ios-distribution`、`ios-playback` 两个主规范 Purpose 不足 50 字符，扩写（不改需求语义）；`--strict` 7/7 通过
+- [X] 9.6 `spec/design.md` 已知技术债表按现状更新（tsc 21、lint 债已清零、skills 漂移事件入表）
+- [X] 9.7 输出 `evidence/spec-compliance-report.md`（六维表 + 发现项 + 剩余风险）

@@ -1,7 +1,7 @@
 # ios-playback Specification
 
 ## Purpose
-在 iOS 上提供可用的在线播放体验：后台不中断、锁屏可控，缓存能力按平台现实降级。
+在 iOS 上提供可用的在线播放体验：后台播放不中断、锁屏与系统面板可控可归因，切歌与队列手术不产生索引错位或事件级联，缓存能力按平台现实降级并有运行时证据支撑。
 ## Requirements
 ### Requirement: 后台播放
 
@@ -104,4 +104,3 @@ fork 的 iOS `QueuedAudioPlayer.stop()` 清空队列并无条件发射 `queueInd
 
 - **WHEN** 播放处于暂停状态
 - **THEN** Now Playing 的 `playbackRate` 键为 0，锁屏面板进度保持冻结
-
