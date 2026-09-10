@@ -82,7 +82,7 @@ export const onScriptAction = (handler: (event: ActionsEvent) => void): () => vo
   const eventListener = eventEmitter.addListener('api-action', event => {
     // 同事件可能存在多个监听器（如核心初始化 + CI 自测），首个监听器
     // 解析后 event.data 已是对象，重复 parse 会抛 SyntaxError
-    if (event.data != null && typeof event.data === 'string') event.data = JSON.parse(event.data)
+    if (event.data != null && typeof event.data === 'string') event.data = JSON.parse(event.data as string)
     if (event.action == 'init') {
       if (event.data.info) event.data.info = { ...loadScriptInfo, ...event.data.info }
       else event.data.info = { ...loadScriptInfo }

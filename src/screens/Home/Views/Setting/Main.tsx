@@ -30,7 +30,7 @@ export type SettingScreenIds = typeof ALL_SETTING_SCREENS[number]
 // 任务 7.1：iOS 无桌面歌词，设置导航整组隐藏
 export const SETTING_SCREENS: SettingScreenIds[] = Platform.OS === 'ios'
   ? ALL_SETTING_SCREENS.filter(id => id !== 'lyric_desktop')
-  : [ ...ALL_SETTING_SCREENS ]
+  : [...ALL_SETTING_SCREENS]
 
 // interface MainProps {
 //   onUpdateActiveId: (id: string) => void
