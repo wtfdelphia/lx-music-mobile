@@ -33,12 +33,12 @@
 
 软件下载：
 
-- iOS：本仓库 `ios-verify` 工作流的 Artifact（未签名 IPA），安装方式见下文「iOS 适配状态」
-- Android：上游 [GitHub Releases](https://github.com/lyswhut/lx-music-mobile/releases)，本 fork 不另行发布 Android 安装包
+- iOS：本仓库 [GitHub Releases](https://github.com/wtfdelphia/lx-music-mobile/releases)（未签名 IPA），需自行重签安装，方式见下文「iOS 适配状态」
+- Android：本仓库 [GitHub Releases](https://github.com/wtfdelphia/lx-music-mobile/releases)（签名与上游不同，从上游版本覆盖安装需先卸载）
 
 使用常见问题请参阅[移动版常见问题](https://lyswhut.github.io/lx-music-doc/mobile/faq)。
 
-本 fork 的 iOS 产物只从本仓库的 GitHub Actions Artifact 获取，无其他发布渠道；其他渠道流传的安装包与本项目无关，请自行鉴别。
+本 fork 的安装包只从本仓库的 GitHub Releases 获取，无其他发布渠道；其他渠道流传的安装包与本项目无关，请自行鉴别。
 
 为了提高使用门槛，本软件内的默认设置、UI 操作不以新手友好为目标，所以使用前建议先根据你的喜好浏览调整一遍软件设置，阅读一遍[音乐播放列表机制](https://lyswhut.github.io/lx-music-doc/mobile/faq/playlist)。
 

@@ -185,7 +185,7 @@ export interface NowPlayingTitles {
   lyric?: string
 }
 export const updateNowPlayingTitles = async(titles: NowPlayingTitles) => {
-  console.log('set playing titles', titles)
+  // console.log('set playing titles', titles)
   // fork（bfe3393）iOS 侧仍未实现 updateNowPlayingTitles（Android 独有，
   // 任务 5.4 实锤，新 fork 的 ios/ 与旧版逐字相同），iOS 改走已实现的
   // 单参 metadata 通道（见 playList.ts 的 updateNowPlayingMetadataIOS），
