@@ -21,6 +21,8 @@
 
 LX Music 移动版（`lx-music-mobile`），基于 React Native 的音乐播放器。iOS 支持已于 2026-09-09 完成并归档（`add-ios-support`，单设备验证通过，多设备覆盖为观察项），2026-09-10 随上游 v1.8.1→v1.8.4 的 24 个提交一起并入 `main`（合并提交 `bf16638`）；`dev-ios` 与上游 `master` 保留。上游开发分支为 `dev`。
 
+分支模型（2026-09-22 起）：`master` 仅镜像上游 `lyswhut/lx-music-mobile` 的 `master`，不承载开发，其 push 不触发发布构建；`main` 手动合并上游并发布版本。发布构建（`release.yml`，5 个签名 APK + 未签名 IPA）只由 `main` 触发，版本号采用「上游版本号 + fork 递增后缀」（如 `1.9.1.1`）。更新检查单源指向本仓库 `main` 分支的 `publish/version.json`（`fork-update-channel`）。2026-09 上游重写 `master` 历史（squash），后续合并上游若报 `unrelated histories`，用 `git replace --graft` 把上游新根嫁接回双方最近共同基线再合并，参考 `docs/update-channel-analysis.md`。
+
 技术栈与版本底线（来源 `package.json`、`.nvmrc`）：
 
 | 项 | 版本 | 说明 |

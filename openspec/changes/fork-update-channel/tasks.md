@@ -35,7 +35,7 @@
 
 - [x] 4.1 `openspec validate fork-update-channel` 通过
 - [x] 4.2 `npm run lint`、`npm test` 通过
-- [ ] 4.3 PR 合入 `main`，`ios-verify` 在 `main` 上全绿
+- [x] 4.3 PR 合入 `main`，`ios-verify` 在 `main` 上全绿
 - [ ] 4.4 发版：写 `publish/changeLog.md`，
   `npm run publish 1.9.1.1`，合入后 `release.yml` 构建
   `v1.9.1.1` 并发布
