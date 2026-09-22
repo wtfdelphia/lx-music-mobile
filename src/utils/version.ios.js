@@ -5,14 +5,8 @@ import { httpGet } from '@/utils/request'
 import { author, name } from '../../package.json'
 
 const address = [
-  [`https://raw.githubusercontent.com/${author.name}/${name}/master/publish/version.json`, 'direct'],
-  ['https://registry.npmjs.org/lx-music-mobile-version-info/latest', 'npm'],
-  [`https://cdn.jsdelivr.net/gh/${author.name}/${name}/publish/version.json`, 'direct'],
-  [`https://fastly.jsdelivr.net/gh/${author.name}/${name}/publish/version.json`, 'direct'],
-  [`https://gcore.jsdelivr.net/gh/${author.name}/${name}/publish/version.json`, 'direct'],
-  ['https://registry.npmmirror.com/lx-music-mobile-version-info/latest', 'npm'],
-  ['https://gitee.com/lyswhut/lx-music-mobile-versions/raw/master/version.json', 'direct'],
-  ['http://cdn.stsky.cn/lx-music/mobile/version.json', 'direct'],
+  // fork 更新通道：单源指向本仓库（见 openspec/changes/fork-update-channel）
+  [`https://raw.githubusercontent.com/${author.name}/${name}/main/publish/version.json`, 'direct'],
 ]
 
 
@@ -37,26 +31,9 @@ const getDirectInfo = async(url) => {
   })
 }
 
-const getNpmPkgInfo = async(url) => {
-  return request(url).then(json => {
-    if (!json.versionInfo) throw new Error('failed')
-    const info = JSON.parse(json.versionInfo)
-    if (info.version == null) throw new Error('failed')
-    return info
-  })
-}
-
 export const getVersionInfo = async(index = 0) => {
-  const [url, source] = address[index]
-  let promise
-  switch (source) {
-    case 'direct':
-      promise = getDirectInfo(url)
-      break
-    case 'npm':
-      promise = getNpmPkgInfo(url)
-      break
-  }
+  const [url] = address[index]
+  const promise = getDirectInfo(url)
 
   return promise.catch(async(err) => {
     index++

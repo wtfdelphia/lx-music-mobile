@@ -30,21 +30,21 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/lyswhut/lx-music-mobile.git"
+    "url": "git+https://github.com/wtfdelphia/lx-music-mobile.git"
   },
   "keywords": [
     "music-player",
     "react-native-app"
   ],
   "author": {
-    "name": "lyswhut",
+    "name": "wtfdelphia",
     "email": "lyswhut@qq.com"
   },
   "license": "Apache-2.0",
   "bugs": {
-    "url": "https://github.com/lyswhut/lx-music-mobile/issues"
+    "url": "https://github.com/wtfdelphia/lx-music-mobile/issues"
   },
-  "homepage": "https://github.com/lyswhut/lx-music-mobile#readme",
+  "homepage": "https://github.com/wtfdelphia/lx-music-mobile#readme",
   "dependencies": {
     "@craftzdog/react-native-buffer": "^6.1.2",
     "@react-native-async-storage/async-storage": "~2.1.2",
