@@ -1,4 +1,11 @@
-## ADDED Requirements
+# update-channel Specification
+
+## Purpose
+定义应用内更新检查通道：数据源指向哪个仓库身份与分支、源列表
+如何构成、Android 下载与 iOS 跳转的落点，保证用户收到的更新
+提示与下载内容始终来自本仓库。
+
+## Requirements
 
 ### Requirement: 更新检查数据源指向
 
