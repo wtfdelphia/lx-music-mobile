@@ -40,6 +40,13 @@
     "name": "wtfdelphia",
     "email": "lyswhut@qq.com"
   },
+  "contributors": [
+    {
+      "name": "lyswhut",
+      "email": "lyswhut@qq.com",
+      "url": "https://github.com/lyswhut/lx-music-mobile"
+    }
+  ],
   "license": "Apache-2.0",
   "bugs": {
     "url": "https://github.com/wtfdelphia/lx-music-mobile/issues"

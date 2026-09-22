@@ -14,6 +14,14 @@
 
 <p align="center">一个基于 React Native 开发的音乐软件</p>
 
+## 本仓库声明
+
+本仓库是 [lyswhut/lx-music-mobile](https://github.com/lyswhut/lx-music-mobile) 的第三方
+fork（Apache 2.0），与上游作者无官方关系，未获上游授权或背书。上游项目地址：
+<https://github.com/lyswhut/lx-music-mobile>，原始版权归属上游作者。本仓库的独立
+发布（签名、版本号、更新通道）均不代表上游立场，见 [NOTICE](NOTICE) 与
+ [CHANGELOG.md](CHANGELOG.md) 中的 fork 变更区段。
+
 ## 说明
 
 所用技术栈：
