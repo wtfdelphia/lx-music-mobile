@@ -1,7 +1,7 @@
 {
   "name": "lx-music-mobile",
-  "version": "1.9.1",
-  "versionCode": 78,
+  "version": "1.9.1.1",
+  "versionCode": 79,
   "private": true,
   "scripts": {
     "test": "vitest run",
