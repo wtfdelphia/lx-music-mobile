@@ -58,3 +58,21 @@ Release 步骤依赖 `KEYSTORE_*` secrets，只能由真实发版验证。
   `gh run rerun --failed 35688305232` 即可只重跑失败链路
 - 注意：tag 创建前，任何 `main` push 都会再次触发完整构建，
   凭据修正前的收尾提交应暂缓推送
+
+## 发版成功记录（2026-09-22，同一 run 重跑）
+
+两次重跑定位并修复凭据问题后，run 35688305232 最终全绿：
+
+- 第一次失败根因：传进 Secret 的 base64 副本被复制通道损坏
+  （本地文件与密码经 `keytool -list` 验证无误）。用
+  `gh secret set --body "$(base64 -w0 ...)"` 从本地原始文件直接
+  推送，不经过剪贴板
+- 第二次失败根因：工作流读的键名是 `KEYSTORE_PASSWORD`，误设成
+  `KEYSTORE_STORE_PASSWORD`，store 密码传入空串。补设正确键并
+  删除多余键
+- 重跑结果：CheckVersion 4s、iOS 13m20s、Android 8m31s、
+  Release 10s，全部通过
+- `v1.9.1.1` tag 已创建（指向 `dff700e`），GitHub Release 已发布，
+  附件含 5 个签名 APK 与 1 个未签名 IPA
+- 首跑记录里「凭据修正前暂缓推送」的提示已解除：tag 存在后
+  CheckVersion 门闩会跳过后续 `main` push 的构建
