@@ -42,3 +42,19 @@ Release 步骤依赖 `KEYSTORE_*` secrets，只能由真实发版验证。
 - change 未归档：归档前需 `openspec-verify-change` 与
   `spec-compliance-check`
 - 覆盖安装提示：装过上游包的设备需先卸载再装本仓库签名包
+
+## 发版首跑记录（2026-09-22）
+
+`npm run publish 1.9.1.1` 后推送 `dff700e`，run 35688305232：
+
+- CheckVersion 门闩放行（`v1.9.1.1` tag 不存在），行为符合设计
+- iOS job 绿（10m7s，未签名 IPA 构建成功）
+- Android job 红（7m43s）：`:app:packageRelease` 报
+  `KeytoolException: Failed to read key from store: Keystore was
+  tampered with, or password was incorrect`。编译、打包均通过，
+  挂在签名读取环节，属 `KEYSTORE_*` secrets 配置问题（store
+  密码不符或 base64 内容损坏），非流水线代码缺陷
+- Release job 未执行，tag 未创建；修正凭据后
+  `gh run rerun --failed 35688305232` 即可只重跑失败链路
+- 注意：tag 创建前，任何 `main` push 都会再次触发完整构建，
+  凭据修正前的收尾提交应暂缓推送
