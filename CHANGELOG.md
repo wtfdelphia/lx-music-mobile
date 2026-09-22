@@ -6,9 +6,44 @@ Project versioning adheres to [Semantic Versioning](http://semver.org/).
 Commit convention is based on [Conventional Commits](http://conventionalcommits.org).
 Change log format is based on [Keep a Changelog](http://keepachangelog.com/).
 
-## fork 变更（基于上游 v1.8.4）
+## [1.9.1](https://github.com/lyswhut/lx-music-mobile/compare/v1.9.0...v1.9.1) - 2026-09-19
 
-fork 不独立发版，版本号沿用 1.8.4。以下记录 fork 侧的变更，按时间倒序。
+### 优化
+
+- 优化 tx 推荐歌单列表
+
+### 修复
+
+- 修复打开某些 kg 歌单时歌曲丢失的问题
+
+## [1.9.0](https://github.com/lyswhut/lx-music-mobile/compare/v1.8.4...v1.9.0) - 2026-09-12
+
+### 新增
+
+- 歌曲菜单新增 “清理缓存” 按钮，可用于清理 URL 缓存，当某首歌获取到了错误的歌曲链接时，可以使用该功能清理与其关联的歌曲URL缓存
+
+### 优化
+
+- 优化自动换源歌曲匹配机制
+
+### 修复
+
+- 修复 kg 搜索结果显示问题
+- 修复某些 tx 歌单打开失败的问题 (@ght-000)
+- 修复 mg 图片、歌词获取
+- 修复 tx 歌单翻页问题 (#1107, @jtcai)
+- 修复 tx 歌曲搜索失败的问题（@ikun0014）
+
+## fork 变更（基于上游 v1.9.1）
+
+fork 侧的变更，按时间倒序。
+
+### 2026-09-22 对齐上游 v1.9.1
+
+- 上游重写 `master` 历史后，以 `d295604`（v1.8.4）为嫁接基线合并上游
+  v1.8.4→v1.9.1 的差异
+- 同步上游 tags `v1.9.0`、`v1.9.1` 到 origin
+- 合并 `release` 触发分支修复与 actions Node 24 升级（PR #2、#3）
 
 ### 2026-09-10 合并 dev-ios 进 main
 
