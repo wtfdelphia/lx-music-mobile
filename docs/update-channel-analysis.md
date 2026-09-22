@@ -280,6 +280,29 @@ CI 接管。
   建 Release），默认只读会静默失败。
 - 不需要 `PAT`。
 
+## 实施记录
+
+2026-09-22 实施完成，决策点全部按推荐项落地，变更工件在
+`openspec/changes/fork-update-channel/`。
+
+- 上游 v1.9.1 同步：上游重写 `master` 历史（squash），`main` 与新
+  上游无共同祖先。以 `git replace --graft` 把上游新根嫁接回旧基线
+  `d295604` 做三方合并，解 3 处真实冲突（`CHANGELOG.md`、
+  `package-lock.json`、`src/plugins/player/utils.ts`）。tags
+  `v1.9.0`、`v1.9.1` 已同步到 origin。
+- 发布流水线：`release.yml` 加 `CheckVersion` 门闩（版本号对应
+  tag 已存在即跳过全部构建发布步骤，防 `main` 日常 push 误触发），
+  新增 `iOS` job 产出未签名 IPA 挂进 Release，`Release` 挂
+  5 APK + 1 IPA 与全产物 MD5。`publish-version-info.yml` 已删除。
+- 身份与渠道：`package.json` 的 `author.name` 改为 `wtfdelphia`、
+  `repository.url` 改为本仓库；两个 `version.*` 平台文件源列表
+  收敛为本仓库 `main` 分支 `publish/version.json` 单源，删除 7 个
+  上游源与 npm 解析代码。
+- README 下载入口三处链接改指本仓库，声明签名差异。
+- 签名 secrets 与 workflow 读写权限已由仓库管理员配置。
+
+版本号按策略执行：上游 v1.9.1 之后的首个自有版本为 `1.9.1.1`。
+
 ## 执行门禁
 
 按 `AGENTS.md` 的 OpenSpec 门禁，决策点 1 与 3 触及发布配置（版本号、
