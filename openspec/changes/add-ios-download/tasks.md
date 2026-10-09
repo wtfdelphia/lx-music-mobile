@@ -1,30 +1,30 @@
 ## 1. 工件与文档入库
 
-- [ ] 1.1 `docs/download-feature-design.md` 与四工件随本 change 首个提交入库；验证：`git show --stat` 含该文件且 `docs/legal-risk-analysis.md` 不在提交内
-- [ ] 1.2 `openspec validate --all` 全绿；验证：命令退出码 0，`add-ios-download` 四工件齐全
+- [x] 1.1 `docs/download-feature-design.md` 与四工件随本 change 首个提交入库；验证：`git show --stat` 含该文件且 `docs/legal-risk-analysis.md` 不在提交内
+- [x] 1.2 `openspec validate --all` 全绿；验证：命令退出码 0，`add-ios-download` 四工件齐全
 
 ## 2. 类型、配置与持久化
 
-- [ ] 2.1 `src/types/download_list.d.ts` 补 `listId` 字段；`src/types/app_setting.d.ts` 与 `src/config/defaultSetting.ts` 补 11 项下载设置（键名见长文档 §10.5）；验证：`npx tsc --noEmit` 错误数不超 21
-- [ ] 2.2 `src/config/constant.ts`：`storageDataPrefix` 加 `downloadList`；`NAV_MENUS` 改按 `Platform.OS` 生成（iOS 增 `nav_download`，两个 `as const` 元组取并集）；验证：`tsc` 不新增错误，Android 构建路径下列表内容不变（人工比对）
-- [ ] 2.3 `core/download/persist.ts`：AsyncStorage 分片读写（`@download_list__meta` + 每 100 条一片）、100ms 合并、`flush()` 强制落盘；验证：vitest 覆盖分片合并、写入顺序、flush 语义
-- [ ] 2.4 `store/download/state.ts` + `action.ts` + `hook.ts`：任务列表状态、`downloadListUpdate` 事件接线；验证：vitest 覆盖状态更新与事件触发
+- [x] 2.1 `src/types/download_list.d.ts` 补 `listId` 字段；`src/types/app_setting.d.ts` 与 `src/config/defaultSetting.ts` 补 11 项下载设置（键名见长文档 §10.5）；验证：`npx tsc --noEmit` 错误数不超 21
+- [x] 2.2 `src/config/constant.ts`：`storageDataPrefix` 加 `downloadList`；`NAV_MENUS` 改按 `Platform.OS` 生成（iOS 增 `nav_download`，两个 `as const` 元组取并集）；验证：`tsc` 不新增错误，Android 构建路径下列表内容不变（人工比对）
+- [x] 2.3 `core/download/persist.ts`：AsyncStorage 分片读写（`@download_list__meta` + 每 100 条一片）、100ms 合并、`flush()` 强制落盘；验证：vitest 覆盖分片合并、写入顺序、flush 语义
+- [x] 2.4 `store/download/state.ts` + `action.ts` + `hook.ts`：任务列表状态、`downloadListUpdate` 事件接线；验证：vitest 覆盖状态更新与事件触发
 
 ## 3. 核心层（JS）
 
-- [ ] 3.1 `core/download/utils.ts`：7 档 `QUALITYS`、`getMusicType` 降级、`getExt`、`createDownloadInfo`（任务键 `${id}_${quality}_${ext}`）、`buildSavePath`（按列表名分子目录）、`clipNameLength`（80 字符）与 `clipFileNameLength`（150 字符）移植；验证：vitest 覆盖降级逐档、键去重、截断与清洗（含 `#`）
-- [ ] 3.2 `core/download/urlResolver.ts`：两段式 `getUrl`（`toggleMusicInfo` 优先）与 `refreshUrl`（刷新上限 2 次），直调 `core/music/online.ts` 不经过本地优先；验证：vitest 覆盖两段式回落与上限
-- [ ] 3.3 `core/download/downloadIndex.ts`：双 id 索引（原 id + `toggleMusicInfo` id）、`lookupLocal`（`stat` 确认存在）；验证：vitest 覆盖双 id 命中与文件缺失不命中
-- [ ] 3.4 `core/download/reconcile.ts`：对账（冷启动 + 进入下载页触发，缺失标 `FILE_MISSING` 移出索引）；验证：vitest 覆盖缺失检测与索引移除
-- [ ] 3.5 `core/download/engine.ios.ts` + `engine.ts`：接口按完整形态冻结（configure/start/pause/resume/cancel/removeResumeData/getActiveTasks/drainEvents/ack），P1a 未实现方法抛 `not supported`；验证：`tsc` 通过，Android 侧调用即 reject
-- [ ] 3.6 `core/download/scheduler.ts`：`checkStartTask` 并发补位、`tryNum`（仅 `start` 事件清零）、错误映射表（§7.4 逐行）、`enable = false` 时不启动新任务；验证：vitest 覆盖补位数量、错误映射逐行、冻结语义
-- [ ] 3.7 `core/download/lrc.ts`：`.lrc` 输出（UTF-8，`buildLyrics` 拼装，子开关生效）；验证：vitest 覆盖拼装结果与开关组合
+- [x] 3.1 `core/download/utils.ts`：7 档 `QUALITYS`、`getMusicType` 降级、`getExt`、`createDownloadInfo`（任务键 `${id}_${quality}_${ext}`）、`buildSavePath`（按列表名分子目录）、`clipNameLength`（80 字符）与 `clipFileNameLength`（150 字符）移植；验证：vitest 覆盖降级逐档、键去重、截断与清洗（含 `#`）
+- [x] 3.2 `core/download/urlResolver.ts`：两段式 `getUrl`（`toggleMusicInfo` 优先）与 `refreshUrl`（刷新上限 2 次），直调 `core/music/online.ts` 不经过本地优先；验证：vitest 覆盖两段式回落与上限
+- [x] 3.3 `core/download/downloadIndex.ts`：双 id 索引（原 id + `toggleMusicInfo` id）、`lookupLocal`（`stat` 确认存在）；验证：vitest 覆盖双 id 命中与文件缺失不命中
+- [x] 3.4 `core/download/reconcile.ts`：对账（冷启动 + 进入下载页触发，缺失标 `FILE_MISSING` 移出索引）；验证：vitest 覆盖缺失检测与索引移除
+- [x] 3.5 `core/download/engine.ios.ts` + `engine.ts`：接口按完整形态冻结（configure/start/pause/resume/cancel/removeResumeData/getActiveTasks/drainEvents/ack），P1a 未实现方法抛 `not supported`；验证：`tsc` 通过，Android 侧调用即 reject
+- [x] 3.6 `core/download/scheduler.ts`：`checkStartTask` 并发补位、`tryNum`（仅 `start` 事件清零）、错误映射表（§7.4 逐行）、`enable = false` 时不启动新任务；验证：vitest 覆盖补位数量、错误映射逐行、冻结语义
+- [x] 3.7 `core/download/lrc.ts`：`.lrc` 输出（UTF-8，`buildLyrics` 拼装，子开关生效）；验证：vitest 覆盖拼装结果与开关组合
 
 ## 4. 播放联动与本地优先
 
-- [ ] 4.1 `src/core/player/player.ts` `getMusicPlayUrl`（`:96`）：`!isRefresh` 时查 `downloadIndex.lookupLocal`，命中返回 `file://`；`isRefresh` 跳过本地并触发对账；验证：vitest 覆盖命中/未命中/刷新跳过三条路径
-- [ ] 4.2 `src/core/init/player/preloadNextMusic.ts`：`file://` 路径跳过 `checkUrl` 与 `isRefresh` 重取；验证：vitest 或代码走查确认无网络探测
-- [ ] 4.3 `src/core/music/download.ts` 解开本地分支注释；`src/core/player/playInfo.ts:141` DOWNLOAD 分支返回下载列表；验证：下载页点击已完成任务走本地播放（P1a 用模拟器 + 预置文件验证路径）
+- [x] 4.1 `src/core/player/player.ts` `getMusicPlayUrl`（`:96`）：`!isRefresh` 时查 `downloadIndex.lookupLocal`，命中返回 `file://`；`isRefresh` 跳过本地并触发对账；验证：vitest 覆盖命中/未命中/刷新跳过三条路径
+- [x] 4.2 `src/core/init/player/preloadNextMusic.ts`：`file://` 路径跳过 `checkUrl` 与 `isRefresh` 重取；验证：vitest 或代码走查确认无网络探测
+- [x] 4.3 `src/core/music/download.ts` 解开本地分支注释；`src/core/player/playInfo.ts:141` DOWNLOAD 分支返回下载列表；验证：下载页点击已完成任务走本地播放（P1a 用模拟器 + 预置文件验证路径）
 
 ## 5. UI 与导航
 

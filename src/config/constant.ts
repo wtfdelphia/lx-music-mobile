@@ -1,3 +1,5 @@
+import { Platform } from 'react-native'
+
 export const HEADER_HEIGHT = 42
 export const LIST_ITEM_HEIGHT = 54
 export const LIST_SCROLL_POSITION_KEY = '__LIST_SCROLL_POSITION_KEY__'
@@ -100,14 +102,28 @@ export const storageDataPrefixOld = {
 export const APP_PROVIDER_NAME = 'cn.toside.music.mobile.provider'
 
 
-export const NAV_MENUS = [
+const NAV_MENUS_ANDROID = [
   { id: 'nav_search', icon: 'search-2' },
   { id: 'nav_songlist', icon: 'album' },
   { id: 'nav_top', icon: 'leaderboard' },
   { id: 'nav_love', icon: 'love' },
-  // { id: 'nav_download', icon: 'download-2' },
   { id: 'nav_setting', icon: 'setting' },
 ] as const
+
+const NAV_MENUS_IOS = [
+  { id: 'nav_search', icon: 'search-2' },
+  { id: 'nav_songlist', icon: 'album' },
+  { id: 'nav_top', icon: 'leaderboard' },
+  { id: 'nav_love', icon: 'love' },
+  { id: 'nav_download', icon: 'download-2' },
+  { id: 'nav_setting', icon: 'setting' },
+] as const
+
+/**
+ * 导航菜单：iOS 多下载页（§10.1）。两个 `as const` 元组取并集，
+ * `nav_download` 在 Android 类型上存在但运行时永不出现（Q11 共识）
+ */
+export const NAV_MENUS = Platform.OS === 'ios' ? NAV_MENUS_IOS : NAV_MENUS_ANDROID
 
 export type NAV_ID_Type = typeof NAV_MENUS[number]['id']
 

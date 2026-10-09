@@ -4,7 +4,9 @@ import Search from '../Views/Search'
 import SongList from '../Views/SongList'
 import Mylist from '../Views/Mylist'
 import Leaderboard from '../Views/Leaderboard'
+import Download from '../Views/Download'
 import Setting from '../Views/Setting'
+import { NAV_MENUS, type NAV_ID_Type } from '@/config/constant'
 import commonState, { type InitState as CommonState } from '@/store/common/state'
 import { createStyle } from '@/utils/tools'
 import PagerView, { type PageScrollStateChangedNativeEvent, type PagerViewOnPageSelectedEvent } from 'react-native-pager-view'
@@ -158,6 +160,25 @@ const MylistPage = () => {
 
   return visible ? component : null
 }
+const DownloadPage = () => {
+  const [visible, setVisible] = useState(commonState.navActiveId == 'nav_download')
+  const component = useMemo(() => <Download />, [])
+  useEffect(() => {
+    const handleNavIdUpdate = (id: CommonState['navActiveId']) => {
+      if (id == 'nav_download') {
+        requestAnimationFrame(() => {
+          setVisible(true)
+        })
+      }
+    }
+    global.state_event.on('navActiveIdUpdated', handleNavIdUpdate)
+
+    return () => {
+      global.state_event.off('navActiveIdUpdated', handleNavIdUpdate)
+    }
+  }, [])
+  return visible ? component : null
+}
 const SettingPage = () => {
   const [visible, setVisible] = useState(commonState.navActiveId == 'nav_setting')
   const component = useMemo(() => <Setting />, [])
@@ -178,24 +199,25 @@ const SettingPage = () => {
   return visible ? component : null
 }
 
-const viewMap = {
-  nav_search: 0,
-  nav_songlist: 1,
-  nav_top: 2,
-  nav_love: 3,
-  nav_setting: 4,
+// §10.1：由平台导航列表生成，iOS 含下载页、Android 不含
+const indexMap = NAV_MENUS.map(menu => menu.id)
+const viewMap: Partial<Record<NAV_ID_Type, number>> = {}
+NAV_MENUS.forEach((menu, i) => {
+  viewMap[menu.id] = i
+})
+
+const pageComponents: Partial<Record<NAV_ID_Type, JSX.Element>> = {
+  nav_search: <SearchPage />,
+  nav_songlist: <SongListPage />,
+  nav_top: <LeaderboardPage />,
+  nav_love: <MylistPage />,
+  nav_download: <DownloadPage />,
+  nav_setting: <SettingPage />,
 }
-const indexMap = [
-  'nav_search',
-  'nav_songlist',
-  'nav_top',
-  'nav_love',
-  'nav_setting',
-] as const
 
 const Main = () => {
   const pagerViewRef = useRef<ComponentRef<typeof PagerView>>(null)
-  let activeIndexRef = useRef(viewMap[commonState.navActiveId])
+  let activeIndexRef = useRef(viewMap[commonState.navActiveId] ?? 0)
   // const isScrollingRef = useRef(false)
   // const scrollPositionRef = useRef(-1)
 
@@ -218,7 +240,8 @@ const Main = () => {
     // console.log(nativeEvent)
     activeIndexRef.current = nativeEvent.position
     if (activeIndexRef.current != viewMap[commonState.navActiveId]) {
-      setNavActiveId(indexMap[activeIndexRef.current])
+      const id = indexMap[activeIndexRef.current]
+      if (id) setNavActiveId(id)
     }
   }, [])
 
@@ -246,7 +269,7 @@ const Main = () => {
   useEffect(() => {
     const handleUpdate = (id: CommonState['navActiveId']) => {
       const index = viewMap[id]
-      if (activeIndexRef.current == index) return
+      if (index == null || activeIndexRef.current == index) return
       activeIndexRef.current = index
       pagerViewRef.current?.setPageWithoutAnimation(index)
     }
@@ -274,21 +297,11 @@ const Main = () => {
       scrollEnabled={settingState.setting['common.homePageScroll']}
       style={styles.pagerView}
     >
-      <View collapsable={false} key="nav_search" style={styles.pageStyle}>
-        <SearchPage />
-      </View>
-      <View collapsable={false} key="nav_songlist" style={styles.pageStyle}>
-        <SongListPage />
-      </View>
-      <View collapsable={false} key="nav_top" style={styles.pageStyle}>
-        <LeaderboardPage />
-      </View>
-      <View collapsable={false} key="nav_love" style={styles.pageStyle}>
-        <MylistPage />
-      </View>
-      <View collapsable={false} key="nav_setting" style={styles.pageStyle}>
-        <SettingPage />
-      </View>
+      {NAV_MENUS.map(menu => (
+        <View collapsable={false} key={menu.id} style={styles.pageStyle}>
+          {pageComponents[menu.id]}
+        </View>
+      ))}
       {/* <View collapsable={false} key="nav_search" style={styles.pageStyle}>
         <Search />
       </View>
