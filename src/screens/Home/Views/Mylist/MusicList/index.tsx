@@ -6,7 +6,7 @@ import { handleDislikeMusic, handlePlay, handlePlayLater, handleRemove, handleSh
 import List, { type ListType } from './List'
 import ListMusicAdd, { type MusicAddModalType as ListMusicAddType } from '@/components/MusicAddModal'
 import ListMusicMultiAdd, { type MusicMultiAddModalType as ListAddMultiType } from '@/components/MusicMultiAddModal'
-import { createStyle } from '@/utils/tools'
+import { createStyle, toast } from '@/utils/tools'
 import { type LayoutChangeEvent, View } from 'react-native'
 import ActiveList, { type ActiveListType } from './ActiveList'
 import MultipleModeBar, { type SelectMode, type MultipleModeBarType } from './MultipleModeBar'
@@ -15,6 +15,7 @@ import ListMusicSearch, { type ListMusicSearchType } from './ListMusicSearch'
 import MusicPositionModal, { type MusicPositionModalType } from './MusicPositionModal'
 import MetadataEditModal, { type MetadataEditType, type MetadataEditProps } from '@/components/MetadataEditModal'
 import MusicToggleModal, { type MusicToggleModalType } from './MusicToggleModal'
+import DownloadModal, { type DownloadModalType } from '@/components/DownloadModal'
 
 
 export default () => {
@@ -30,6 +31,7 @@ export default () => {
   const metadataEditTypeRef = useRef<MetadataEditType>(null)
   const listMenuRef = useRef<ListMenuType>(null)
   const musicToggleModalRef = useRef<MusicToggleModalType>(null)
+  const downloadModalRef = useRef<DownloadModalType>(null)
   const layoutHeightRef = useRef<number>(0)
   const isShowMultipleModeBar = useRef(false)
   const isShowSearchBarModeBar = useRef(false)
@@ -94,6 +96,27 @@ export default () => {
     layoutHeightRef.current = e.nativeEvent.layout.height
   }, [])
 
+  const handleDownloadMusic = useCallback((info: SelectInfo) => {
+    if (info.selectedList.length > 1) {
+      const onlineList = info.selectedList.filter(m => m.source != 'local')
+      if (!onlineList.length) {
+        toast(global.i18n.t('download__not_available_tip'))
+        return
+      }
+      downloadModalRef.current?.show({
+        musicInfo: null,
+        selectedList: onlineList,
+        listId: info.listId,
+      })
+    } else {
+      downloadModalRef.current?.show({
+        musicInfo: info.musicInfo as LX.Music.MusicInfoOnline,
+        selectedList: [info.musicInfo as LX.Music.MusicInfoOnline],
+        listId: info.listId,
+      })
+    }
+  }, [])
+
   const handleAddMusic = useCallback((info: SelectInfo) => {
     if (info.selectedList.length) {
       listMusicMultiAddRef.current?.show({ selectedList: info.selectedList, listId: info.listId, isMove: false })
@@ -147,6 +170,7 @@ export default () => {
           onScrollToInfo={handleScrollToInfo}
         />
       </View>
+      <DownloadModal ref={downloadModalRef} />
       <ListMusicAdd ref={listMusicAddRef} onAdded={hancelExitSelect} />
       <ListMusicMultiAdd ref={listMusicMultiAddRef} onAdded={hancelExitSelect} />
       <MusicPositionModal ref={musicPositionModalRef}
@@ -155,6 +179,7 @@ export default () => {
         ref={listMenuRef}
         onPlay={info => { handlePlay(info.listId, info.index) }}
         onPlayLater={info => { hancelExitSelect(); handlePlayLater(info.listId, info.musicInfo, info.selectedList, hancelExitSelect) }}
+        onDownload={handleDownloadMusic}
         onRemove={info => { hancelExitSelect(); handleRemove(info.listId, info.musicInfo, info.selectedList, hancelExitSelect) }}
         onDislikeMusic={info => { void handleDislikeMusic(info.musicInfo) }}
         onCopyName={info => { handleShare(info.musicInfo) }}

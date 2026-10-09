@@ -6,6 +6,7 @@ import ListMenu, { type ListMenuType, type Position, type SelectInfo } from './L
 import ListMusicMultiAdd, { type MusicMultiAddModalType as ListAddMultiType } from '@/components/MusicMultiAddModal'
 import ListMusicAdd, { type MusicAddModalType as ListMusicAddType } from '@/components/MusicAddModal'
 import MultipleModeBar, { type MultipleModeBarType, type SelectMode } from './MultipleModeBar'
+import DownloadModal, { type DownloadModalType } from '@/components/DownloadModal'
 import { handleDislikeMusic, handlePlay, handlePlayLater, handleShare, handleShowMusicSourceDetail } from './listAction'
 import { createStyle } from '@/utils/tools'
 
@@ -37,6 +38,7 @@ export default forwardRef<OnlineListType, OnlineListProps>(({
   const listMusicAddRef = useRef<ListMusicAddType>(null)
   const listMusicMultiAddRef = useRef<ListAddMultiType>(null)
   const listMenuRef = useRef<ListMenuType>(null)
+  const downloadModalRef = useRef<DownloadModalType>(null)
   // const loadingMaskRef = useRef<LoadingMaskType>(null)
 
   useImperativeHandle(ref, () => ({
@@ -70,6 +72,13 @@ export default forwardRef<OnlineListType, OnlineListProps>(({
       selectedList: listRef.current!.getSelectedList(),
     }, position)
   }
+  const handleDownloadMusic = (info: SelectInfo) => {
+    downloadModalRef.current?.show({
+      musicInfo: info.selectedList.length > 1 ? null : info.musicInfo,
+      selectedList: info.selectedList.length > 1 ? info.selectedList : [info.musicInfo],
+    })
+  }
+
   const handleAddMusic = (info: SelectInfo) => {
     if (info.selectedList.length) {
       listMusicMultiAddRef.current?.show({ selectedList: info.selectedList, listId: '', isMove: false })
@@ -101,12 +110,14 @@ export default forwardRef<OnlineListType, OnlineListProps>(({
           onExitSelectMode={hancelExitSelect}
         />
       </View>
+      <DownloadModal ref={downloadModalRef} />
       <ListMusicAdd ref={listMusicAddRef} onAdded={() => { hancelExitSelect() }} />
       <ListMusicMultiAdd ref={listMusicMultiAddRef} onAdded={() => { hancelExitSelect() }} />
       <ListMenu
         ref={listMenuRef}
         onPlay={info => { handlePlay(info.musicInfo) }}
         onPlayLater={info => { hancelExitSelect(); handlePlayLater(info.musicInfo, info.selectedList, hancelExitSelect) }}
+        onDownload={handleDownloadMusic}
         onCopyName={info => { handleShare(info.musicInfo) }}
         onAdd={handleAddMusic}
         onMusicSourceDetail={info => { void handleShowMusicSourceDetail(info.musicInfo) }}
