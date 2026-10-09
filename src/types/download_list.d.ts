@@ -44,6 +44,10 @@ declare namespace LX {
       isComplate: boolean
       status: DownloadTaskStatus
       statusText: string
+      /**
+       * 出错时的错误码（仅内存，不落盘；重启后按状态重建）
+       */
+      errorCode?: DownloadErrorCode
       downloaded: number
       total: number
       progress: number

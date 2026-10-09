@@ -1,4 +1,5 @@
 import { stat } from '@/utils/fs'
+import { resolveDownloadPath } from './path'
 
 interface IndexEntry {
   quality: LX.Quality
@@ -35,7 +36,7 @@ export const rebuildIndex = async(tasks: LX.Download.ListItem[]): Promise<void> 
     if (!task.isComplate || task.status !== 'completed') continue
     const relPath = task.metadata.filePath
     if (!relPath) continue
-    const exists = await stat(relPath).then(() => true).catch(() => false)
+    const exists = await stat(resolveDownloadPath(relPath)).then(() => true).catch(() => false)
     if (!exists) continue
     const entry: IndexEntry = { quality: task.metadata.quality, relPath }
     const ids = [task.metadata.musicInfo.id]
@@ -77,7 +78,7 @@ export const removeFromIndex = (musicInfo: LX.Music.MusicInfoOnline): void => {
 
 /**
  * 播放器查询入口（§9）：依次按原 id 与切源 id 查，
- * 命中且文件存在返回相对路径；未命中返回空串
+ * 命中且文件存在返回可直接播放的绝对路径；未命中返回空串
  */
 export const lookupLocal = async(musicInfo: LX.Music.MusicInfoOnline): Promise<string> => {
   const ids = [musicInfo.id]
@@ -86,8 +87,8 @@ export const lookupLocal = async(musicInfo: LX.Music.MusicInfoOnline): Promise<s
   for (const id of ids) {
     const entry = index.get(id)
     if (!entry) continue
-    const exists = await stat(entry.relPath).then(() => true).catch(() => false)
-    if (exists) return entry.relPath
+    const exists = await stat(resolveDownloadPath(entry.relPath)).then(() => true).catch(() => false)
+    if (exists) return resolveDownloadPath(entry.relPath)
   }
   return ''
 }
