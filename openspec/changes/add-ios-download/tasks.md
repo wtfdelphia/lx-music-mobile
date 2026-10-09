@@ -28,18 +28,18 @@
 
 ## 5. UI 与导航
 
-- [ ] 5.1 `src/components/DownloadModal/`：单曲弹窗（`meta.qualitys` ∩ `qualityList[source]`，附大小）与批量弹窗（四档 + 计数文案）；验证：手动走查渲染逻辑，文案进三语
-- [ ] 5.2 两处 `ListMenu`（`OnlineList`、`Mylist/MusicList`）启用 `download` 项：显示条件 = `isDownloadSupported()` ∧ `download.enable` ∧ 非本地歌曲；多选走批量弹窗；验证：手动走查条件矩阵
-- [ ] 5.3 下载页 `src/screens/Home/Views/Download/index.tsx`（替换 `index.js` 空壳）：五 Tab（全部/下载中/已暂停/出错/已完成）、行内进度、长按菜单（播放/开始/暂停/删除/删除含文件）、顶部全部开始/暂停；验证：手动走查 + `tsc` 无新增错误
-- [ ] 5.4 导航改造：`viewMap`/`indexMap`/PagerView 子页改列表驱动，`Horizontal/Main.tsx` 加 `nav_download` 分支，关闭功能时回退 `nav_search`，`dataInit.ts:34` 恢复时非法 id 回退；验证：`android-regression` 通过 + 双布局双滚动模式手测（`homePageScroll` 开/关）
-- [ ] 5.5 设置分组 `settings/Download/index.tsx`：11 项设置 + 只读项（保存位置说明、占用、清除全部）；`SETTING_SCREENS` 仅 iOS 加 `download`；首次开启走 `confirmDialog` 合规提示；验证：手动走查开关语义（含 §7.7 冻结）
-- [ ] 5.6 三语文案：`download_*`/`download__*`/`nav_download`/错误码新增项（`download_status_error_no_space`、`download_status_error_file_missing`、`download_status_paused_force_quit`、`download_status_paused_system`）；验证：三语 key 集合一致，无缺失引用
+- [x] 5.1 `src/components/DownloadModal/`：单曲弹窗（`meta.qualitys` ∩ `qualityList[source]`，附大小）与批量弹窗（四档 + 计数文案）；验证：手动走查渲染逻辑，文案进三语
+- [x] 5.2 两处 `ListMenu`（`OnlineList`、`Mylist/MusicList`）启用 `download` 项：显示条件 = `isDownloadSupported()` ∧ `download.enable` ∧ 非本地歌曲；多选走批量弹窗；验证：手动走查条件矩阵
+- [x] 5.3 下载页 `src/screens/Home/Views/Download/index.tsx`（替换 `index.js` 空壳）：五 Tab（全部/下载中/已暂停/出错/已完成）、行内进度、长按菜单（播放/开始/暂停/删除/删除含文件）、顶部全部开始/暂停；验证：手动走查 + `tsc` 无新增错误
+- [x] 5.4 导航改造：`viewMap`/`indexMap`/PagerView 子页改列表驱动，`Horizontal/Main.tsx` 加 `nav_download` 分支，关闭功能时回退 `nav_search`，`dataInit.ts:34` 恢复时非法 id 回退；验证：`android-regression` 通过 + 双布局双滚动模式手测（`homePageScroll` 开/关）
+- [x] 5.5 设置分组 `settings/Download/index.tsx`：11 项设置 + 只读项（保存位置说明、占用、清除全部）；`SETTING_SCREENS` 仅 iOS 加 `download`；首次开启走 `confirmDialog` 合规提示；验证：手动走查开关语义（含 §7.7 冻结）
+- [x] 5.6 三语文案：`download_*`/`download__*`/`nav_download`/错误码新增项（`download_status_error_no_space`、`download_status_error_file_missing`、`download_status_paused_force_quit`、`download_status_paused_system`）；验证：三语 key 集合一致，无缺失引用
 
 ## 6. 原生最小集（P1a）
 
-- [ ] 6.1 `ios/LxMusicMobile/Modules/LxDownloadManager.{h,m}`：单例、固定 identifier 后台会话、`didFinishDownloadingToURL` 2xx 校验后 move + 排除备份、`didWriteData` 首个 2xx 发 start、非 2xx 记 `HTTP_<status>`、事件日志 `events.jsonl`（seq 递增）与 `ack` 截断、`drainEvents`；验证：编译通过 + 模拟器 `ios-simulator-smoke` 全绿
-- [ ] 6.2 `DownloadModule.{h,m}`（RCTEventEmitter 外壳）：JS 接口按冻结形态导出，P1a 未实现方法显式报错；验证：JS 侧调用 start/cancel 链路通，`tsc` 无新增
-- [ ] 6.3 `AppDelegate.mm`：`didFinishLaunching` 开头创建 manager；`handleEventsForBackgroundURLSession:` 交 manager；验证：编译通过，启动路径无回归（35 项自测全绿）
+- [x] 6.1 `ios/LxMusicMobile/Modules/LxDownloadManager.{h,m}`：单例、固定 identifier 后台会话、`didFinishDownloadingToURL` 2xx 校验后 move + 排除备份、`didWriteData` 首个 2xx 发 start、非 2xx 记 `HTTP_<status>`、事件日志 `events.jsonl`（seq 递增）与 `ack` 截断、`drainEvents`；验证：编译通过 + 模拟器 `ios-simulator-smoke` 全绿
+- [x] 6.2 `DownloadModule.{h,m}`（RCTEventEmitter 外壳）：JS 接口按冻结形态导出，P1a 未实现方法显式报错；验证：JS 侧调用 start/cancel 链路通，`tsc` 无新增
+- [x] 6.3 `AppDelegate.mm`：`didFinishLaunching` 开头创建 manager；`handleEventsForBackgroundURLSession:` 交 manager；验证：编译通过，启动路径无回归（35 项自测全绿）
 
 ## 7. 测试与回归（P1a）
 

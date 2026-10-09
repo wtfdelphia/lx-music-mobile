@@ -27,8 +27,8 @@
 | `screens/` | 222 | 页面与视图 | 按页面分组（`Home` / `PlayDetail` / `SonglistDetail` / `Comment`）。只做展示与交互编排，业务动作调 `core/`，不直接改 `store/` |
 | `utils/` | 133 | 工具与外部适配 | 见下节细分 |
 | `components/` | 72 | 跨页面复用 UI | `common/` 为基础组件；专用弹窗（`MusicAddModal` 等）按功能建子目录。不含业务逻辑 |
-| `core/` | 54 | 业务动作层 | `init/`（启动流程）、`music/`、`player/`、`search/`。页面调用的入口都在这里 |
-| `store/` | 47 | 状态与持久化 | 按领域分子目录，各领域自治。跨领域通知走 `event/` |
+| `core/` | 54 | 业务动作层 | `init/`（启动流程）、`music/`、`player/`、`search/`、`download/`（下载队列、引擎绑定、对账）。页面调用的入口都在这里 |
+| `store/` | 47 | 状态与持久化 | 按领域分子目录（含 `download/`），各领域自治。跨领域通知走 `event/` |
 | `plugins/` | 27 | 独立子系统 | `player/`（播放引擎适配）、`sync/`（同步协议）。相对独立、可整体替换的模块 |
 | `types/` | 16 | 全局类型声明 | 仅类型，无运行时代码 |
 | `navigation/` | 13 | 导航注册与配置 | react-native-navigation 的页面注册、栈定义 |

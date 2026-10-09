@@ -33,7 +33,7 @@ LX Music 移动版（`lx-music-mobile`），基于 React Native 的音乐播放�
 | 测试 | vitest ^4.1.11 | `npm test` |
 | Rust | stable（CI 用 `dtolnay/rust-toolchain@stable`） | 仅 iOS 加密核心 `rust/lxcore`，Android 不链接 |
 
-平台差异靠 Metro 的平台扩展解析（`*.ios.ts` / `*.android.ts`），业务代码不做 `Platform.OS` 分支散落。现有平台扩展文件：`src/components/common/DrawerLayoutFixed.ios.tsx`、`src/utils/exportPicker.ios.ts`、`src/utils/fs.ios.ts`、`src/utils/localMediaMetadata.ios.ts`、`src/utils/nativeModules/lyricDesktop.ios.ts`、`src/utils/statusbarHeight.ios.ts`、`src/utils/toast.android.ts`、`src/utils/toast.ios.tsx`、`src/utils/version.ios.js`。
+平台差异靠 Metro 的平台扩展解析（`*.ios.ts` / `*.android.ts`），业务代码不做 `Platform.OS` 分支散落。现有平台扩展文件：`src/components/common/DrawerLayoutFixed.ios.tsx`、`src/utils/exportPicker.ios.ts`、`src/utils/fs.ios.ts`、`src/utils/localMediaMetadata.ios.ts`、`src/utils/nativeModules/lyricDesktop.ios.ts`、`src/utils/statusbarHeight.ios.ts`、`src/utils/toast.android.ts`、`src/utils/toast.ios.tsx`、`src/utils/version.ios.js`、`src/core/download/engine.ios.ts`。
 
 长期架构事实见 `spec/design.md`，目录职责见 `spec/structure.md`，业务边界见 `spec/requirements.md`。
 
