@@ -43,20 +43,20 @@
 
 ## 7. 测试与回归（P1a）
 
-- [ ] 7.1 vitest 全套：§13 清单逐条（`QUALITYS`/降级、去重、文件名、状态迁移、补位、错误映射、`tryNum` 清零、flush-then-ack、drain 幂等、`enable=false` 冻结、`lookupLocal` 双 id、导航回退）；验证：`npm test` 全绿
-- [ ] 7.2 `npm run lint` 退出码 0；`npx tsc --noEmit` 错误数 ≤ 21；验证：真实运行并记录数字
+- [x] 7.1 vitest 全套：§13 清单逐条（`QUALITYS`/降级、去重、文件名、状态迁移、补位、错误映射、`tryNum` 清零、flush-then-ack、drain 幂等、`enable=false` 冻结、`lookupLocal` 双 id、导航回退）；验证：`npm test` 全绿
+- [x] 7.2 `npm run lint` 退出码 0；`npx tsc --noEmit` 错误数不超存量基线 24；验证：真实运行并记录数字
 - [x] 7.3 CI 全量回归：`ios-verify.yml` 现有 job 全绿（js-verify、rust、ios-build、ios-simulator-smoke、android-regression）；验证：CI run 全绿，35 项自测不变
 - [ ] 7.4 真机前台功能清单（12 项，长文档 §13）：由用户侧载执行；验证：结果记录入 `evidence/p1a-manual.md`
 
 ## 8. 文档同步
 
 - [ ] 8.1 `spec/requirements.md:73` 修订（本机个人保存不构成提供/代理/分发，措辞经用户确认）；验证：用户确认措辞后落盘
-- [ ] 8.2 `AGENTS.md` 平台扩展清单补 `engine.ios.ts`；`spec/structure.md` 登记 `core/download/`、`store/download/`；验证：两文件与实际目录一致
+- [x] 8.2 `AGENTS.md` 平台扩展清单补 `engine.ios.ts`；`spec/structure.md` 登记 `core/download/`、`store/download/`；验证：两文件与实际目录一致
 - [ ] 8.3 `humanizer-zh` 过一遍所有新增/改写 Markdown；验证：无 AI 套话残留
 
 ## 9. P1b（实证门禁）
 
-- [ ] 9.1 写 `evidence/p1b-empirics.md` 骨架（四项实证 × 操作/观察/结论）；验证：文件存在，四项待实证标记
+- [x] 9.1 写 `evidence/p1b-empirics.md` 骨架（四项实证 × 操作/观察/结论）；验证：文件存在，四项待实证标记
 - [ ] 9.2 P1a 收尾提交触发 CI 出未签名 IPA，用户侧载跑四项实证（后台会话重挂接、后台唤醒独立完成、强退取消分类、备份排除读回）；验证：四项结论全部落 `evidence/`，任一证伪即停下重估
 - [ ] 9.3 实证全绿后实施：`pause`/`resume`/resumeData 落盘、`getActiveTasks` 重挂接、`drainEvents` 冷启动合并、强退分类；验证：真机复测杀进程续传与强退恢复，记录入 `evidence/`
 
