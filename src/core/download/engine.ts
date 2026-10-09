@@ -8,7 +8,28 @@
  * 两个文件的导出面必须一致（接口、`downloadEngine`、`isDownloadSupported`）
  */
 
+/**
+ * 实时事件（`LxDownloadEvent`）。complete / error 同时进事件日志，
+ * 可经 `drainEvents` 补领；start / progress 只实时投递
+ */
+export interface EngineLiveEvent {
+  type: 'start' | 'progress' | 'complete' | 'error' | 'bgFinished'
+  data: {
+    taskId: string
+    seq?: number
+    total?: number
+    downloaded?: number
+    path?: string
+    size?: number
+    code?: LX.Download.DownloadErrorCode
+    httpStatus?: number
+    message?: string
+    hasResumeData?: boolean
+  }
+}
+
 export interface DownloadEngine {
+  subscribe: (listener: (event: EngineLiveEvent) => void) => () => void
   configure: (opts: { maxConcurrent: number }) => Promise<void>
   start: (task: { taskId: string, url: string, targetPath: string, allowsCellular: boolean, headers?: Record<string, string> }) => Promise<void>
   pause: (taskId: string) => Promise<{ hasResumeData: boolean }>
@@ -31,6 +52,7 @@ const notSupported = async(): Promise<never> => {
  * Android 下载另立 change（`AGENTS.md:158`），不在此文件实现
  */
 export const downloadEngine: DownloadEngine = {
+  subscribe: () => () => {},
   configure: notSupported,
   start: notSupported,
   pause: notSupported,

@@ -1,4 +1,8 @@
 import { filterFileName } from '@/utils/common'
+import { LIST_IDS } from '@/config/constant'
+import settingState from '@/store/setting/state'
+import listState from '@/store/list/state'
+import { joinDownloadPath } from './path'
 
 /**
  * 音质阶梯，与桌面版一致（`renderer/worker/download/utils.ts`）。
@@ -102,4 +106,23 @@ export const createDownloadInfo = (musicInfo: LX.Music.MusicInfoOnline, type: LX
       listId,
     },
   }
+}
+
+
+/**
+ * 构建保存目录（相对 Documents，桌面版 `buildSavePath` 移植）：
+ * 固定根目录为 `Download`；开启按列表分目录时，默认列表与我的收藏
+ * 用 i18n 名，自建列表从列表状态取名，经清洗与截断；
+ * 取不到名字归入默认列表名（§6）
+ */
+export const buildSavePath = (downloadInfo: LX.Download.ListItem): string => {
+  let savePath = 'Download'
+  if (!settingState.setting['download.isSavePathGroupByListName']) return savePath
+  const listId = downloadInfo.metadata.listId
+  let dirName: string | undefined
+  if (listId === LIST_IDS.DEFAULT) dirName = global.i18n.t('list_name_default')
+  else if (listId === LIST_IDS.LOVE) dirName = global.i18n.t('list_name_love')
+  else dirName = listState.userList.find(l => l.id === listId)?.name
+  if (dirName) dirName = filterFileName(dirName)
+  return joinDownloadPath(savePath, clipFileNameLength(dirName ?? global.i18n.t('list_name_default')))
 }

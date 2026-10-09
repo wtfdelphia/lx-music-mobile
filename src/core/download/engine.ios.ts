@@ -1,5 +1,5 @@
-import { NativeModules } from 'react-native'
-import type { DownloadEngine } from './engine'
+import { NativeEventEmitter, NativeModules, type NativeModule } from 'react-native'
+import type { DownloadEngine, EngineLiveEvent } from './engine'
 
 /**
  * iOS 引擎：绑定原生 `DownloadModule`。
@@ -26,6 +26,13 @@ const withModule = <Args extends unknown[], R>(fn: (module: any, ...args: Args) 
 }
 
 export const downloadEngine: DownloadEngine = {
+  subscribe: (listener: (event: EngineLiveEvent) => void) => {
+    const module = getModule()
+    if (!module) return () => {}
+    const emitter = new NativeEventEmitter(module as unknown as NativeModule)
+    const sub = emitter.addListener('LxDownloadEvent', listener)
+    return () => { sub.remove() }
+  },
   configure: withModule((m, opts) => m.configure(opts)),
   start: withModule((m, task) => m.start(task)),
   pause: withModule((m, taskId) => m.pause(taskId)),

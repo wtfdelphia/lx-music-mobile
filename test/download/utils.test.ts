@@ -1,4 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+
+// buildSavePath 引入的依赖链含原生模块，测试只验证纯函数，全部 mock
+vi.mock('@/utils/fs', () => ({ privateStorageDirectoryPath: '/mock/Documents', stat: vi.fn(), unlink: vi.fn(), writeFile: vi.fn() }))
+vi.mock('@/store/setting/state', () => ({ default: { setting: { 'download.isSavePathGroupByListName': false } } }))
+vi.mock('@/store/list/state', () => ({ default: { userList: [] } }))
+
 import { QUALITYS, clipFileNameLength, clipNameLength, createDownloadInfo, formatMusicName, getExt, getMusicType } from '@/core/download/utils'
 
 const makeMusic = (overrides: Partial<{
