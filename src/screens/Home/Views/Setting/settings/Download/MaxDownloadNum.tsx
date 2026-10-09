@@ -1,7 +1,6 @@
 import { memo } from 'react'
 
-import { View } from 'react-native'
-import { StyleSheet } from 'react-native'
+import { StyleSheet, View } from 'react-native'
 
 import SubTitle from '../../components/SubTitle'
 import CheckBox from '@/components/common/CheckBox'

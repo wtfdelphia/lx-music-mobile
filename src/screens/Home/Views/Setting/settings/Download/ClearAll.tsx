@@ -5,10 +5,9 @@ import Button from '@/components/common/Button'
 import Text from '@/components/common/Text'
 import { useI18n } from '@/lang'
 import { useTheme } from '@/store/theme/hook'
-import { confirmDialog } from '@/utils/tools'
+import { confirmDialog, createStyle } from '@/utils/tools'
 import { useDownloadList } from '@/store/download/hook'
 import { removeTasks } from '@/core/download'
-import { createStyle } from '@/utils/tools'
 
 /**
  * 清除全部下载（含文件），只读区操作项（§10.5）

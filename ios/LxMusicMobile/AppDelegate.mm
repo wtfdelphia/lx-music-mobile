@@ -4,6 +4,8 @@
 #import <React/RCTBundleURLProvider.h>
 #import <React/RCTLinkingManager.h>
 
+#import "LxDownloadManager.h"
+
 // CI 取证：沙箱标记存在时，把系统投递的每个 URL 追加到
 // <tmp>/lx-ci-openurl.log，供宿主区分「系统未送达」与「JS 未触发」
 // （run 32828495250：file:// 到达 JS 而 lxmusic:// 无声）。附带
@@ -36,6 +38,11 @@ static void LXCIRecordOpenURL(NSURL *url, NSString *source) {
 
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions
 {
+  // 下载传输层（add-ios-download §4.1）：后台会话 delegate 必须先于
+  // bridge 存在——后台唤醒时系统先调 didFinishLaunching 再调
+  // handleEventsForBackgroundURLSession，此刻 JS 可能尚未加载。
+  [LxDownloadManager shared];
+
   // 任务 9.14 冷启动补口：进程未启动时打开文档，URL 不经 openURL 回调，
   // 而是由 RCTLinkingManager.getInitialURL 从 launchOptions 直取；暂存
   // 必须提前到此处改写 launchOptions，否则冷启动拿到的仍是沙箱外原始
@@ -193,6 +200,18 @@ static void LXCIRecordOpenURL(NSURL *url, NSString *source) {
 #else
   return [[NSBundle mainBundle] URLForResource:@"main" withExtension:@"jsbundle"];
 #endif
+}
+
+#pragma mark - 下载后台会话交接（add-ios-download §4.1）
+
+// 系统唤醒处理后台下载事件时调用；把 completionHandler 交给
+// LxDownloadManager，事件日志落盘后由其回主线程调用
+- (void)application:(UIApplication *)application
+handleEventsForBackgroundURLSession:(NSString *)identifier
+  completionHandler:(void (^)(void))completionHandler
+{
+  [[LxDownloadManager shared] handleBackgroundSession:identifier
+                                    completionHandler:completionHandler];
 }
 
 @end
