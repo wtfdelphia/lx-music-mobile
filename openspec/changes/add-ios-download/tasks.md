@@ -50,9 +50,9 @@
 
 ## 8. 文档同步
 
-- [ ] 8.1 `spec/requirements.md:73` 修订（本机个人保存不构成提供/代理/分发，措辞经用户确认）；验证：用户确认措辞后落盘
+- [x] 8.1 `spec/requirements.md:73` 修订（本机个人保存不构成提供/代理/分发，措辞经用户确认）；验证：用户确认措辞后落盘
 - [x] 8.2 `AGENTS.md` 平台扩展清单补 `engine.ios.ts`；`spec/structure.md` 登记 `core/download/`、`store/download/`；验证：两文件与实际目录一致
-- [ ] 8.3 `humanizer-zh` 过一遍所有新增/改写 Markdown；验证：无 AI 套话残留
+- [x] 8.3 `humanizer-zh` 过一遍所有新增/改写 Markdown；验证：无 AI 套话残留
 
 ## 9. P1b（实证门禁）
 
@@ -62,5 +62,5 @@
 
 ## 10. 归档前终检
 
-- [ ] 10.1 `openspec validate --all` 全绿；`tasks.md` 勾选状态真实；验证：命令输出与勾选一致
-- [ ] 10.2 `git status --short` 比对基线，确认未纳入 `legal-risk-analysis.md` 与本地配置/构建产物；验证：改动面与变更声明一致
+- [x] 10.1 `openspec validate --all` 全绿；`tasks.md` 勾选状态真实；验证：命令输出与勾选一致
+- [x] 10.2 `git status --short` 比对基线，确认未纳入 `legal-risk-analysis.md` 与本地配置/构建产物；验证：改动面与变更声明一致
