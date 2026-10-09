@@ -68,6 +68,17 @@ const defaultSetting: LX.AppSetting = {
   'list.addMusicLocationType': 'top',
 
   'download.fileName': '歌名 - 歌手',
+  'download.enable': false,
+  'download.maxDownloadNum': 3,
+  'download.isSavePathGroupByListName': false,
+  'download.skipExistFile': true,
+  'download.isUseOtherSource': false,
+  'download.isDownloadLrc': false,
+  'download.isDownloadLxLrc': true,
+  'download.isDownloadTLrc': false,
+  'download.isDownloadRLrc': false,
+  'download.allowsCellular': false,
+  'download.autoResume': false,
 
   'sync.enable': false,
 

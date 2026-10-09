@@ -347,6 +347,61 @@ declare global {
       'download.fileName': '歌名 - 歌手' | '歌手 - 歌名' | '歌名'
 
       /**
+       * 是否启用下载功能
+       */
+      'download.enable': boolean
+
+      /**
+       * 最大同时下载数
+       */
+      'download.maxDownloadNum': 1 | 2 | 3
+
+      /**
+       * 下载目录按来源列表名分子目录
+       */
+      'download.isSavePathGroupByListName': boolean
+
+      /**
+       * 目标文件已存在时跳过传输直接置为完成
+       */
+      'download.skipExistFile': boolean
+
+      /**
+       * 链接失效时允许换源获取
+       */
+      'download.isUseOtherSource': boolean
+
+      /**
+       * 下载完成后输出同名 .lrc 文件
+       */
+      'download.isDownloadLrc': boolean
+
+      /**
+       * .lrc 包含扩展歌词（lx 逐字）
+       */
+      'download.isDownloadLxLrc': boolean
+
+      /**
+       * .lrc 包含翻译歌词
+       */
+      'download.isDownloadTLrc': boolean
+
+      /**
+       * .lrc 包含罗马音歌词
+       */
+      'download.isDownloadRLrc': boolean
+
+      /**
+       * 允许蜂窝网络下载（含低数据模式受限网络），请求级控制
+       */
+      'download.allowsCellular': boolean
+
+      /**
+       * 冷启动自动恢复暂停的下载任务
+       */
+      'download.autoResume': boolean
+
+      /**
        * 是否启用同步
        */
       'sync.enable': boolean
