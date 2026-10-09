@@ -3,6 +3,7 @@ import { getNextPlayMusicInfo, resetRandomNextMusicInfo } from '@/core/player/pl
 import { checkUrl } from '@/utils/request'
 import playerState from '@/store/player/state'
 import { isCached } from '@/plugins/player/utils'
+import { lookupLocal } from '@/core/download/downloadIndex'
 
 
 const preloadMusicInfo = {
@@ -36,9 +37,17 @@ const doPreload = async() => {
   const info = await getNextPlayMusicInfo()
   if (!info) return
   preloadMusicInfo.info = info
+  // 已下载歌曲播放时走本地优先（§9），网络探测没有意义：
+  // 先查一次本地索引，命中即跳过，不占请求通道
+  if (!('progress' in info.musicInfo) && info.musicInfo.source !== 'local') {
+    const localPath = await lookupLocal(info.musicInfo)
+    if (localPath) return
+  }
   const url = await getMusicUrl({ musicInfo: info.musicInfo }).catch(() => '')
   if (!url) return
   console.log('preload url', url)
+  // file:// 不做网络探测，也不触发 isRefresh 重取
+  if (url.startsWith('file://')) return
   const [cached, available] = await Promise.all([
     isCached(url),
     checkUrl(url, { timeout: PRELOAD_TIMEOUT }).then(() => true).catch(() => { return false }),

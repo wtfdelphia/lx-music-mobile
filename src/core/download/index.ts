@@ -3,6 +3,7 @@ import { createDownloadInfo } from './utils'
 import { getDownloadList, addDownloadTasks, initDownloadList, removeDownloadTasks, clearDownloadList } from '@/store/download/action'
 import { bindEngineEvents, checkStartTask, startDownloadTasks, pauseDownloadTask, removeDownloadTaskFiles, handleDisable, rebuildIndex } from './scheduler'
 import { reconcile } from './reconcile'
+import { removeFromIndex } from './downloadIndex'
 import { isDownloadSupported } from './support'
 
 export { isDownloadSupported }
@@ -92,6 +93,16 @@ export const pauseAll = async() => {
 export const clearCompleted = () => {
   const completed = getDownloadList().filter(t => t.status === 'completed')
   if (completed.length) removeDownloadTasks(completed.map(t => t.id))
+}
+
+/**
+ * 本地文件播放失败回落在线时调用（§9）：移出索引并对账
+ */
+export const handleLocalPlayFallback = (musicInfo: LX.Music.MusicInfoOnline) => {
+  removeFromIndex(musicInfo)
+  void reconcile(getDownloadList()).then(async() => {
+    await rebuildIndex(getDownloadList())
+  })
 }
 
 /**
