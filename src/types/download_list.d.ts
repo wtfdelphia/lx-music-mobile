@@ -62,6 +62,10 @@ declare namespace LX {
          * 来源列表，用于按列表分目录
          */
         listId?: string
+        /**
+         * 输出的同名 .lrc 相对路径
+         */
+        lrcPath?: string
       }
     }
 
