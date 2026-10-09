@@ -45,7 +45,7 @@
 
 - [ ] 7.1 vitest 全套：§13 清单逐条（`QUALITYS`/降级、去重、文件名、状态迁移、补位、错误映射、`tryNum` 清零、flush-then-ack、drain 幂等、`enable=false` 冻结、`lookupLocal` 双 id、导航回退）；验证：`npm test` 全绿
 - [ ] 7.2 `npm run lint` 退出码 0；`npx tsc --noEmit` 错误数 ≤ 21；验证：真实运行并记录数字
-- [ ] 7.3 CI 全量回归：`ios-verify.yml` 现有 job 全绿（js-verify、rust、ios-build、ios-simulator-smoke、android-regression）；验证：CI run 全绿，35 项自测不变
+- [x] 7.3 CI 全量回归：`ios-verify.yml` 现有 job 全绿（js-verify、rust、ios-build、ios-simulator-smoke、android-regression）；验证：CI run 全绿，35 项自测不变
 - [ ] 7.4 真机前台功能清单（12 项，长文档 §13）：由用户侧载执行；验证：结果记录入 `evidence/p1a-manual.md`
 
 ## 8. 文档同步
