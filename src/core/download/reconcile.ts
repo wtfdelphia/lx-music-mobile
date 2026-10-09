@@ -17,7 +17,7 @@ export const reconcile = async(tasks: LX.Download.ListItem[]): Promise<boolean> 
     const exists = await stat(resolveDownloadPath(relPath)).then(() => true).catch(() => false)
     if (exists) continue
     task.status = 'error'
-    task.statusText = ''
+    task.statusText = global.i18n.t('download_status_error_file_missing')
     task.errorCode = 'FILE_MISSING'
     removeFromIndex(task.metadata.musicInfo)
     changed = true

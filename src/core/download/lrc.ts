@@ -1,5 +1,6 @@
 import { writeFile } from '@/utils/fs'
 import { buildLyrics } from '@/utils/lrcTools'
+import { resolveDownloadPath } from './path'
 import { getLyricInfo } from '@/core/music/online'
 import settingState from '@/store/setting/state'
 
@@ -28,10 +29,11 @@ export const saveLrc = async(downloadInfo: LX.Download.ListItem): Promise<void> 
     settingState.setting['download.isDownloadTLrc'],
     settingState.setting['download.isDownloadRLrc'],
   )
-  // filePath 是相对 Documents 的路径；同目录同名替换扩展名
+  // filePath 是相对 Documents 的路径；同目录同名替换扩展名。
+  // 写入必须解析为绝对路径，RNFS 不认相对路径
   const relPath = downloadInfo.metadata.filePath
   if (!relPath) return
   const lrcPath = relPath.substring(0, relPath.lastIndexOf('.')) + '.lrc'
-  await writeFile(lrcPath, lrc, 'utf8')
+  await writeFile(resolveDownloadPath(lrcPath), lrc, 'utf8')
   downloadInfo.metadata.lrcPath = lrcPath
 }

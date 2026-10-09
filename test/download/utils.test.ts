@@ -6,7 +6,7 @@ const makeMusic = (overrides: Partial<{
   name: string
   singer: string
   source: LX.Music.MusicInfoOnline['source']
-  qualitys: Record<string, { size: string | null }>
+  qualitys: LX.Music._MusicQualityType
 }> = {}): LX.Music.MusicInfoOnline => ({
   id: overrides.id ?? 'kw_001',
   name: overrides.name ?? '测试歌曲',
@@ -20,7 +20,7 @@ const makeMusic = (overrides: Partial<{
     picUrl: '',
     toggleMusicInfo: null,
   },
-})
+} as unknown as LX.Music.MusicInfoOnline)
 
 const qualityList: LX.QualityList = {
   kw: ['128k', '320k', 'flac'],

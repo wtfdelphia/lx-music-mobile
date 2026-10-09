@@ -88,10 +88,25 @@ export const createDownloadPersist = (storage: DownloadStorage) => {
       clearTimeout(timer)
       timer = null
     }
+    const current = pending
+    if (!current) return
+    await writeAll(current)
+    // 写成功后才清；只清本次写入的快照，写入期间新到的数据留给下次
+    if (pending === current) pending = null
+  }
+
+  /**
+   * 单飞：并发调用返回同一个写入；写入期间到达的新数据在
+   * finally 里补一次写入，保证串行且不丢（§4.6）
+   */
+  const startFlush = async(): Promise<void> => {
+    if (flushing) return flushing
     if (!pending) return
-    const tasks = pending
-    pending = null
-    await writeAll(tasks)
+    flushing = doFlush().finally(() => {
+      flushing = null
+      if (pending != null) void startFlush()
+    })
+    return flushing
   }
 
   return {
@@ -131,23 +146,18 @@ export const createDownloadPersist = (storage: DownloadStorage) => {
      */
     save: (tasks: LX.Download.ListItem[]) => {
       pending = tasks
-      if (timer) return
+      if (timer != null || flushing != null) return
       timer = setTimeout(() => {
         timer = null
-        if (!pending) return
-        void doFlush()
+        void startFlush()
       }, WRITE_THROTTLE_MS)
     },
 
     /**
-     * 立即写入并返回完成时机；并发调用复用同一次写入
+     * 立即写入并返回完成时机；并发调用共享同一次写入
      */
     flush: async(): Promise<void> => {
-      if (!pending) return
-      flushing = doFlush().then(() => {
-        flushing = null
-      })
-      await flushing
+      await startFlush()
     },
   }
 }

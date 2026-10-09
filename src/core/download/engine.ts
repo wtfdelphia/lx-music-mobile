@@ -1,11 +1,13 @@
-import { Platform } from 'react-native'
-
 /**
- * 下载引擎接口。P1a 按完整形态冻结（D10）：
+ * 下载引擎接口与基础实现。P1a 按完整形态冻结（D10）：
  * pause / resume / removeResumeData / getActiveTasks / drainEvents / ack
  * 依赖原生 `DownloadModule` 的后续能力，P1a 在 iOS 上由原生返回显式错误，
  * 非 iOS 平台一律拒绝。原生侧实现完成后本文件不改接口、只改绑定。
+ *
+ * 平台扩展：iOS 上 `@/core/download/engine` 经 Metro 解析到 `engine.ios.ts`，
+ * 两个文件的导出面必须一致（接口、`downloadEngine`、`isDownloadSupported`）
  */
+
 export interface DownloadEngine {
   configure: (opts: { maxConcurrent: number }) => Promise<void>
   start: (task: { taskId: string, url: string, targetPath: string, allowsCellular: boolean, headers?: Record<string, string> }) => Promise<void>
@@ -17,6 +19,8 @@ export interface DownloadEngine {
   drainEvents: () => Promise<LX.Download.EngineEvent[]>
   ack: (lastSeq: number) => Promise<void>
 }
+
+export { isDownloadSupported } from './support'
 
 const notSupported = async(): Promise<never> => {
   throw new Error('download engine not supported on this platform')
@@ -37,5 +41,3 @@ export const downloadEngine: DownloadEngine = {
   drainEvents: notSupported,
   ack: notSupported,
 }
-
-export const isDownloadSupported = () => Platform.OS === 'ios'

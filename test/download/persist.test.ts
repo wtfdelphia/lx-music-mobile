@@ -28,7 +28,7 @@ const makeTask = (id: string, status: LX.Download.DownloadTaskStatus = 'waiting'
       source: 'kw',
       interval: '04:00',
       meta: { qualitys: [], _qualitys: {}, albumName: '', picUrl: '', toggleMusicInfo: null },
-    } as LX.Music.MusicInfoOnline,
+    } as unknown as LX.Music.MusicInfoOnline,
     url: null,
     quality: '128k',
     ext: 'mp3',
@@ -104,6 +104,43 @@ describe('download persist', () => {
     expect(storage.store.has('@download_list__1')).toBe(false)
     const loaded = await createDownloadPersist(storage).load()
     expect(loaded.length).toBe(1)
+  })
+
+  it('并发 flush 串行执行，不交错写入（H2）', async() => {
+    const storage = makeStorage()
+    const persist = createDownloadPersist(storage)
+    persist.save([makeTask('a')])
+    // 两个并发 flush：第二个必须等第一个完成再写，不会交错
+    const p1 = persist.flush()
+    const p2 = persist.flush()
+    await Promise.all([p1, p2])
+    // flush 期间新数据到达，应被补写
+    persist.save([makeTask('a'), makeTask('b')])
+    const p3 = persist.flush()
+    const p4 = persist.flush()
+    await Promise.all([p3, p4])
+    const loaded = await createDownloadPersist(storage).load()
+    expect(loaded.map(t => t.id)).toEqual(['a', 'b'])
+  })
+
+  it('写入失败时保留待写数据，下次可重试（H4）', async() => {
+    const storage = makeStorage()
+    let failOnce = true
+    const failSetItem = storage.setItem
+    storage.setItem = vi.fn(async(key: string, value: string) => {
+      if (failOnce && key.endsWith('meta')) {
+        failOnce = false
+        throw new Error('storage full')
+      }
+      return failSetItem(key, value)
+    })
+    const persist = createDownloadPersist(storage)
+    persist.save([makeTask('a')])
+    await expect(persist.flush()).rejects.toThrow('storage full')
+    // 失败后数据仍在，重试成功
+    await persist.flush()
+    const loaded = await createDownloadPersist(storage).load()
+    expect(loaded.map(t => t.id)).toEqual(['a'])
   })
 
   it('load 按 meta 顺序恢复，忽略孤儿记录', async() => {
