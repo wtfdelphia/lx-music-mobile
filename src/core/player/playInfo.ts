@@ -41,7 +41,10 @@ export const getPlayIndex = (listId: string | null, musicInfo: LX.Download.ListI
   playerPlayIndex: number
 } => {
   const { playInfo } = playerState
-  const playerList = getListMusicSync(playInfo.playerListId)
+  // 用 getList 而非 getListMusicSync：后者查不到 download 列表（不在
+  // allMusicList），播放下载歌曲时恒返回空数组、playIndex 恒 -1，
+  // 导致 watchList 误判歌曲被移除而乱跳（§播放下载列表）
+  const playerList = getList(playInfo.playerListId)
 
   // if (listIndex < 0) throw new Error('music info not found')
   // playInfo.playIndex = listIndex
@@ -52,7 +55,7 @@ export const getPlayIndex = (listId: string | null, musicInfo: LX.Download.ListI
     playerPlayIndex = Math.min(playInfo.playerPlayIndex, playerList.length - 1)
   }
 
-  const list = getListMusicSync(listId)
+  const list = getList(listId)
   if (list.length && musicInfo) {
     const currentId = musicInfo.id
     playIndex = list.findIndex(m => m.id == currentId)
