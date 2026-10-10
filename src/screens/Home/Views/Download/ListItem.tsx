@@ -77,10 +77,15 @@ export default memo(({ item, index, activeIndex, onPress, onShowMenu }: {
     </TouchableOpacity>
   )
 }, (prevProps, nextProps) => {
-  return !!(prevProps.item === nextProps.item &&
+  // 下载任务在调度器里原地改字段，对象引用不变；按值比较可变字段，
+  // 否则状态/进度更新不触发重渲染（对照音乐列表的引用比较不适用）
+  return !!(prevProps.item.id === nextProps.item.id &&
+    prevProps.item.status === nextProps.item.status &&
+    prevProps.item.progress === nextProps.item.progress &&
+    prevProps.item.speed === nextProps.item.speed &&
+    prevProps.item.statusText === nextProps.item.statusText &&
     prevProps.index === nextProps.index &&
-    prevProps.activeIndex != nextProps.index &&
-    nextProps.activeIndex != nextProps.index)
+    prevProps.activeIndex === nextProps.activeIndex)
 })
 
 const styles = createStyle({

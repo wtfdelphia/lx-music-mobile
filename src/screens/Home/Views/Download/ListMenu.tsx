@@ -47,15 +47,19 @@ export default forwardRef<ListMenuType, ListMenuProps>(({ onHideMenu }, ref) => 
   }))
 
   const menus = useMemo(() => {
-    const isRun = menuStatus === 'run' || menuStatus === 'waiting'
-    const canStart = menuStatus === 'pause' || menuStatus === 'error' || menuStatus === 'completed'
-    return [
-      { action: 'play', label: t('play') },
-      { action: 'start', label: t('download__menu_start'), disabled: !canStart },
-      { action: 'pause', label: t('download__menu_pause'), disabled: !isRun },
+    // 按状态显隐，对齐桌面版 useMenu.js：
+    // 已完成只显示播放；出错/暂停只显示开始；运行中只显示暂停
+    const isComplate = menuStatus === 'completed'
+    const canStart = menuStatus === 'pause' || menuStatus === 'error'
+    const canPause = menuStatus === 'run' || menuStatus === 'waiting'
+    const items = [
+      { action: 'play', label: t('play'), hide: !isComplate },
+      { action: 'start', label: t('download__menu_start'), hide: !canStart },
+      { action: 'pause', label: t('download__menu_pause'), hide: !canPause },
       { action: 'remove', label: t('delete') },
       { action: 'removeFile', label: t('download__menu_remove_file') },
-    ] as const
+    ]
+    return items.filter(m => !m.hide)
   }, [t, menuStatus])
 
   const handleMenuPress = ({ action }: typeof menus[number]) => {
