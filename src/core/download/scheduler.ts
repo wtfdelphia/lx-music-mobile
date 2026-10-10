@@ -37,10 +37,13 @@ const clearTaskMaps = (id: string) => {
  */
 export const checkStartTask = () => {
   if (!settingState.setting['download.enable']) return
-  if (runningTask.size >= settingState.setting['download.maxDownloadNum']) return
-  const next = getDownloadList().find(task => task.status === 'waiting')
-  if (!next) return
-  void startTask(next)
+  // 循环补满并发槽（对齐桌面版 while(result)）：单次只启动一个时，
+  // maxDownloadNum>1 也只跑 1 个，要等前一个完成才补下一个
+  while (runningTask.size < settingState.setting['download.maxDownloadNum']) {
+    const next = getDownloadList().find(task => task.status === 'waiting')
+    if (!next) break
+    void startTask(next)
+  }
 }
 
 const startTask = async(downloadInfo: LX.Download.ListItem) => {
