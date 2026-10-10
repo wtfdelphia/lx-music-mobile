@@ -1,10 +1,26 @@
 import { memo, useCallback, useRef, useEffect } from 'react'
-import { type LayoutChangeEvent, StyleSheet, View, Dimensions, AppState } from 'react-native'
+import { type LayoutChangeEvent, StyleSheet, View, Dimensions, AppState, Platform } from 'react-native'
 import commonState from '@/store/common/state'
 import { setStatusbarHeight } from '@/core/common'
 import { windowSizeTools, getWindowSize } from '@/utils/windowSizeTools'
-import { onWindowSizeChange } from '@/utils/nativeModules/utils'
 import { getStatusbarHeight } from '@/utils/statusbarHeight'
+
+// iOS 双通道幂等同步：Dimensions change 与 View onLayout 是两条独立
+// 异步通道，到达顺序无保证。旧实现的门闩只在 Dimensions 先到时打开，
+// onLayout 先到会被门闩丢弃，之后不再触发，尺寸冻结到下次回到
+// active——这就是横竖屏切换偶尔才生效的根因。iOS 键盘不改变根视图
+// 尺寸，门闩过滤对 iOS 无意义，直接拆除；两通道各自同步，谁先到谁
+// 生效，后到的判断尺寸相同即跳过（幂等）。
+// Android 保留门闩：adjustResize 下键盘也会触发 onLayout，需过滤。
+const syncSize = (width: number, height: number) => {
+  const w = Math.round(width)
+  const h = Math.round(height)
+  if (!w || !h) return
+  const cur = windowSizeTools.getSize()
+  // 先取整再比较：layout 值带小数而 setWindowSize 存取整值，
+  // 不取整会恒不相等，导致每次 onLayout 重复派发、重复渲染
+  if (cur.width != w || cur.height != h) windowSizeTools.setWindowSize(w, h)
+}
 
 export default memo(() => {
   const currentHeightRef = useRef(commonState.statusbarHeight)
@@ -13,6 +29,21 @@ export default memo(() => {
   const viewRef = useRef<View>(null)
   const handleLayout = useCallback(({ nativeEvent: { layout } }: LayoutChangeEvent | { nativeEvent: { layout: { width: number, height: number } } }) => {
     // console.log('handleLayout')
+    if (Platform.OS === 'ios') {
+      // iOS：绕过门闩直接同步尺寸，与 Dimensions 通道幂等
+      syncSize(layout.width, layout.height)
+      // 状态栏高度沿用异步读数链路，不受门闩影响
+      void getWindowSize().then(size => {
+        sizeRef.current = [size.height, layout.height]
+        void getStatusbarHeight(size.height, layout.height).then(height => {
+          if (currentHeightRef.current != height) {
+            currentHeightRef.current = height
+            setStatusbarHeight(height)
+          }
+        }).catch(() => { /* 状态栏读数失败不得中断布局 */ })
+      }).catch(() => { /* 窗口读数失败不得中断布局 */ })
+      return
+    }
     if (!dimensionsChangedRef.current) return
     void getWindowSize().then(size => {
       dimensionsChangedRef.current = false
@@ -33,8 +64,11 @@ export default memo(() => {
   }, [])
   useEffect(() => {
     // let timeout: NodeJS.Timeout | null = null
-    const subscription = Dimensions.addEventListener('change', () => {
+    const subscription = Dimensions.addEventListener('change', ({ window }) => {
       dimensionsChangedRef.current = true
+      // iOS：Dimensions 通道直接携带新尺寸，旋转瞬间即可同步，
+      // 不用等布局完成；与 onLayout 通道幂等（后到者尺寸相同即跳过）
+      if (Platform.OS === 'ios') syncSize(window.width, window.height)
       // if (timeout) clearTimeout(timeout)
       // timeout = setTimeout(() => {
       //   timeout = null
@@ -63,17 +97,6 @@ export default memo(() => {
         handleLayout({ nativeEvent: { layout: { width, height } } })
       })
     }
-    // 原生旋转事件（iOS orientationDidChange）作为可靠补充：旋转时
-    // RN 不保证触发 View onLayout，导致 windowSizeTools 不更新、
-    // 所有依赖 useWindowSize 的页面冻结（搜索/歌单/排行榜等）。
-    // 收到事件后打开门闩并主动测量视图同步尺寸。
-    const rotationSub = onWindowSizeChange(() => {
-      dimensionsChangedRef.current = true
-      // 旋转瞬间视图布局可能尚未更新，分两拍测量
-      setTimeout(resyncSize, 0)
-      setTimeout(resyncSize, 200)
-    })
-
     const appStateSub = AppState.addEventListener('change', (state) => {
       if (state != 'active') return
       dimensionsChangedRef.current = true
@@ -95,7 +118,6 @@ export default memo(() => {
 
     return () => {
       subscription.remove()
-      rotationSub()
       appStateSub.remove()
       global.state_event.off('configUpdated', handleSettingUpdate)
     }
