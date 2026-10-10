@@ -54,25 +54,38 @@ export const createDownloadTasks = (list: LX.Music.MusicInfo[], quality: LX.Qual
 }
 
 /**
- * 手动开始任务（下载页操作）
+ * UI 拿到的是 hook 浅克隆的快照（5038fbd 为进度刷新引入），
+ * 直接传给调度层会把状态改在克隆上、原列表不动。统一入口
+ * 按 id 回查原对象，快照或 id 传入都安全
  */
-export const startTasks = (tasks: LX.Download.ListItem[]) => {
-  startDownloadTasks(tasks)
+const resolveTasks = (tasks: Array<{ id: string }>): LX.Download.ListItem[] => {
+  const map = new Map(getDownloadList().map(t => [t.id, t]))
+  return tasks.map(t => map.get(t.id)).filter((t): t is LX.Download.ListItem => !!t)
 }
 
 /**
- * 手动暂停任务
+ * 手动开始任务（下载页操作）
  */
-export const pauseTasks = async(tasks: LX.Download.ListItem[]) => {
-  for (const task of tasks) await pauseDownloadTask(task)
+export const startTasks = (tasks: Array<{ id: string }>) => {
+  startDownloadTasks(resolveTasks(tasks))
+}
+
+/**
+ * 手动暂停任务；暂停运行中任务后补位（对齐桌面版
+ * pauseDownloadTasks，等待任务顶上释放的并发槽）
+ */
+export const pauseTasks = async(tasks: Array<{ id: string }>) => {
+  for (const task of resolveTasks(tasks)) await pauseDownloadTask(task)
+  checkStartTask()
 }
 
 /**
  * 删除任务（可选连同文件）
  */
-export const removeTasks = async(tasks: LX.Download.ListItem[], removeFile: boolean) => {
-  await removeDownloadTaskFiles(tasks, removeFile)
-  removeDownloadTasks(tasks.map(t => t.id))
+export const removeTasks = async(tasks: Array<{ id: string }>, removeFile: boolean) => {
+  const list = resolveTasks(tasks)
+  await removeDownloadTaskFiles(list, removeFile)
+  removeDownloadTasks(list.map(t => t.id))
 }
 
 /**
