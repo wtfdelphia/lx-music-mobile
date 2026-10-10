@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ScrollView, View } from 'react-native'
+import { View } from 'react-native'
 
 import List, { type ListType, type TabId } from './List'
 import ListMenu, { type ListMenuType } from './ListMenu'
@@ -43,14 +43,14 @@ export default () => {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        {/* 竖屏一行放不下 5 个 Tab + 2 个按钮，Tab 改横向滚动（§竖屏可点性） */}
-        <ScrollView horizontal style={styles.tabsScroll} contentContainerStyle={styles.tabs} showsHorizontalScrollIndicator={false}>
+        {/* 5 个 Tab 按屏宽等分（各 1/5），竖屏一屏全可见、可直接点中，无需滑动（§竖屏可点性） */}
+        <View style={styles.tabs}>
           {TABS.map(({ id, key }) => (
             <Button key={id} style={{ ...styles.tab, borderBottomColor: tab === id ? theme['c-primary-font'] : 'transparent' }} onPress={() => { setTab(id) }}>
-              <Text color={tab === id ? theme['c-primary-font'] : theme['c-font']} size={14}>{t(key)}</Text>
+              <Text style={styles.tabText} color={tab === id ? theme['c-primary-font'] : theme['c-font']} size={14} numberOfLines={1}>{t(key)}</Text>
             </Button>
           ))}
-        </ScrollView>
+        </View>
         <View style={styles.actions}>
           <Button style={styles.actionBtn} disabled={!hasPaused} onPress={() => { startAll() }}>
             <Text size={13} color={hasPaused ? theme['c-primary-font'] : theme['c-font-label']}>{t('download__start_all')}</Text>
@@ -75,20 +75,20 @@ const styles = createStyle({
   header: {
     flexDirection: 'column',
   },
-  tabsScroll: {
-    flexGrow: 0,
-  },
   tabs: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingLeft: 10,
-    paddingRight: 10,
   },
   tab: {
+    flex: 1,
     borderBottomWidth: 2,
     paddingTop: 10,
     paddingBottom: 8,
-    marginRight: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tabText: {
+    textAlign: 'center',
   },
   actions: {
     flexDirection: 'row',
