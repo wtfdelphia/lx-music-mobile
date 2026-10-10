@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { View } from 'react-native'
+import { ScrollView, View } from 'react-native'
 
 import List, { type ListType, type TabId } from './List'
 import ListMenu, { type ListMenuType } from './ListMenu'
@@ -43,13 +43,14 @@ export default () => {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <View style={styles.tabs}>
+        {/* 竖屏一行放不下 5 个 Tab + 2 个按钮，Tab 改横向滚动（§竖屏可点性） */}
+        <ScrollView horizontal style={styles.tabsScroll} contentContainerStyle={styles.tabs} showsHorizontalScrollIndicator={false}>
           {TABS.map(({ id, key }) => (
             <Button key={id} style={{ ...styles.tab, borderBottomColor: tab === id ? theme['c-primary-font'] : 'transparent' }} onPress={() => { setTab(id) }}>
               <Text color={tab === id ? theme['c-primary-font'] : theme['c-font']} size={14}>{t(key)}</Text>
             </Button>
           ))}
-        </View>
+        </ScrollView>
         <View style={styles.actions}>
           <Button style={styles.actionBtn} disabled={!hasPaused} onPress={() => { startAll() }}>
             <Text size={13} color={hasPaused ? theme['c-primary-font'] : theme['c-font-label']}>{t('download__start_all')}</Text>
@@ -72,15 +73,16 @@ const styles = createStyle({
     flex: 1,
   },
   header: {
+    flexDirection: 'column',
+  },
+  tabsScroll: {
+    flexGrow: 0,
+  },
+  tabs: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingLeft: 10,
     paddingRight: 10,
-  },
-  tabs: {
-    flexDirection: 'row',
-    flexShrink: 1,
-    flexGrow: 1,
   },
   tab: {
     borderBottomWidth: 2,
@@ -90,6 +92,10 @@ const styles = createStyle({
   },
   actions: {
     flexDirection: 'row',
+    justifyContent: 'flex-end',
+    paddingLeft: 10,
+    paddingRight: 10,
+    paddingBottom: 6,
   },
   actionBtn: {
     paddingLeft: 8,

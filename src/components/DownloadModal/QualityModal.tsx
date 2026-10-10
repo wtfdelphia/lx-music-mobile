@@ -23,6 +23,18 @@ const qualityLabel = (quality: LX.Quality): string => {
   return key
 }
 
+/**
+ * 音源常不返回真实文件大小（size 为 "0" / "0B" / "" 等）。
+ * 大小解析为 0 或为空时返回空串，避免显示误导性的 "0B"。
+ * 真实大小形如 "3.56M"，parseFloat 取其数值部分判断。
+ */
+const formatSize = (size: string | null): string => {
+  if (!size) return ''
+  const num = parseFloat(size)
+  if (!num || Number.isNaN(num)) return ''
+  return size.toUpperCase()
+}
+
 export interface QualitySelectInfo {
   title: string
   qualitys: Array<{ type: LX.Quality, size: string | null }>
@@ -74,7 +86,7 @@ export default forwardRef<QualityModalType, QualityModalProps>(({ onSelect }, re
                 onPress={() => { handleSelect(type) }}
               >
                 <Text color={theme['c-primary-font']} size={14}>
-                  {qualityLabel(type)}{size ? ` · ${size.toUpperCase()}` : ''}
+                  {qualityLabel(type)}{formatSize(size) ? ` · ${formatSize(size)}` : ''}
                 </Text>
               </TouchableHighlight>
             ))
