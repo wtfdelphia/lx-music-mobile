@@ -4,7 +4,7 @@ import { FlatList, View, RefreshControl, type FlatListProps } from 'react-native
 import ListItem from './ListItem'
 // import { navigations } from '@/navigation'
 import { type ListInfoItem } from '@/store/songlist/state'
-import { useLayout } from '@/utils/hooks'
+import { useLayout, useWindowSize } from '@/utils/hooks'
 import { useTheme } from '@/store/theme/hook'
 import { useI18n } from '@/lang'
 import { scaleSizeW } from '@/utils/pixelRatio'
@@ -35,6 +35,11 @@ export default forwardRef<ListType, ListProps>(({ onRefresh, onLoadMore, onOpenD
   const [showSource, setShowSource] = useState(false)
   const [status, setStatus] = useState<Status>('idle')
   const { onLayout, width } = useLayout()
+  // 排数跟随旋转（同 fcc7a95 修法）：useWindowSize 订阅 windowSizeTools
+  // 尺寸事件，用窗口尺寸做容器 View 的 key，旋转时强制重挂载、
+  // 重触发 onLayout 拿到新宽度。保留容器实测宽度：横屏下内容区仅 ~78%
+  // 窗宽，不能用整窗宽算列数。useLayout 单测宽度在旋转时不保证触发。
+  const windowSize = useWindowSize()
   const theme = useTheme()
   // console.log('render songlist')
 
@@ -144,7 +149,7 @@ export default forwardRef<ListType, ListProps>(({ onRefresh, onLoadMore, onOpenD
   // console.log(listInfo.list.map((item) => item.id))
 
   return (
-    <View style={styles.container} onLayout={onLayout}>
+    <View key={`${windowSize.width}x${windowSize.height}`} style={styles.container} onLayout={onLayout}>
       {
         width == 0
           ? null
