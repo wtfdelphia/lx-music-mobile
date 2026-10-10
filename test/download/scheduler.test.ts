@@ -102,6 +102,23 @@ beforeEach(() => {
   mockResolver.refreshUrl.mockClear()
   mockStore.flushForAck.mockClear()
   global.i18n = { t: (key: string) => key } as never
+  const listeners = new Map<string, Array<(...args: unknown[]) => void>>()
+  global.state_event = {
+    on: (name: string, fn: (...args: unknown[]) => void) => {
+      if (!listeners.has(name)) listeners.set(name, [])
+      listeners.get(name)!.push(fn)
+    },
+    off: (name: string, fn: (...args: unknown[]) => void) => {
+      const arr = listeners.get(name)
+      if (arr) {
+        const idx = arr.indexOf(fn)
+        if (idx >= 0) arr.splice(idx, 1)
+      }
+    },
+    emit: (name: string, ...args: unknown[]) => {
+      for (const fn of listeners.get(name) ?? []) fn(...args)
+    },
+  } as never
 })
 
 describe('checkStartTask 并发与开关', () => {
@@ -128,6 +145,33 @@ describe('checkStartTask 并发与开关', () => {
     expect(mockStore.tasks[0].status).toBe('run')
     expect(mockStore.tasks[0].metadata.url).toBe('https://example.com/a.mp3')
     expect(mockStore.tasks[0].metadata.filePath).toBe('Download/a.mp3')
+  })
+
+  it('循环补满并发槽：上限 3 入队 5 个，3 run 2 waiting', async() => {
+    const setting = (await import('@/store/setting/state')).default
+    ;(setting.setting as unknown as Record<string, unknown>)['download.maxDownloadNum'] = 3
+    mockStore.tasks = [makeTask('a'), makeTask('b'), makeTask('c'), makeTask('d'), makeTask('e')]
+    checkStartTask()
+    await vi.waitFor(() => expect(mockEngine.start).toHaveBeenCalledTimes(3))
+    expect(mockStore.tasks.map(t => t.status)).toEqual(['run', 'run', 'run', 'waiting', 'waiting'])
+    ;(setting.setting as unknown as Record<string, unknown>)['download.maxDownloadNum'] = 1
+  })
+
+  it('maxDownloadNum 调大后立即补位（无需等任务结束）', async() => {
+    // 模拟 bindEngineEvents 已注册的 configUpdated 监听：
+    // 上限从 1 调到 3，立即把空出的槽补满
+    const setting = (await import('@/store/setting/state')).default
+    const { bindEngineEvents } = await import('@/core/download/scheduler')
+    bindEngineEvents()
+    mockStore.tasks = [makeTask('a'), makeTask('b'), makeTask('c')]
+    checkStartTask()
+    await vi.waitFor(() => expect(mockEngine.start).toHaveBeenCalledTimes(1))
+    expect(mockStore.tasks.map(t => t.status)).toEqual(['run', 'waiting', 'waiting'])
+    ;(setting.setting as unknown as Record<string, unknown>)['download.maxDownloadNum'] = 3
+    ;(global.state_event as unknown as { emit: (name: string, keys: string[]) => void }).emit('configUpdated', ['download.maxDownloadNum'])
+    await vi.waitFor(() => expect(mockEngine.start).toHaveBeenCalledTimes(3))
+    expect(mockStore.tasks.map(t => t.status)).toEqual(['run', 'run', 'run'])
+    ;(setting.setting as unknown as Record<string, unknown>)['download.maxDownloadNum'] = 1
   })
 
   it('并发上限：第二个任务保持 waiting', async() => {

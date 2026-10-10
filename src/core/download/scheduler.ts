@@ -38,7 +38,10 @@ const clearTaskMaps = (id: string) => {
 export const checkStartTask = () => {
   if (!settingState.setting['download.enable']) return
   // 循环补满并发槽（对齐桌面版 while(result)）：单次只启动一个时，
-  // maxDownloadNum>1 也只跑 1 个，要等前一个完成才补下一个
+  // maxDownloadNum>1 也只跑 1 个，要等前一个完成才补下一个。
+  // 注意只能 void 不能 await：startTask 在首个 await 前已同步完成
+  // runningTask.set 与状态置 run，循环内计数才是准确的；若 await
+  // 要等上一首取完链接才轮到下一首
   while (runningTask.size < settingState.setting['download.maxDownloadNum']) {
     const next = getDownloadList().find(task => task.status === 'waiting')
     if (!next) break
@@ -285,6 +288,11 @@ export const handleEngineEvent = (event: EngineLiveEvent) => {
  */
 export const bindEngineEvents = () => {
   downloadEngine.subscribe(handleEngineEvent)
+  // maxDownloadNum 调大时立即补位；调小时不打断已在运行的任务，
+  // 与桌面版一致（仅影响后续补位）
+  global.state_event.on('configUpdated', (keys: Array<keyof LX.AppSetting>) => {
+    if (keys.includes('download.maxDownloadNum')) checkStartTask()
+  })
 }
 
 /* ============ 对外操作 ============ */
