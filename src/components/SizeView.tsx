@@ -3,6 +3,7 @@ import { type LayoutChangeEvent, StyleSheet, View, Dimensions, AppState } from '
 import commonState from '@/store/common/state'
 import { setStatusbarHeight } from '@/core/common'
 import { windowSizeTools, getWindowSize } from '@/utils/windowSizeTools'
+import { onWindowSizeChange } from '@/utils/nativeModules/utils'
 import { getStatusbarHeight } from '@/utils/statusbarHeight'
 
 export default memo(() => {
@@ -62,6 +63,17 @@ export default memo(() => {
         handleLayout({ nativeEvent: { layout: { width, height } } })
       })
     }
+    // 原生旋转事件（iOS orientationDidChange）作为可靠补充：旋转时
+    // RN 不保证触发 View onLayout，导致 windowSizeTools 不更新、
+    // 所有依赖 useWindowSize 的页面冻结（搜索/歌单/排行榜等）。
+    // 收到事件后打开门闩并主动测量视图同步尺寸。
+    const rotationSub = onWindowSizeChange(() => {
+      dimensionsChangedRef.current = true
+      // 旋转瞬间视图布局可能尚未更新，分两拍测量
+      setTimeout(resyncSize, 0)
+      setTimeout(resyncSize, 200)
+    })
+
     const appStateSub = AppState.addEventListener('change', (state) => {
       if (state != 'active') return
       dimensionsChangedRef.current = true
@@ -83,6 +95,7 @@ export default memo(() => {
 
     return () => {
       subscription.remove()
+      rotationSub()
       appStateSub.remove()
       global.state_event.off('configUpdated', handleSettingUpdate)
     }
