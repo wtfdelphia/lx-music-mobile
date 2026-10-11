@@ -482,9 +482,14 @@ export const claimOrphanTasks = async(): Promise<void> => {
       void downloadEngine.removeOrphan(taskId).catch(() => {})
       continue
     }
-    // 修 H：仍在运行（原生还在下）或已完成（文件已就位）的任务不认领，
-    // 避免把活任务标成完成、并发计数泄漏
-    if (runningTask.has(task.id) || task.status === 'completed') continue
+    // 修 H：仍在运行（原生还在下）的任务不认领，避免把活任务标成完成、
+    // 并发计数泄漏。修 L1：已完成的任务（文件已就位）同样不认领，
+    // 但其对应的孤儿文件是残留，清掉
+    if (runningTask.has(task.id)) continue
+    if (task.status === 'completed') {
+      void downloadEngine.removeOrphan(taskId).catch(() => {})
+      continue
+    }
     const destPath = resolveDownloadPath(task.metadata.filePath)
     const claimed = await downloadEngine.claimOrphan(taskId, destPath).catch(() => false)
     if (claimed) {
@@ -495,6 +500,8 @@ export const claimOrphanTasks = async(): Promise<void> => {
       task.statusText = t('download___status_completed')
       addToIndex(task)
       changed = true
+      // 修 L2：认领成功后清掉残留的续传数据
+      void downloadEngine.removeResumeData(taskId).catch(() => {})
     } else {
       // 认领失败（目标已被占用等）：清理孤儿
       void downloadEngine.removeOrphan(taskId).catch(() => {})

@@ -22,32 +22,34 @@ export { isDownloadSupported }
  */
 export const initDownload = async() => {
   bindEngineEvents()
-  await initDownloadList()
-  // 回放积压事件 + 认领原生存活传输。冷启动回放非终态错误置暂停不重试，
-  // 不在这里补位——修 B：补位放到 AppState 门控之后，
-  // 避免后台唤醒时把 waiting 任务启动起来
-  await alignWithNative({ coldStart: true, schedule: false })
-  // 未被认领的残留任务重置为暂停并清瞬态文案
-  finalizeColdStart()
-  // 修 E：认领孤儿暂存文件放回原位（元信息丢失时的完整下载）
-  await claimOrphanTasks()
-  const tasks = getDownloadList()
-  const changed = await reconcile(tasks)
-  await rebuildIndex(tasks)
-  void changed
   const wantAutoResume = settingState.setting['download.enable'] && settingState.setting['download.autoResume']
-  // 修 I：初始化完成，AppState 监听此后才生效。
-  // 修 J：后台唤醒冷启动时不立即恢复，把 autoResume 意图暂存给首次回前台；
-  // 前台启动则立即执行，故暂存标记置否避免重复
-  markInitialized(AppState.currentState !== 'active' ? wantAutoResume : false)
-  if (AppState.currentState !== 'active') return
-  if (wantAutoResume) {
-    for (const task of tasks) {
-      if (task.status === 'pause') task.status = 'waiting'
+  try {
+    await initDownloadList()
+    // 回放积压事件 + 认领原生存活传输。冷启动回放非终态错误置暂停不重试，
+    // 不在这里补位——修 B：补位放到 AppState 门控之后，
+    // 避免后台唤醒时把 waiting 任务启动起来
+    await alignWithNative({ coldStart: true, schedule: false })
+    // 未被认领的残留任务重置为暂停并清瞬态文案
+    finalizeColdStart()
+    // 修 E：认领孤儿暂存文件放回原位（元信息丢失时的完整下载）
+    await claimOrphanTasks()
+    const tasks = getDownloadList()
+    const changed = await reconcile(tasks)
+    await rebuildIndex(tasks)
+    void changed
+    if (AppState.currentState !== 'active') return
+    if (wantAutoResume) {
+      for (const task of tasks) {
+        if (task.status === 'pause') task.status = 'waiting'
+      }
     }
+    // 修 B：过了 AppState 门控才补位
+    checkStartTask()
+  } finally {
+    // 修 L4：中途抛错时仍须标记初始化完成，否则 AppState 监听永远
+    // 被 initialized 守卫拦住，回前台对齐失效
+    markInitialized(AppState.currentState !== 'active' ? wantAutoResume : false)
   }
-  // 修 B：过了 AppState 门控才补位
-  checkStartTask()
 }
 
 
