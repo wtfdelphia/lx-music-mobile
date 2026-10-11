@@ -23,6 +23,10 @@ const jsCancelled = new Set<string>()
 const speedBase = new Map<string, { bytes: number, time: number }>()
 /** 已处理事件的最大 seq，ack 单调递增（§4.6） */
 let lastAckSeq = 0
+/** 对齐单飞锁：init 与 AppState 回前台可能并发触发（审计#2） */
+let aligning: Promise<void> | null = null
+/** 回放模式：此期间非终态错误只置暂停、保留续传，不发起重试（审计#3） */
+let replaying = false
 
 const t = (key: Parameters<typeof global.i18n.t>[0]) => global.i18n.t(key)
 
@@ -60,6 +64,9 @@ const startTask = async(downloadInfo: LX.Download.ListItem) => {
 }
 
 const engineStart = async(downloadInfo: LX.Download.ListItem) => {
+  // 状态校验（审计#3）：异步排队的启动若到达时任务已被重置为
+  // 暂停，不再发起下载
+  if (downloadInfo.status !== 'run') return
   await downloadEngine.start({
     taskId: downloadInfo.id,
     url: downloadInfo.metadata.url ?? '',
@@ -176,6 +183,15 @@ const handleComplete = (downloadInfo: LX.Download.ListItem) => {
  */
 const handleEngineError = (downloadInfo: LX.Download.ListItem, event: EngineLiveEvent) => {
   const code = event.data.code ?? 'NETWORK'
+  // 回放模式（审计#3）：冷启动回放时任务还是持久化状态，非终态错误
+  //（网络/超时/链接失效等）不应发起重试，只置暂停、保留续传数据
+  if (replaying && code !== 'FORCE_QUIT' && code !== 'SYSTEM_CANCELLED' && code !== 'WRITE_FAILED' && code !== 'ORPHAN' && code !== 'NO_SPACE') {
+    downloadInfo.status = 'pause'
+    downloadInfo.statusText = ''
+    clearTaskMaps(downloadInfo.id)
+    updateDownloadTask()
+    return
+  }
   switch (code) {
     case 'WRITE_FAILED':
     case 'ORPHAN':
@@ -294,11 +310,9 @@ export const handleEngineEvent = (event: EngineLiveEvent) => {
       // 非运行态任务收到错误事件：不改状态（避免后台残留事件
       // 覆盖用户已暂停/已恢复的状态），事件照常确认
       if (task.status !== 'run' && event.data.code !== 'FORCE_QUIT' && event.data.code !== 'SYSTEM_CANCELLED') {
-        // 失败的续传数据必须清掉：否则「全部开始」会拿旧 URL 的
-        // 续传数据续传，损坏已下载文件
-        if (event.data.hasResumeData) {
-          void downloadEngine.removeResumeData(task.id).catch(() => {})
-        }
+        // 续传数据保留：resumeData 自带 URL/ETag，「全部开始」续传时
+        // 校验不过服务器会从头下发或 416，不会拼坏文件（审计#7，
+        // 回退 4884321）
         void ackLoggedEvents()
         return
       }
@@ -322,9 +336,14 @@ export const adoptNativeRunningTasks = async(): Promise<number> => {
   const active = await downloadEngine.getActiveTasks().catch(() => [] as Array<{ taskId: string, state: string, downloaded: number, total: number }>)
   let adopted = 0
   for (const item of active) {
-    if (item.state !== 'running') continue
     const task = getDownloadList().find(t => t.id === item.taskId)
-    if (!task || task.status === 'completed' || task.status === 'run') continue
+    // 审计#9：任务已从列表删除（或已完成）但原生仍在跑，取消掉，
+    // 避免无人认领的传输继续下载落盘
+    if (!task || task.status === 'completed') {
+      void downloadEngine.cancel(item.taskId, true).catch(() => {})
+      continue
+    }
+    if (item.state !== 'running' || task.status === 'run') continue
     task.status = 'run'
     task.statusText = t('download___status_running')
     task.downloaded = item.downloaded
@@ -359,9 +378,14 @@ export const bindEngineEvents = () => {
  * 冷启动（initDownload）与回前台（bindEngineEvents 的 AppState 监听）共用
  */
 export const alignWithNative = async() => {
-  await replayLoggedEvents()
-  await adoptNativeRunningTasks()
-  checkStartTask()
+  // 单飞：并发触发（init + AppState 回前台）共享同一次对齐（审计#2）
+  if (aligning) return aligning
+  aligning = (async() => {
+    await replayLoggedEvents()
+    await adoptNativeRunningTasks()
+    checkStartTask()
+  })().finally(() => { aligning = null })
+  return aligning
 }
 
 /**
@@ -370,8 +394,17 @@ export const alignWithNative = async() => {
  */
 export const replayLoggedEvents = async() => {
   const events = await downloadEngine.drainEvents().catch(() => [] as LX.Download.EngineEvent[])
-  for (const entry of events) {
-    handleEngineEvent({ type: entry.type as 'complete' | 'error', data: entry.data ?? {} })
+  replaying = true
+  try {
+    for (const entry of events) {
+      // 按 seq 去重：跳过已实时处理过的（审计#1）。旧日志条目外层有
+      // entry.seq，内层 data.seq 兜底
+      const seq = (entry.data as { seq?: number } | undefined)?.seq ?? (entry as unknown as { seq?: number }).seq
+      if (typeof seq === 'number' && seq <= lastAckSeq) continue
+      handleEngineEvent({ type: entry.type as 'complete' | 'error', data: entry.data ?? {} })
+    }
+  } finally {
+    replaying = false
   }
   await ackLoggedEvents()
 }

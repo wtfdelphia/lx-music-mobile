@@ -1,7 +1,8 @@
+import { AppState } from 'react-native'
 import settingState from '@/store/setting/state'
 import { createDownloadInfo } from './utils'
 import { getDownloadList, addDownloadTasks, initDownloadList, removeDownloadTasks, clearDownloadList } from '@/store/download/action'
-import { bindEngineEvents, checkStartTask, startDownloadTasks, pauseDownloadTask, removeDownloadTaskFiles, handleDisable, rebuildIndex, adoptNativeRunningTasks, finalizeColdStart, replayLoggedEvents } from './scheduler'
+import { bindEngineEvents, checkStartTask, startDownloadTasks, pauseDownloadTask, removeDownloadTaskFiles, handleDisable, rebuildIndex, adoptNativeRunningTasks, finalizeColdStart, alignWithNative } from './scheduler'
 import { reconcile } from './reconcile'
 import { removeFromIndex } from './downloadIndex'
 import { isDownloadSupported } from './support'
@@ -16,21 +17,23 @@ export { isDownloadSupported }
  * 初始化（§7.8，修复冷启动状态脱节）：
  * 加载列表 → 先订阅事件（避免回放期间漏接新事件）→ 回放积压事件日志
  * → 认领原生存活传输 → 重置残留任务 → 对账 → 重建索引 → 调度。
- * 顺序关键：回放与认领必须在重置之前，否则仍在传输的任务会被误置暂停
+ * 顺序关键：回放与认领必须在重置之前，否则仍在传输的任务会被误置暂停。
+ * 后台唤醒（AppState 非 active）只对齐状态，不取链接、不发起下载（审计#4）
  */
 export const initDownload = async() => {
   bindEngineEvents()
   await initDownloadList()
-  // 回放挂起/冷启动期间记录的 complete/error 事件（§4.6）
-  await replayLoggedEvents()
-  // 认领原生侧仍在跑的后台传输为运行中任务
-  await adoptNativeRunningTasks()
+  // 回放积压事件 + 认领原生存活传输（单飞，与回前台对齐共享）
+  await alignWithNative()
   // 未被认领的残留任务重置为暂停并清瞬态文案
   finalizeColdStart()
   const tasks = getDownloadList()
   const changed = await reconcile(tasks)
   await rebuildIndex(tasks)
   void changed
+  // 审计#4：后台唤醒冷启动时不自动恢复、不补位。等第一次回前台
+  //（bindEngineEvents 的 AppState 监听会再次触发调度）
+  if (AppState.currentState !== 'active') return
   if (settingState.setting['download.enable'] && settingState.setting['download.autoResume']) {
     for (const task of tasks) {
       if (task.status === 'pause') task.status = 'waiting'
