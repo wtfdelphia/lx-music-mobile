@@ -1,8 +1,7 @@
 import settingState from '@/store/setting/state'
 import { createDownloadInfo } from './utils'
 import { getDownloadList, addDownloadTasks, initDownloadList, removeDownloadTasks, clearDownloadList } from '@/store/download/action'
-import { bindEngineEvents, checkStartTask, startDownloadTasks, pauseDownloadTask, removeDownloadTaskFiles, handleDisable, rebuildIndex, adoptNativeRunningTasks, finalizeColdStart, ackLoggedEvents, handleEngineEvent } from './scheduler'
-import { downloadEngine } from './engine'
+import { bindEngineEvents, checkStartTask, startDownloadTasks, pauseDownloadTask, removeDownloadTaskFiles, handleDisable, rebuildIndex, adoptNativeRunningTasks, finalizeColdStart, replayLoggedEvents } from './scheduler'
 import { reconcile } from './reconcile'
 import { removeFromIndex } from './downloadIndex'
 import { isDownloadSupported } from './support'
@@ -40,17 +39,6 @@ export const initDownload = async() => {
   checkStartTask()
 }
 
-/**
- * 回放原生事件日志里未确认的事件（冷启动/后台唤醒后调用）。
- * 事件按 seq 升序，交由 handleEngineEvent 统一状态守卫处理
- */
-const replayLoggedEvents = async() => {
-  const events = await downloadEngine.drainEvents().catch(() => [] as LX.Download.EngineEvent[])
-  for (const entry of events) {
-    handleEngineEvent({ type: entry.type as 'complete' | 'error', data: entry.data ?? {} })
-  }
-  await ackLoggedEvents()
-}
 
 /**
  * 创建下载任务（§7.1）：过滤本地歌曲、逐首降级、按键去重，

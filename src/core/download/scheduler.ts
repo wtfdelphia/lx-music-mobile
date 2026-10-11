@@ -4,6 +4,7 @@ import { getUrl, refreshUrl } from './urlResolver'
 import { buildSavePath } from './utils'
 import { resolveDownloadPath } from './path'
 import { stat, unlink } from '@/utils/fs'
+import { AppState } from 'react-native'
 import { saveLrc } from './lrc'
 import { addToIndex, removeFromIndex, rebuildIndex } from './downloadIndex'
 import { getDownloadList, updateDownloadTask, flushForAck } from '@/store/download/action'
@@ -340,6 +341,34 @@ export const bindEngineEvents = () => {
   global.state_event.on('configUpdated', (keys: Array<keyof LX.AppSetting>) => {
     if (keys.includes('download.maxDownloadNum')) checkStartTask()
   })
+  // 退后台再回前台时：进程未被杀但原生后台会话可能已完成/出错，
+  // 实时事件在挂起期间被丢弃，需要回放日志 + 认领存活任务对齐状态
+  AppState.addEventListener('change', (state) => {
+    if (state !== 'active') return
+    void alignWithNative()
+  })
+}
+
+/**
+ * 与原生会话对齐：回放积压事件 → 认领存活传输 → 补位。
+ * 冷启动（initDownload）与回前台（bindEngineEvents 的 AppState 监听）共用
+ */
+export const alignWithNative = async() => {
+  await replayLoggedEvents()
+  await adoptNativeRunningTasks()
+  checkStartTask()
+}
+
+/**
+ * 回放原生事件日志里未确认的事件。事件按 seq 升序，
+ * 交由 handleEngineEvent 统一状态守卫处理，处理后统一确认
+ */
+export const replayLoggedEvents = async() => {
+  const events = await downloadEngine.drainEvents().catch(() => [] as LX.Download.EngineEvent[])
+  for (const entry of events) {
+    handleEngineEvent({ type: entry.type as 'complete' | 'error', data: entry.data ?? {} })
+  }
+  await ackLoggedEvents()
 }
 
 /* ============ 对外操作 ============ */

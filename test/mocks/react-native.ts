@@ -12,6 +12,11 @@ export const Platform = {
 }
 
 export const NativeModules = {}
+
+export const AppState = {
+  currentState: 'active',
+  addEventListener: (_event: string, _handler: (...args: unknown[]) => void) => ({ remove: () => {} }),
+}
 export const NativeEventEmitter = class {
   addListener() {
     return { remove: () => {} }
