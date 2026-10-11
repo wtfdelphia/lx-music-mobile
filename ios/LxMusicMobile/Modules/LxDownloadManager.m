@@ -55,6 +55,7 @@ static NSString * const kSessionIdentifier = @"cn.toside.music.mobile.download";
     _queue = dispatch_queue_create("cn.toside.music.mobile.download.queue", DISPATCH_QUEUE_SERIAL);
     [self ensureInternalDirs];
     [self restoreSeqCounter];
+    [self loadTaskInfos];
 
     NSURLSessionConfiguration *config =
       [NSURLSessionConfiguration backgroundSessionConfigurationWithIdentifier:kSessionIdentifier];
@@ -119,6 +120,41 @@ static NSString * const kSessionIdentifier = @"cn.toside.music.mobile.download";
       break;
     }
   }
+}
+
+#pragma mark - 任务元信息持久化（P0）
+
+// 进程被回收后重建时，后台会话的完成回调仍会到达；纯内存的
+// taskInfos 会丢失，导致移动文件时拿不到目标路径。落盘到
+// Application Support（不随 Documents 一起被误删风险，且用户不可见）
+
+- (NSString *)taskInfosPath
+{
+  return [[self internalDir] stringByAppendingPathComponent:@"tasks.plist"];
+}
+
+- (void)loadTaskInfos
+{
+  NSDictionary *stored = [NSDictionary dictionaryWithContentsOfFile:[self taskInfosPath]];
+  if (stored) [self.taskInfos setDictionary:stored];
+}
+
+// 仅在 self.queue 内调用
+- (void)saveTaskInfosLocked
+{
+  [self.taskInfos writeToURL:[NSURL fileURLWithPath:[self taskInfosPath]] atomically:YES];
+}
+
+- (void)setTaskInfoForId:(NSString *)taskId info:(NSDictionary *)info
+{
+  self.taskInfos[taskId] = info;
+  [self saveTaskInfosLocked];
+}
+
+- (void)removeTaskInfoForId:(NSString *)taskId
+{
+  [self.taskInfos removeObjectForKey:taskId];
+  [self saveTaskInfosLocked];
 }
 
 #pragma mark - 事件日志（§4.6）
@@ -208,7 +244,7 @@ static NSString * const kSessionIdentifier = @"cn.toside.music.mobile.download";
     NSURLSessionDownloadTask *task = [self.session downloadTaskWithRequest:request];
     task.taskDescription = taskId;
     self.tasks[taskId] = task;
-    self.taskInfos[taskId] = @{ @"targetPath": targetPath ?: @"", @"url": url ?: @"" };
+    [self setTaskInfoForId:taskId info:@{ @"targetPath": targetPath ?: @"", @"url": url ?: @"" }];
     [self.jsCancelled removeObject:taskId];
     [self.startedTasks removeObject:taskId];
     [task resume];
@@ -236,7 +272,9 @@ static NSString * const kSessionIdentifier = @"cn.toside.music.mobile.download";
   });
 }
 
-- (void)resumeTaskId:(NSString *)taskId allowsCellular:(BOOL)allowsCellular
+- (void)resumeTaskId:(NSString *)taskId
+      allowsCellular:(BOOL)allowsCellular
+          completion:(void (^)(BOOL resumed))completion
 {
   dispatch_async(self.queue, ^{
     NSString *path = [[self resumeDir] stringByAppendingPathComponent:[taskId stringByAppendingPathExtension:@"data"]];
@@ -244,7 +282,8 @@ static NSString * const kSessionIdentifier = @"cn.toside.music.mobile.download";
     NSDictionary *info = self.taskInfos[taskId];
     NSString *url = info[@"url"] ?: @"";
     if (!resumeData || !url.length) {
-      // 无续传数据：由 JS 决定从 0 重下（返回失败即可）
+      // 无续传数据或元信息缺失：如实报失败，由 JS 改走 start 从 0 下
+      if (completion) completion(NO);
       return;
     }
     NSURLSessionDownloadTask *task = [self.session downloadTaskWithResumeData:resumeData];
@@ -254,8 +293,9 @@ static NSString * const kSessionIdentifier = @"cn.toside.music.mobile.download";
     [self.startedTasks removeObject:taskId];
     [self.lastProgressEmit removeObjectForKey:taskId];
     [task resume];
-    // 续传成功后清掉本地副本
+    // 续传发起成功后清掉本地副本
     [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
+    if (completion) completion(YES);
   });
 }
 
@@ -268,7 +308,7 @@ static NSString * const kSessionIdentifier = @"cn.toside.music.mobile.download";
       [task cancel];
       [self.tasks removeObjectForKey:taskId];
     }
-    [self.taskInfos removeObjectForKey:taskId];
+    [self removeTaskInfoForId:taskId];
     if (removeResumeData) {
       NSString *path = [[self resumeDir] stringByAppendingPathComponent:[taskId stringByAppendingPathExtension:@"data"]];
       [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
@@ -380,17 +420,40 @@ static NSString * const kSessionIdentifier = @"cn.toside.music.mobile.download";
   NSInteger statusCode = response ? response.statusCode : 0;
   NSDictionary *info = self.taskInfos[taskId];
   NSString *relPath = info[@"targetPath"] ?: @"";
-  NSString *absPath = [self absolutePathForRelative:relPath];
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSString *documents = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
+
+  // P0 删除护栏：目标路径缺失（元信息丢失）或不是 Documents 的严格
+  // 子路径时，绝不删除、绝不覆盖——旧版此处会把整个 Documents 删掉
+  // （relPath 为空时 absPath 就是 Documents 本身）。孤儿文件暂存后报错
+  BOOL pathValid = relPath.length > 0;
+  NSString *absPath = nil;
+  if (pathValid) {
+    absPath = [self absolutePathForRelative:relPath];
+    pathValid = [absPath hasPrefix:[documents stringByAppendingString:@"/"]]
+      && ![absPath isEqualToString:documents];
+  }
+  if (!pathValid) {
+    NSString *orphanDir = [[self internalDir] stringByAppendingPathComponent:@"orphan"];
+    [fm createDirectoryAtPath:orphanDir withIntermediateDirectories:YES attributes:nil error:nil];
+    NSString *orphanPath = [orphanDir stringByAppendingPathComponent:taskId];
+    [fm removeItemAtPath:orphanPath error:nil];
+    [fm moveItemAtURL:location toURL:[NSURL fileURLWithPath:orphanPath] error:nil];
+    [self emitLoggedEvent:@"error" data:@{ @"taskId": taskId, @"code": @"ORPHAN" }];
+    [self.tasks removeObjectForKey:taskId];
+    [self.startedTasks removeObject:taskId];
+    return;
+  }
 
   if (statusCode >= 200 && statusCode < 300) {
     // §4.3：只有 2xx 才 move
-    NSFileManager *fm = [NSFileManager defaultManager];
     NSString *dir = [absPath stringByDeletingLastPathComponent];
     if (![fm fileExistsAtPath:dir]) {
       [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
     }
-    // 目标已存在先删
-    if ([fm fileExistsAtPath:absPath]) {
+    // 目标已存在先删：只删普通文件，永不删目录
+    BOOL isDir = NO;
+    if ([fm fileExistsAtPath:absPath isDirectory:&isDir] && !isDir) {
       [fm removeItemAtPath:absPath error:nil];
     }
     NSError *moveError = nil;
@@ -407,10 +470,11 @@ static NSString * const kSessionIdentifier = @"cn.toside.music.mobile.download";
         @"size": @(downloadTask.countOfBytesReceived),
       }];
     } else {
-      [self emitLoggedEvent:@"error" data:@{ @"taskId": taskId, @"code": @"WRITE_FAILED", @"message": moveError.localizedDescription ?: @"move failed" }];
+      [self emitLoggedEvent:@"error" data:@{ @"taskId": taskId, @"code": @"WRITE_FAILED" }];
     }
     [self.tasks removeObjectForKey:taskId];
     [self.startedTasks removeObject:taskId];
+    [self removeTaskInfoForId:taskId];
   } else {
     // 非 2xx：不 move，记 HTTP_<status>
     [self emitLoggedEvent:@"error" data:@{
@@ -419,6 +483,7 @@ static NSString * const kSessionIdentifier = @"cn.toside.music.mobile.download";
       @"httpStatus": @(statusCode),
     }];
     [self.tasks removeObjectForKey:taskId];
+    [self removeTaskInfoForId:taskId];
   }
 }
 

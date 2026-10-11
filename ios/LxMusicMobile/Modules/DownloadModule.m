@@ -93,8 +93,11 @@ RCT_EXPORT_METHOD(resume:(NSString *)taskId
                   resolver:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 {
-  [[LxDownloadManager shared] resumeTaskId:taskId allowsCellular:allowsCellular];
-  resolve(@YES);
+  [[LxDownloadManager shared] resumeTaskId:taskId
+                            allowsCellular:allowsCellular
+                                completion:^(BOOL resumed) {
+    resolve(@(resumed));
+  }];
 }
 
 RCT_EXPORT_METHOD(cancel:(NSString *)taskId

@@ -28,7 +28,9 @@ typedef void (^LxDownloadEventHandler)(LxDownloadEvent *event);
      allowsCellular:(BOOL)allowsCellular
             headers:(nullable NSDictionary<NSString *, NSString *> *)headers;
 - (void)pauseTaskId:(NSString *)taskId;
-- (void)resumeTaskId:(NSString *)taskId allowsCellular:(BOOL)allowsCellular;
+- (void)resumeTaskId:(NSString *)taskId
+      allowsCellular:(BOOL)allowsCellular
+          completion:(void (^)(BOOL resumed))completion;
 - (void)cancelTaskId:(NSString *)taskId removeResumeData:(BOOL)removeResumeData;
 - (void)removeResumeDataForTaskId:(NSString *)taskId;
 - (void)getActiveTasksWithCompletion:(void (^)(NSArray<NSDictionary *> *tasks))completion;
