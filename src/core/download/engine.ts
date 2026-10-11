@@ -39,6 +39,10 @@ export interface DownloadEngine {
   getActiveTasks: () => Promise<Array<{ taskId: string, state: 'running' | 'suspended', downloaded: number, total: number }>>
   drainEvents: () => Promise<LX.Download.EngineEvent[]>
   ack: (lastSeq: number) => Promise<void>
+  // 孤儿认领（修 E）：元信息丢失时的完整下载文件，认领回目标路径或删除
+  listOrphanTaskIds: () => Promise<string[]>
+  claimOrphan: (taskId: string, destPath: string) => Promise<boolean>
+  removeOrphan: (taskId: string) => Promise<void>
 }
 
 export { isDownloadSupported } from './support'
@@ -62,4 +66,7 @@ export const downloadEngine: DownloadEngine = {
   getActiveTasks: notSupported,
   drainEvents: notSupported,
   ack: notSupported,
+  listOrphanTaskIds: notSupported,
+  claimOrphan: notSupported,
+  removeOrphan: notSupported,
 }

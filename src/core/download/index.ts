@@ -2,7 +2,7 @@ import { AppState } from 'react-native'
 import settingState from '@/store/setting/state'
 import { createDownloadInfo } from './utils'
 import { getDownloadList, addDownloadTasks, initDownloadList, removeDownloadTasks, clearDownloadList } from '@/store/download/action'
-import { bindEngineEvents, checkStartTask, startDownloadTasks, pauseDownloadTask, removeDownloadTaskFiles, handleDisable, rebuildIndex, adoptNativeRunningTasks, finalizeColdStart, alignWithNative } from './scheduler'
+import { bindEngineEvents, checkStartTask, startDownloadTasks, pauseDownloadTask, removeDownloadTaskFiles, handleDisable, rebuildIndex, adoptNativeRunningTasks, finalizeColdStart, alignWithNative, claimOrphanTasks } from './scheduler'
 import { reconcile } from './reconcile'
 import { removeFromIndex } from './downloadIndex'
 import { isDownloadSupported } from './support'
@@ -23,10 +23,14 @@ export { isDownloadSupported }
 export const initDownload = async() => {
   bindEngineEvents()
   await initDownloadList()
-  // 回放积压事件 + 认领原生存活传输（单飞，与回前台对齐共享）
-  await alignWithNative()
+  // 回放积压事件 + 认领原生存活传输。冷启动回放非终态错误置暂停不重试，
+  // 不在这里补位——修 B：补位放到 AppState 门控之后，
+  // 避免后台唤醒时把 waiting 任务启动起来
+  await alignWithNative({ coldStart: true, schedule: false })
   // 未被认领的残留任务重置为暂停并清瞬态文案
   finalizeColdStart()
+  // 修 E：认领孤儿暂存文件放回原位（元信息丢失时的完整下载）
+  await claimOrphanTasks()
   const tasks = getDownloadList()
   const changed = await reconcile(tasks)
   await rebuildIndex(tasks)
@@ -39,6 +43,7 @@ export const initDownload = async() => {
       if (task.status === 'pause') task.status = 'waiting'
     }
   }
+  // 修 B：过了 AppState 门控才补位
   checkStartTask()
 }
 

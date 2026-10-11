@@ -42,6 +42,9 @@ export const downloadEngine: DownloadEngine = {
   getActiveTasks: withModule((m) => m.getActiveTasks()),
   drainEvents: withModule((m) => m.drainEvents()),
   ack: withModule((m, lastSeq) => m.ack(lastSeq)),
+  listOrphanTaskIds: withModule((m) => m.listOrphanTaskIds()),
+  claimOrphan: withModule((m, taskId, destPath) => m.claimOrphan(taskId, destPath)),
+  removeOrphan: withModule((m, taskId) => m.removeOrphan(taskId)),
 }
 
 export { isDownloadSupported } from './support'

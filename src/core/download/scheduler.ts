@@ -343,7 +343,10 @@ export const adoptNativeRunningTasks = async(): Promise<number> => {
       void downloadEngine.cancel(item.taskId, true).catch(() => {})
       continue
     }
-    if (item.state !== 'running' || task.status === 'run') continue
+    // 修 A：用 runningTask.has 判断是否已认领，而不是看持久化状态。
+    // 冷启动时持久化状态正是 run，若按 status === 'run' 跳过，
+    // 最常见的在传任务永远认领不到
+    if (item.state !== 'running' || runningTask.has(task.id)) continue
     task.status = 'run'
     task.statusText = t('download___status_running')
     task.downloaded = item.downloaded
@@ -377,13 +380,23 @@ export const bindEngineEvents = () => {
  * 与原生会话对齐：回放积压事件 → 认领存活传输 → 补位。
  * 冷启动（initDownload）与回前台（bindEngineEvents 的 AppState 监听）共用
  */
-export const alignWithNative = async() => {
+export interface AlignOptions {
+  /** 对齐完成后是否补位调度。冷启动传 false，过了 AppState 门控
+   *  再由调用方执行，避免后台唤醒时把 waiting 任务启动起来（修 B） */
+  schedule?: boolean
+  /** 是否冷启动回放。只有冷启动回放时非终态错误才置暂停不重试（修 D）；
+   *  回前台对齐时网络错误照常走重试链路，与桌面版一致 */
+  coldStart?: boolean
+}
+
+export const alignWithNative = async(options: AlignOptions = {}) => {
+  const { schedule = true, coldStart = false } = options
   // 单飞：并发触发（init + AppState 回前台）共享同一次对齐（审计#2）
   if (aligning) return aligning
   aligning = (async() => {
-    await replayLoggedEvents()
+    await replayLoggedEvents(coldStart)
     await adoptNativeRunningTasks()
-    checkStartTask()
+    if (schedule) checkStartTask()
   })().finally(() => { aligning = null })
   return aligning
 }
@@ -392,9 +405,11 @@ export const alignWithNative = async() => {
  * 回放原生事件日志里未确认的事件。事件按 seq 升序，
  * 交由 handleEngineEvent 统一状态守卫处理，处理后统一确认
  */
-export const replayLoggedEvents = async() => {
+export const replayLoggedEvents = async(coldStart: boolean = false) => {
   const events = await downloadEngine.drainEvents().catch(() => [] as LX.Download.EngineEvent[])
-  replaying = true
+  // 修 D：只有冷启动回放打开回放安全模式（非终态错误置暂停不重试）。
+  // 回前台对齐保持正常重试链路
+  replaying = coldStart
   try {
     for (const entry of events) {
       // 按 seq 去重：跳过已实时处理过的（审计#1）。旧日志条目外层有
@@ -418,11 +433,48 @@ export const replayLoggedEvents = async() => {
 export const finalizeColdStart = (): void => {
   let changed = false
   for (const task of getDownloadList()) {
+    // 修 A：已被 adoptNativeRunningTasks 认领的任务保留运行态，
+    // 不重置。原生确实在传，重置会导致界面显示「已暂停」且并发计数错乱
+    if (runningTask.has(task.id)) continue
     if (task.status === 'run' || task.status === 'waiting') {
       task.status = 'pause'
       task.statusText = ''
       clearTaskMaps(task.id)
       changed = true
+    }
+  }
+  if (changed) updateDownloadTask()
+}
+
+/**
+ * 孤儿认领（修 E）：元信息丢失时完整文件被暂存为孤儿，
+ * 但 JS 侧的 `metadata.filePath` 还在，可按任务认领放回原位。
+ * 列表里没有的孤儿（任务已被删除）直接清理
+ */
+export const claimOrphanTasks = async(): Promise<void> => {
+  const ids = await downloadEngine.listOrphanTaskIds().catch(() => [] as string[])
+  if (!ids.length) return
+  let changed = false
+  for (const taskId of ids) {
+    const task = getDownloadList().find(t => t.id === taskId)
+    if (!task || !task.metadata.filePath) {
+      // 任务已被删除：孤儿文件无人认领，清掉
+      void downloadEngine.removeOrphan(taskId).catch(() => {})
+      continue
+    }
+    const destPath = resolveDownloadPath(task.metadata.filePath)
+    const claimed = await downloadEngine.claimOrphan(taskId, destPath).catch(() => false)
+    if (claimed) {
+      // 文件归位：任务标完成、进索引
+      task.status = 'completed'
+      task.isComplate = true
+      task.progress = 100
+      task.statusText = t('download___status_completed')
+      addToIndex(task)
+      changed = true
+    } else {
+      // 认领失败（目标已被占用等）：清理孤儿
+      void downloadEngine.removeOrphan(taskId).catch(() => {})
     }
   }
   if (changed) updateDownloadTask()
