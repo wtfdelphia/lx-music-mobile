@@ -26,6 +26,9 @@ static NSString * const kSessionIdentifier = @"cn.toside.music.mobile.download";
 @property (nonatomic, assign) NSInteger seqCounter;
 // 串行队列保护内部状态
 @property (nonatomic, strong) dispatch_queue_t queue;
+// 冷启动重挂门控（修 C 死锁）：getAllTasks 完成前，
+// getActiveTasks / start 等调用在调用线程上等待此 group
+@property (nonatomic, strong) dispatch_group_t reattachGroup;
 @property (nonatomic, copy, nullable) void (^bgCompletionHandler)(void);
 @end
 
@@ -68,38 +71,35 @@ static NSString * const kSessionIdentifier = @"cn.toside.music.mobile.download";
     // 冷启动重挂：进程被回收后系统可能仍持有未完成的后台任务，
     // 按 taskDescription 重新挂入内存表，否则 JS 的 pause/cancel 对
     // 这些传输 no-op，且 start 会重复建任务
-    // 审计#6：挂起 queue 直到重挂完成。否则 JS 的 getActiveTasks/start
-    // 去重可能在重挂之前执行，认领不到任务或建出重复任务。
-    // 恢复前所有排入 queue 的 JS 调用都会排队等待，重挂后顺序执行
-    dispatch_suspend(_queue);
+    // 审计#6 + 修 C：用 dispatch_group 门控重挂，不挂起 queue。
+    // dispatch_suspend 与 didFinish 里的 dispatch_sync 会在后台唤醒时
+    // 死锁：积压的完成回调堵住 delegate 队列，getAllTasks 的 completion
+    // 永远执行不到。group 的 leave 在 queue 上 async 执行，
+    // 等待方在调用线程（JS 桥线程）上等，无循环依赖
+    _reattachGroup = dispatch_group_create();
+    dispatch_group_enter(_reattachGroup);
     __weak typeof(self) weakSelf = self;
     [_session getAllTasksWithCompletionHandler:^(NSArray<NSURLSessionTask *> *tasks) {
       __strong typeof(weakSelf) strongSelf = weakSelf;
       if (!strongSelf) return;
-      for (NSURLSessionTask *task in tasks) {
-        NSString *taskId = task.taskDescription;
-        if (taskId && (task.state == NSURLSessionTaskStateRunning || task.state == NSURLSessionTaskStateSuspended)) {
-          strongSelf.tasks[taskId] = (NSURLSessionDownloadTask *)task;
+      dispatch_async(strongSelf.queue, ^{
+        for (NSURLSessionTask *task in tasks) {
+          NSString *taskId = task.taskDescription;
+          if (taskId && (task.state == NSURLSessionTaskStateRunning || task.state == NSURLSessionTaskStateSuspended)) {
+            strongSelf.tasks[taskId] = (NSURLSessionDownloadTask *)task;
+          }
         }
-      }
-      dispatch_resume(strongSelf.queue);
+        dispatch_group_leave(strongSelf.reattachGroup);
+      });
     }];
-    // 审计#10：清理上次遗留的孤儿文件（元信息丢失时的暂存，无元信息
-    // 可恢复，留着只占空间）
-    [self cleanOrphanDir];
   }
   return self;
 }
 
-// 审计#10：清空孤儿目录
-- (void)cleanOrphanDir
+// 修 C：门控等待重挂完成。在调用线程上等待，再进 queue
+- (void)waitReattach
 {
-  NSFileManager *fm = [NSFileManager defaultManager];
-  NSString *orphanDir = [[self internalDir] stringByAppendingPathComponent:@"orphan"];
-  NSArray<NSString *> *entries = [fm contentsOfDirectoryAtPath:orphanDir error:nil];
-  for (NSString *name in entries) {
-    [fm removeItemAtPath:[orphanDir stringByAppendingPathComponent:name] error:nil];
-  }
+  dispatch_group_wait(self.reattachGroup, DISPATCH_TIME_FOREVER);
 }
 
 #pragma mark - 内部目录（§4.5）
@@ -269,6 +269,7 @@ static NSString * const kSessionIdentifier = @"cn.toside.music.mobile.download";
      allowsCellular:(BOOL)allowsCellular
             headers:(nullable NSDictionary<NSString *, NSString *> *)headers
 {
+  [self waitReattach];
   dispatch_async(self.queue, ^{
     // 同 id 活跃任务已在跑时直接复用，不再新建（避免孤儿任务）
     NSURLSessionDownloadTask *existing = self.tasks[taskId];
@@ -381,6 +382,64 @@ static NSString * const kSessionIdentifier = @"cn.toside.music.mobile.download";
   });
 }
 
+// 修 E：列出孤儿暂存的任务（元信息丢失时的完整下载文件，
+// JS 的 metadata.filePath 还在，可认领放回原位）
+- (void)listOrphanTaskIdsWithCompletion:(void (^)(NSArray<NSString *> *ids))completion
+{
+  dispatch_async(self.queue, ^{
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *orphanDir = [[self internalDir] stringByAppendingPathComponent:@"orphan"];
+    NSArray<NSString *> *entries = [fm contentsOfDirectoryAtPath:orphanDir error:nil] ?: @[];
+    completion(entries);
+  });
+}
+
+// 修 E：把孤儿文件认领到目标路径。护栏同 didFinish：目标必须是
+// Documents/Download/ 下的普通文件路径
+- (void)claimOrphanWithTaskId:(NSString *)taskId
+                       destPath:(NSString *)destPath
+                     completion:(void (^)(BOOL claimed))completion
+{
+  dispatch_async(self.queue, ^{
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *orphanPath = [[[self internalDir] stringByAppendingPathComponent:@"orphan"] stringByAppendingPathComponent:taskId];
+    BOOL claimed = NO;
+    BOOL isDir = NO;
+    if ([fm fileExistsAtPath:orphanPath isDirectory:&isDir] && !isDir) {
+      NSString *documents = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
+      NSString *stdDest = [destPath stringByStandardizingPath];
+      NSString *allowedRoot = [[[documents stringByAppendingPathComponent:@"Download"] stringByStandardizingPath] stringByAppendingString:@"/"];
+      if (stdDest != nil && [stdDest hasPrefix:allowedRoot]) {
+        NSString *dir = [stdDest stringByDeletingLastPathComponent];
+        [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+        BOOL destIsDir = NO;
+        if ([fm fileExistsAtPath:stdDest isDirectory:&destIsDir] && destIsDir) {
+          // 目标是目录：护栏拦下，不覆盖
+          claimed = NO;
+        } else {
+          [fm removeItemAtPath:stdDest error:nil];
+          NSError *moveError = nil;
+          [fm moveItemAtPath:orphanPath toPath:stdDest error:&moveError];
+          if (!moveError) {
+            NSURL *fileURL = [NSURL fileURLWithPath:stdDest];
+            [fileURL setResourceValue:@YES forKey:NSURLIsExcludedFromBackupKey error:nil];
+            claimed = YES;
+          }
+        }
+      }
+    }
+    if (completion) completion(claimed);
+  });
+}
+
+- (void)removeOrphanWithTaskId:(NSString *)taskId
+{
+  dispatch_async(self.queue, ^{
+    NSString *orphanPath = [[[self internalDir] stringByAppendingPathComponent:@"orphan"] stringByAppendingPathComponent:taskId];
+    [[NSFileManager defaultManager] removeItemAtPath:orphanPath error:nil];
+  });
+}
+
 - (void)removeResumeDataForTaskId:(NSString *)taskId
 {
   dispatch_async(self.queue, ^{
@@ -393,6 +452,7 @@ static NSString * const kSessionIdentifier = @"cn.toside.music.mobile.download";
 
 - (void)getActiveTasksWithCompletion:(void (^)(NSArray<NSDictionary *> *tasks))completion
 {
+  [self waitReattach];
   dispatch_async(self.queue, ^{
     NSMutableArray<NSDictionary *> *result = [NSMutableArray array];
     [self.tasks enumerateKeysAndObjectsUsingBlock:^(NSString *taskId, NSURLSessionDownloadTask *task, BOOL *stop) {
@@ -508,12 +568,12 @@ static NSString * const kSessionIdentifier = @"cn.toside.music.mobile.download";
   BOOL pathValid = relPath.length > 0;
   NSString *absPath = nil;
   if (pathValid) {
-    absPath = [self absolutePathForRelative:relPath];
-    // 审计#8：先标准化解析掉 .. / 符号链接，再校验必须落在
-    // Documents/Download/ 之内（下载路径统一由 buildSavePath 生成，
-    // 恒为 Download/... 子路径）
-    absPath = [absPath stringByStandardizingPath];
-    NSString *allowedRoot = [[documents stringByAppendingPathComponent:@"Download"] stringByAppendingString:@"/"];
+    // 审计#8 + 修 F：两侧都先标准化解析掉 .. 与冗余分隔符
+    //（注意：standardizing 不解析符号链接，此处不需要），
+    // 再校验必须落在 Documents/Download/ 之内（下载路径统一由
+    // buildSavePath 生成，恒为 Download/... 子路径）
+    absPath = [[self absolutePathForRelative:relPath] stringByStandardizingPath];
+    NSString *allowedRoot = [[[documents stringByAppendingPathComponent:@"Download"] stringByStandardizingPath] stringByAppendingString:@"/"];
     pathValid = absPath != nil && [absPath hasPrefix:allowedRoot];
   }
   if (!pathValid) {

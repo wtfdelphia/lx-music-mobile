@@ -34,6 +34,12 @@ typedef void (^LxDownloadEventHandler)(LxDownloadEvent *event);
 - (void)cancelTaskId:(NSString *)taskId removeResumeData:(BOOL)removeResumeData;
 - (void)removeResumeDataForTaskId:(NSString *)taskId;
 - (void)getActiveTasksWithCompletion:(void (^)(NSArray<NSDictionary *> *tasks))completion;
+// 孤儿认领（修 E）：元信息丢失时的完整下载文件，JS 可认领放回原位
+- (void)listOrphanTaskIdsWithCompletion:(void (^)(NSArray<NSString *> *ids))completion;
+- (void)claimOrphanWithTaskId:(NSString *)taskId
+                     destPath:(NSString *)destPath
+                   completion:(void (^)(BOOL claimed))completion;
+- (void)removeOrphanWithTaskId:(NSString *)taskId;
 - (void)drainEventsWithCompletion:(void (^)(NSArray<NSDictionary *> *events))completion;
 - (void)ackEventsUpToSeq:(NSInteger)seq;
 
