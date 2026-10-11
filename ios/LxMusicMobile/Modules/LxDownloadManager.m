@@ -175,16 +175,19 @@ static NSString * const kSessionIdentifier = @"cn.toside.music.mobile.download";
 
 #pragma mark - 事件日志（§4.6）
 
-// 返回值：本条事件的 seq（供 emitLoggedEvent 把 seq 塞进 JS 的 data）
+// 返回值：本条事件的 seq。seq 同时写进内层 data，与实时事件形状一致，
+// 回放时 JS 统一读 data.seq
 - (NSInteger)writeEvent:(NSDictionary *)eventData withType:(NSString *)type
 {
   NSInteger seq = ++_seqCounter;
+  NSMutableDictionary *dataWithSeq = [NSMutableDictionary dictionaryWithDictionary:eventData ?: @{}];
+  dataWithSeq[@"seq"] = @(seq);
   NSMutableDictionary *entry = [NSMutableDictionary dictionary];
   entry[@"seq"] = @(seq);
   entry[@"type"] = type;
-  entry[@"data"] = eventData ?: @{};
+  entry[@"data"] = dataWithSeq;
   NSData *json = [NSJSONSerialization dataWithJSONObject:entry options:0 error:nil];
-  if (!json) return;
+  if (!json) return 0;
   NSMutableString *line = [[NSMutableString alloc] initWithData:json encoding:NSUTF8StringEncoding];
   [line appendString:@"\n"];
   NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:[self eventsLogPath]];
@@ -215,8 +218,8 @@ static NSString * const kSessionIdentifier = @"cn.toside.music.mobile.download";
 - (void)emitLoggedEvent:(NSString *)type data:(NSDictionary *)data
 {
   NSInteger seq = [self writeEvent:data withType:type];
-  // seq 一并放进发给 JS 的 data：否则 JS 侧 lastAckSeq 恒为 0，
-  // ack(0) 永不清理，events.jsonl 无限增长（修 R3）
+  // 复用含 seq 的 data，与实时/回放形状一致；否则 JS 侧 lastAckSeq
+  // 恒为 0，ack(0) 永不清理，events.jsonl 无限增长（修 R3）
   NSMutableDictionary *dataWithSeq = [NSMutableDictionary dictionaryWithDictionary:data ?: @{}];
   dataWithSeq[@"seq"] = @(seq);
   [self emitEvent:type data:dataWithSeq];

@@ -1,7 +1,8 @@
 import settingState from '@/store/setting/state'
 import { createDownloadInfo } from './utils'
 import { getDownloadList, addDownloadTasks, initDownloadList, removeDownloadTasks, clearDownloadList } from '@/store/download/action'
-import { bindEngineEvents, checkStartTask, startDownloadTasks, pauseDownloadTask, removeDownloadTaskFiles, handleDisable, rebuildIndex } from './scheduler'
+import { bindEngineEvents, checkStartTask, startDownloadTasks, pauseDownloadTask, removeDownloadTaskFiles, handleDisable, rebuildIndex, adoptNativeRunningTasks, finalizeColdStart, ackLoggedEvents, handleEngineEvent } from './scheduler'
+import { downloadEngine } from './engine'
 import { reconcile } from './reconcile'
 import { removeFromIndex } from './downloadIndex'
 import { isDownloadSupported } from './support'
@@ -13,22 +14,42 @@ export { isDownloadSupported }
  */
 
 /**
- * 初始化：加载任务列表 → 冷启动状态重置（§7.8）→ 对账 → 重建索引 → 事件接线 → 调度。
- * 在应用启动流程中调用一次
+ * 初始化（§7.8，修复冷启动状态脱节）：
+ * 加载列表 → 先订阅事件（避免回放期间漏接新事件）→ 回放积压事件日志
+ * → 认领原生存活传输 → 重置残留任务 → 对账 → 重建索引 → 调度。
+ * 顺序关键：回放与认领必须在重置之前，否则仍在传输的任务会被误置暂停
  */
 export const initDownload = async() => {
+  bindEngineEvents()
   await initDownloadList()
+  // 回放挂起/冷启动期间记录的 complete/error 事件（§4.6）
+  await replayLoggedEvents()
+  // 认领原生侧仍在跑的后台传输为运行中任务
+  await adoptNativeRunningTasks()
+  // 未被认领的残留任务重置为暂停并清瞬态文案
+  finalizeColdStart()
   const tasks = getDownloadList()
   const changed = await reconcile(tasks)
   await rebuildIndex(tasks)
   void changed
-  bindEngineEvents()
   if (settingState.setting['download.enable'] && settingState.setting['download.autoResume']) {
     for (const task of tasks) {
       if (task.status === 'pause') task.status = 'waiting'
     }
   }
   checkStartTask()
+}
+
+/**
+ * 回放原生事件日志里未确认的事件（冷启动/后台唤醒后调用）。
+ * 事件按 seq 升序，交由 handleEngineEvent 统一状态守卫处理
+ */
+const replayLoggedEvents = async() => {
+  const events = await downloadEngine.drainEvents().catch(() => [] as LX.Download.EngineEvent[])
+  for (const entry of events) {
+    handleEngineEvent({ type: entry.type as 'complete' | 'error', data: entry.data ?? {} })
+  }
+  await ackLoggedEvents()
 }
 
 /**

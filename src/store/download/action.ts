@@ -27,16 +27,12 @@ const notify = () => {
 }
 
 /**
- * 冷启动加载；`run`/`waiting` 一律重置为 `pause`（桌面版一致，§7.8）。
- * `autoResume` 的接管由调度层处理，这里不掺
+ * 冷启动加载任务列表（只加载，不重置状态）。
+ * 状态重置由调度层 `finalizeColdStart` 在认领原生存活任务之后执行，
+ * 顺序错会让仍在传输的任务被误置为暂停
  */
 export const initDownloadList = async(): Promise<void> => {
   const tasks = await persist.load()
-  for (const task of tasks) {
-    if (task.status === 'run' || task.status === 'waiting') {
-      task.status = 'pause'
-    }
-  }
   state.downloadList = tasks
   notify()
 }

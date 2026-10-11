@@ -84,6 +84,7 @@ declare namespace LX {
       | 'TIMEOUT'
       | 'NO_SPACE'
       | 'WRITE_FAILED'
+      | 'ORPHAN'
       | 'FILE_MISSING'
       | 'FORCE_QUIT'
       | 'SYSTEM_CANCELLED'

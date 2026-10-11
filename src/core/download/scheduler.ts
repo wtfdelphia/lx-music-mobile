@@ -165,8 +165,7 @@ const handleComplete = (downloadInfo: LX.Download.ListItem) => {
   clearTaskMaps(downloadInfo.id)
   updateDownloadTask()
   void saveLrc(downloadInfo).catch(() => {})
-  void flushForAck().then(async() => {
-    await downloadEngine.ack(lastAckSeq).catch(() => {})
+  void ackLoggedEvents().then(() => {
     checkStartTask()
   })
 }
@@ -178,8 +177,13 @@ const handleEngineError = (downloadInfo: LX.Download.ListItem, event: EngineLive
   const code = event.data.code ?? 'NETWORK'
   switch (code) {
     case 'WRITE_FAILED':
+    case 'ORPHAN':
+      // 不透传原生原始报错（移动失败的系统报错含临时文件名，
+      // 对用户无意义），统一用本地化文案
+      handleError(downloadInfo, 'WRITE_FAILED', t('download_status_error_write'))
+      return
     case 'NO_SPACE':
-      handleError(downloadInfo, code, code === 'NO_SPACE' ? t('download_status_error_no_space') : event.data.message)
+      handleError(downloadInfo, code, t('download_status_error_no_space'))
       return
     case 'CANCELLED':
       // JS 主动取消：状态已由调用方处理，忽略；
@@ -248,13 +252,20 @@ export const handleEngineEvent = (event: EngineLiveEvent) => {
   if (typeof event.data.seq === 'number' && event.data.seq > lastAckSeq) lastAckSeq = event.data.seq
   switch (event.type) {
     case 'start':
-      task.status = 'run'
+      // 状态守卫（修 R4）：只接受调度发起的运行中任务；非 run 状态
+      // 收到 start 说明是孤儿传输（如进程重建后旧会话残留），掐掉
+      if (task.status !== 'run') {
+        void downloadEngine.cancel(task.id, false).catch(() => {})
+        return
+      }
       task.statusText = t('download___status_running')
       tryNum.set(task.id, 0)
       speedBase.set(task.id, { bytes: 0, time: Date.now() })
       updateDownloadTask()
       return
     case 'progress': {
+      // 非运行态任务的进度事件一律忽略（同上）
+      if (task.status !== 'run') return
       task.downloaded = event.data.downloaded ?? task.downloaded
       task.total = event.data.total ?? task.total
       task.progress = task.total > 0 ? Math.min(99.99, (task.downloaded / task.total) * 100) : 0
@@ -271,16 +282,52 @@ export const handleEngineEvent = (event: EngineLiveEvent) => {
     case 'complete':
       // 幂等：已完成任务重复收 complete 只确认不重复处理（§4.6）
       if (task.isComplate && task.status === 'completed') {
-        void flushForAck().then(async() => {
-          await downloadEngine.ack(lastAckSeq).catch(() => {})
-        })
+        void ackLoggedEvents()
         return
       }
+      // 后台期间系统下完的任务，冷启动时状态已被重置为 pause：
+      // 文件确实落盘了，照常记完成
       handleComplete(task)
       return
     case 'error':
+      // 非运行态任务收到错误事件：不改状态（避免后台残留事件
+      // 覆盖用户已暂停/已恢复的状态），事件照常确认
+      if (task.status !== 'run' && event.data.code !== 'FORCE_QUIT' && event.data.code !== 'SYSTEM_CANCELLED') {
+        void ackLoggedEvents()
+        return
+      }
       handleEngineError(task, event)
   }
+}
+
+/**
+ * 确认已处理的事件：先落盘任务状态再截断事件日志（§4.6）
+ */
+export const ackLoggedEvents = async() => {
+  await flushForAck()
+  await downloadEngine.ack(lastAckSeq).catch(() => {})
+}
+
+/**
+ * 冷启动对齐：把原生仍在跑的传输认领为运行中任务（§7.8），
+ * 返回认领的任务数，供调用方判断后续重置范围
+ */
+export const adoptNativeRunningTasks = async(): Promise<number> => {
+  const active = await downloadEngine.getActiveTasks().catch(() => [] as Array<{ taskId: string, state: string, downloaded: number, total: number }>)
+  let adopted = 0
+  for (const item of active) {
+    if (item.state !== 'running') continue
+    const task = getDownloadList().find(t => t.id === item.taskId)
+    if (!task || task.status === 'completed' || task.status === 'run') continue
+    task.status = 'run'
+    task.statusText = t('download___status_running')
+    task.downloaded = item.downloaded
+    task.total = item.total
+    runningTask.set(task.id, task)
+    adopted++
+  }
+  if (adopted > 0) updateDownloadTask()
+  return adopted
 }
 
 /**
@@ -296,6 +343,23 @@ export const bindEngineEvents = () => {
 }
 
 /* ============ 对外操作 ============ */
+
+/**
+ * 冷启动收尾：未被原生认领的残留任务重置为暂停并清文案
+ *（瞬态文案「音源链接获取中」等不落盘残留到下次展示）
+ */
+export const finalizeColdStart = (): void => {
+  let changed = false
+  for (const task of getDownloadList()) {
+    if (task.status === 'run' || task.status === 'waiting') {
+      task.status = 'pause'
+      task.statusText = ''
+      clearTaskMaps(task.id)
+      changed = true
+    }
+  }
+  if (changed) updateDownloadTask()
+}
 
 /**
  * 批量开始：置 `waiting` 后进调度（§7.6）

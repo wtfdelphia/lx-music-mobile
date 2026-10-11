@@ -54,8 +54,9 @@ beforeEach(() => {
 })
 
 describe('store/download 冷启动', () => {
-  it('run / waiting 一律重置为 pause（§7.8）', async() => {
-    // 预置持久化数据：三条不同状态
+  it('initDownloadList 只加载、不重置状态（重置移到调度层，§7.8）', async() => {
+    // 预置持久化数据：三条不同状态。重置逻辑移到 scheduler.finalizeColdStart
+    //（须在认领原生存活任务之后），故此处加载后状态保持原样
     const { createDownloadPersist } = await import('@/core/download/persist')
     const persist = createDownloadPersist({
       getItem: async(key) => {
@@ -71,7 +72,7 @@ describe('store/download 冷启动', () => {
     const action = await loadAction()
     await action.initDownloadList()
     const list = action.getDownloadList()
-    expect(list.map(t => t.status)).toEqual(['pause', 'pause', 'completed'])
+    expect(list.map(t => t.status)).toEqual(['run', 'waiting', 'completed'])
     expect(global.app_event.downloadListUpdate).toHaveBeenCalled()
   })
 
