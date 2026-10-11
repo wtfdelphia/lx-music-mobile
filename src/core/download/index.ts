@@ -2,7 +2,7 @@ import { AppState } from 'react-native'
 import settingState from '@/store/setting/state'
 import { createDownloadInfo } from './utils'
 import { getDownloadList, addDownloadTasks, initDownloadList, removeDownloadTasks, clearDownloadList } from '@/store/download/action'
-import { bindEngineEvents, checkStartTask, startDownloadTasks, pauseDownloadTask, removeDownloadTaskFiles, handleDisable, rebuildIndex, adoptNativeRunningTasks, finalizeColdStart, alignWithNative, claimOrphanTasks } from './scheduler'
+import { bindEngineEvents, checkStartTask, startDownloadTasks, pauseDownloadTask, removeDownloadTaskFiles, handleDisable, rebuildIndex, adoptNativeRunningTasks, finalizeColdStart, alignWithNative, claimOrphanTasks, markInitialized } from './scheduler'
 import { reconcile } from './reconcile'
 import { removeFromIndex } from './downloadIndex'
 import { isDownloadSupported } from './support'
@@ -35,10 +35,13 @@ export const initDownload = async() => {
   const changed = await reconcile(tasks)
   await rebuildIndex(tasks)
   void changed
-  // 审计#4：后台唤醒冷启动时不自动恢复、不补位。等第一次回前台
-  //（bindEngineEvents 的 AppState 监听会再次触发调度）
+  const wantAutoResume = settingState.setting['download.enable'] && settingState.setting['download.autoResume']
+  // 修 I：初始化完成，AppState 监听此后才生效。
+  // 修 J：后台唤醒冷启动时不立即恢复，把 autoResume 意图暂存给首次回前台；
+  // 前台启动则立即执行，故暂存标记置否避免重复
+  markInitialized(AppState.currentState !== 'active' ? wantAutoResume : false)
   if (AppState.currentState !== 'active') return
-  if (settingState.setting['download.enable'] && settingState.setting['download.autoResume']) {
+  if (wantAutoResume) {
     for (const task of tasks) {
       if (task.status === 'pause') task.status = 'waiting'
     }

@@ -27,6 +27,11 @@ let lastAckSeq = 0
 let aligning: Promise<void> | null = null
 /** 回放模式：此期间非终态错误只置暂停、保留续传，不发起重试（审计#3） */
 let replaying = false
+/** 初始化完成标记：完成前 AppState 监听直接 return，
+ *  避免空列表上 adopt 把存活任务当无主任务取消（修 I） */
+let initialized = false
+/** 后台唤醒冷启动时暂存的 autoResume 意图，第一次回前台时执行（修 J） */
+let pendingAutoResume = false
 
 const t = (key: Parameters<typeof global.i18n.t>[0]) => global.i18n.t(key)
 
@@ -371,7 +376,16 @@ export const bindEngineEvents = () => {
   // 退后台再回前台时：进程未被杀但原生后台会话可能已完成/出错，
   // 实时事件在挂起期间被丢弃，需要回放日志 + 认领存活任务对齐状态
   AppState.addEventListener('change', (state) => {
-    if (state !== 'active') return
+    // 修 I：initDownload 完成前（列表未加载）不处理，
+    // 否则空列表上 adopt 会把所有存活任务当无主任务取消
+    if (!initialized || state !== 'active') return
+    // 修 J：后台唤醒冷启动时暂存的 autoResume，第一次回前台执行
+    if (pendingAutoResume) {
+      pendingAutoResume = false
+      for (const task of getDownloadList()) {
+        if (task.status === 'pause') task.status = 'waiting'
+      }
+    }
     void alignWithNative()
   })
 }
@@ -424,6 +438,12 @@ export const replayLoggedEvents = async(coldStart: boolean = false) => {
   await ackLoggedEvents()
 }
 
+/** initDownload 收尾：标记初始化完成，后台唤醒的 autoResume 由首次回前台执行 */
+export const markInitialized = (autoResume: boolean) => {
+  initialized = true
+  pendingAutoResume = autoResume
+}
+
 /* ============ 对外操作 ============ */
 
 /**
@@ -462,6 +482,9 @@ export const claimOrphanTasks = async(): Promise<void> => {
       void downloadEngine.removeOrphan(taskId).catch(() => {})
       continue
     }
+    // 修 H：仍在运行（原生还在下）或已完成（文件已就位）的任务不认领，
+    // 避免把活任务标成完成、并发计数泄漏
+    if (runningTask.has(task.id) || task.status === 'completed') continue
     const destPath = resolveDownloadPath(task.metadata.filePath)
     const claimed = await downloadEngine.claimOrphan(taskId, destPath).catch(() => false)
     if (claimed) {
