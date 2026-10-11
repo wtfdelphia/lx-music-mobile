@@ -294,6 +294,11 @@ export const handleEngineEvent = (event: EngineLiveEvent) => {
       // 非运行态任务收到错误事件：不改状态（避免后台残留事件
       // 覆盖用户已暂停/已恢复的状态），事件照常确认
       if (task.status !== 'run' && event.data.code !== 'FORCE_QUIT' && event.data.code !== 'SYSTEM_CANCELLED') {
+        // 失败的续传数据必须清掉：否则「全部开始」会拿旧 URL 的
+        // 续传数据续传，损坏已下载文件
+        if (event.data.hasResumeData) {
+          void downloadEngine.removeResumeData(task.id).catch(() => {})
+        }
         void ackLoggedEvents()
         return
       }
