@@ -133,6 +133,36 @@ RCT_EXPORT_METHOD(drainEvents:(RCTPromiseResolveBlock)resolve
   }];
 }
 
+// 孤儿认领桥接（修 G：manager 有方法但此前未导出，
+// JS 调到 undefined 被 catch 吞掉）
+RCT_EXPORT_METHOD(listOrphanTaskIds:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  [[LxDownloadManager shared] listOrphanTaskIdsWithCompletion:^(NSArray<NSString *> *ids) {
+    resolve(ids);
+  }];
+}
+
+RCT_EXPORT_METHOD(claimOrphan:(NSString *)taskId
+                  destPath:(NSString *)destPath
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  [[LxDownloadManager shared] claimOrphanWithTaskId:taskId
+                                           destPath:destPath
+                                         completion:^(BOOL claimed) {
+    resolve(@(claimed));
+  }];
+}
+
+RCT_EXPORT_METHOD(removeOrphan:(NSString *)taskId
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  [[LxDownloadManager shared] removeOrphanWithTaskId:taskId];
+  resolve(nil);
+}
+
 RCT_EXPORT_METHOD(ack:(NSInteger)lastSeq
                   resolver:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)

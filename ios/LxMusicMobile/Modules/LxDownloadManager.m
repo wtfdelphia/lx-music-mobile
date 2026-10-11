@@ -96,10 +96,11 @@ static NSString * const kSessionIdentifier = @"cn.toside.music.mobile.download";
   return self;
 }
 
-// 修 C：门控等待重挂完成。在调用线程上等待，再进 queue
+// 修 C：门控等待重挂完成。在调用线程上等待，再进 queue。
+// 修 K：5 秒超时兜底，极端情况下（completion 丢失）不阻塞调用线程
 - (void)waitReattach
 {
-  dispatch_group_wait(self.reattachGroup, DISPATCH_TIME_FOREVER);
+  dispatch_group_wait(self.reattachGroup, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5 * NSEC_PER_SEC)));
 }
 
 #pragma mark - 内部目录（§4.5）
@@ -321,6 +322,7 @@ static NSString * const kSessionIdentifier = @"cn.toside.music.mobile.download";
 
 - (void)pauseTaskId:(NSString *)taskId
 {
+  [self waitReattach];
   dispatch_async(self.queue, ^{
     NSURLSessionDownloadTask *task = self.tasks[taskId];
     if (!task) return;
@@ -342,6 +344,7 @@ static NSString * const kSessionIdentifier = @"cn.toside.music.mobile.download";
       allowsCellular:(BOOL)allowsCellular
           completion:(void (^)(BOOL resumed))completion
 {
+  [self waitReattach];
   dispatch_async(self.queue, ^{
     NSString *path = [[self resumeDir] stringByAppendingPathComponent:[taskId stringByAppendingPathExtension:@"data"]];
     NSData *resumeData = [NSData dataWithContentsOfFile:path];
@@ -367,6 +370,7 @@ static NSString * const kSessionIdentifier = @"cn.toside.music.mobile.download";
 
 - (void)cancelTaskId:(NSString *)taskId removeResumeData:(BOOL)removeResumeData
 {
+  [self waitReattach];
   dispatch_async(self.queue, ^{
     NSURLSessionDownloadTask *task = self.tasks[taskId];
     [self.jsCancelled addObject:taskId];
@@ -413,11 +417,12 @@ static NSString * const kSessionIdentifier = @"cn.toside.music.mobile.download";
         NSString *dir = [stdDest stringByDeletingLastPathComponent];
         [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
         BOOL destIsDir = NO;
-        if ([fm fileExistsAtPath:stdDest isDirectory:&destIsDir] && destIsDir) {
-          // 目标是目录：护栏拦下，不覆盖
+        BOOL destExists = [fm fileExistsAtPath:stdDest isDirectory:&destIsDir];
+        if (destExists) {
+          // 修 H：目标已存在（含目录）就不覆盖：已有文件优先，
+          // 孤儿认领失败后由调用方清理
           claimed = NO;
         } else {
-          [fm removeItemAtPath:stdDest error:nil];
           NSError *moveError = nil;
           [fm moveItemAtPath:orphanPath toPath:stdDest error:&moveError];
           if (!moveError) {
@@ -577,11 +582,15 @@ static NSString * const kSessionIdentifier = @"cn.toside.music.mobile.download";
     pathValid = absPath != nil && [absPath hasPrefix:allowedRoot];
   }
   if (!pathValid) {
-    NSString *orphanDir = [[self internalDir] stringByAppendingPathComponent:@"orphan"];
-    [fm createDirectoryAtPath:orphanDir withIntermediateDirectories:YES attributes:nil error:nil];
-    NSString *orphanPath = [orphanDir stringByAppendingPathComponent:taskId];
-    [fm removeItemAtPath:orphanPath error:nil];
-    [fm moveItemAtURL:location toURL:[NSURL fileURLWithPath:orphanPath] error:nil];
+    // 修 H：只有 2xx 的成功下载才暂存为孤儿；非 2xx（403/404
+    // 错误页）不保留——那只是错误响应体，认领后会被误标成完成的歌
+    if (statusCode >= 200 && statusCode < 300) {
+      NSString *orphanDir = [[self internalDir] stringByAppendingPathComponent:@"orphan"];
+      [fm createDirectoryAtPath:orphanDir withIntermediateDirectories:YES attributes:nil error:nil];
+      NSString *orphanPath = [orphanDir stringByAppendingPathComponent:taskId];
+      [fm removeItemAtPath:orphanPath error:nil];
+      [fm moveItemAtURL:location toURL:[NSURL fileURLWithPath:orphanPath] error:nil];
+    }
     [self emitLoggedEvent:@"error" data:@{ @"taskId": taskId, @"code": @"ORPHAN" }];
     [self.tasks removeObjectForKey:taskId];
     [self.startedTasks removeObject:taskId];
