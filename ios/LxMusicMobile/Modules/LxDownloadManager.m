@@ -68,21 +68,38 @@ static NSString * const kSessionIdentifier = @"cn.toside.music.mobile.download";
     // 冷启动重挂：进程被回收后系统可能仍持有未完成的后台任务，
     // 按 taskDescription 重新挂入内存表，否则 JS 的 pause/cancel 对
     // 这些传输 no-op，且 start 会重复建任务
+    // 审计#6：挂起 queue 直到重挂完成。否则 JS 的 getActiveTasks/start
+    // 去重可能在重挂之前执行，认领不到任务或建出重复任务。
+    // 恢复前所有排入 queue 的 JS 调用都会排队等待，重挂后顺序执行
+    dispatch_suspend(_queue);
     __weak typeof(self) weakSelf = self;
     [_session getAllTasksWithCompletionHandler:^(NSArray<NSURLSessionTask *> *tasks) {
       __strong typeof(weakSelf) strongSelf = weakSelf;
       if (!strongSelf) return;
-      dispatch_async(strongSelf.queue, ^{
-        for (NSURLSessionTask *task in tasks) {
-          NSString *taskId = task.taskDescription;
-          if (taskId && (task.state == NSURLSessionTaskStateRunning || task.state == NSURLSessionTaskStateSuspended)) {
-            strongSelf.tasks[taskId] = (NSURLSessionDownloadTask *)task;
-          }
+      for (NSURLSessionTask *task in tasks) {
+        NSString *taskId = task.taskDescription;
+        if (taskId && (task.state == NSURLSessionTaskStateRunning || task.state == NSURLSessionTaskStateSuspended)) {
+          strongSelf.tasks[taskId] = (NSURLSessionDownloadTask *)task;
         }
-      });
+      }
+      dispatch_resume(strongSelf.queue);
     }];
+    // 审计#10：清理上次遗留的孤儿文件（元信息丢失时的暂存，无元信息
+    // 可恢复，留着只占空间）
+    [self cleanOrphanDir];
   }
   return self;
+}
+
+// 审计#10：清空孤儿目录
+- (void)cleanOrphanDir
+{
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSString *orphanDir = [[self internalDir] stringByAppendingPathComponent:@"orphan"];
+  NSArray<NSString *> *entries = [fm contentsOfDirectoryAtPath:orphanDir error:nil];
+  for (NSString *name in entries) {
+    [fm removeItemAtPath:[orphanDir stringByAppendingPathComponent:name] error:nil];
+  }
 }
 
 #pragma mark - 内部目录（§4.5）
@@ -464,12 +481,26 @@ static NSString * const kSessionIdentifier = @"cn.toside.music.mobile.download";
 {
   NSString *taskId = downloadTask.taskDescription;
   if (!taskId) return;
-  NSHTTPURLResponse *response = (NSHTTPURLResponse *)downloadTask.response;
-  NSInteger statusCode = response ? response.statusCode : 0;
+  // 审计#5：本回调在 delegate 队列，读写的 taskInfos/tasks/seq 都受
+  // self.queue 保护；且临时文件在回调返回后由系统删除，move 必须在
+  // 返回前完成，故用 dispatch_sync（self.queue 是另一条串行队列，
+  // 不会自死锁）
+  dispatch_sync(self.queue, ^{
+    [self handleDownloadFinished:taskId location:location
+                      statusCode:((NSHTTPURLResponse *)downloadTask.response).statusCode ?: 0
+                       receivedBytes:downloadTask.countOfBytesReceived];
+  });
+}
+
+// 在 self.queue 上执行（审计#5）
+- (void)handleDownloadFinished:(NSString *)taskId location:(NSURL *)location
+                    statusCode:(NSInteger)statusCode receivedBytes:(int64_t)receivedBytes
+{
   NSDictionary *info = self.taskInfos[taskId];
   NSString *relPath = info[@"targetPath"] ?: @"";
   NSFileManager *fm = [NSFileManager defaultManager];
   NSString *documents = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
+  // statusCode 由调用方传入（已是 NSInteger，无需再解包）
 
   // P0 删除护栏：目标路径缺失（元信息丢失）或不是 Documents 的严格
   // 子路径时，绝不删除、绝不覆盖——旧版此处会把整个 Documents 删掉
@@ -478,8 +509,12 @@ static NSString * const kSessionIdentifier = @"cn.toside.music.mobile.download";
   NSString *absPath = nil;
   if (pathValid) {
     absPath = [self absolutePathForRelative:relPath];
-    pathValid = [absPath hasPrefix:[documents stringByAppendingString:@"/"]]
-      && ![absPath isEqualToString:documents];
+    // 审计#8：先标准化解析掉 .. / 符号链接，再校验必须落在
+    // Documents/Download/ 之内（下载路径统一由 buildSavePath 生成，
+    // 恒为 Download/... 子路径）
+    absPath = [absPath stringByStandardizingPath];
+    NSString *allowedRoot = [[documents stringByAppendingPathComponent:@"Download"] stringByAppendingString:@"/"];
+    pathValid = absPath != nil && [absPath hasPrefix:allowedRoot];
   }
   if (!pathValid) {
     NSString *orphanDir = [[self internalDir] stringByAppendingPathComponent:@"orphan"];
@@ -515,7 +550,7 @@ static NSString * const kSessionIdentifier = @"cn.toside.music.mobile.download";
       [self emitLoggedEvent:@"complete" data:@{
         @"taskId": taskId,
         @"path": absPath,
-        @"size": @(downloadTask.countOfBytesReceived),
+        @"size": @(receivedBytes),
       }];
     } else {
       [self emitLoggedEvent:@"error" data:@{ @"taskId": taskId, @"code": @"WRITE_FAILED" }];
@@ -545,8 +580,10 @@ totalBytesExpectedToWrite:(int64_t)totalBytesExpectedToWrite
   NSHTTPURLResponse *response = (NSHTTPURLResponse *)downloadTask.response;
   NSInteger statusCode = response ? response.statusCode : 0;
   // §4.3：首个 didWriteData 且 2xx 才发 start；非 2xx 不发，避免清零重试
-  if (statusCode >= 200 && statusCode < 300) {
-    // §4.3：首个 2xx didWriteData 发 start，之后节流发 progress
+  if (statusCode < 200 || statusCode >= 300) return;
+  // 审计#5：进度事件在 delegate 队列，startedTasks/lastProgressEmit 的读写
+  // 收进 self.queue。进度无需同步等待，async 即可（事件顺序由队列保证）
+  dispatch_async(self.queue, ^{
     if (![self.startedTasks containsObject:taskId]) {
       [self.startedTasks addObject:taskId];
       [self emitEvent:@"start" data:@{
@@ -564,7 +601,7 @@ totalBytesExpectedToWrite:(int64_t)totalBytesExpectedToWrite
       @"downloaded": @(totalBytesWritten),
       @"total": @(totalBytesExpectedToWrite),
     }];
-  }
+  });
 }
 
 - (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task
