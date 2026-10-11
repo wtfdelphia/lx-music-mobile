@@ -29,6 +29,8 @@ static NSString * const kSessionIdentifier = @"cn.toside.music.mobile.download";
 // 冷启动重挂门控（修 C 死锁）：getAllTasks 完成前，
 // getActiveTasks / start 等调用在调用线程上等待此 group
 @property (nonatomic, strong) dispatch_group_t reattachGroup;
+// 修 L3：门控首次超时后不再等待，避免极端情况每次调用都阻塞 5 秒
+@property (nonatomic, assign) BOOL reattachTimedOut;
 @property (nonatomic, copy, nullable) void (^bgCompletionHandler)(void);
 @end
 
@@ -97,10 +99,14 @@ static NSString * const kSessionIdentifier = @"cn.toside.music.mobile.download";
 }
 
 // 修 C：门控等待重挂完成。在调用线程上等待，再进 queue。
-// 修 K：5 秒超时兜底，极端情况下（completion 丢失）不阻塞调用线程
+// 修 K：5 秒超时兜底，极端情况下（completion 丢失）不阻塞调用线程。
+// 修 L3：首次超时后置标记，后续调用直接放行——group 一旦没被
+// leave，反复等待只会每次白等 5 秒
 - (void)waitReattach
 {
-  dispatch_group_wait(self.reattachGroup, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5 * NSEC_PER_SEC)));
+  if (self.reattachTimedOut) return;
+  long result = dispatch_group_wait(self.reattachGroup, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5 * NSEC_PER_SEC)));
+  if (result != 0) self.reattachTimedOut = YES;
 }
 
 #pragma mark - 内部目录（§4.5）
