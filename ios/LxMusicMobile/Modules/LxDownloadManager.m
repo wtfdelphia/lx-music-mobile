@@ -65,6 +65,22 @@ static NSString * const kSessionIdentifier = @"cn.toside.music.mobile.download";
     config.allowsConstrainedNetworkAccess = YES;
     config.HTTPMaximumConnectionsPerHost = 3;
     _session = [NSURLSession sessionWithConfiguration:config delegate:self delegateQueue:nil];
+    // 冷启动重挂：进程被回收后系统可能仍持有未完成的后台任务，
+    // 按 taskDescription 重新挂入内存表，否则 JS 的 pause/cancel 对
+    // 这些传输 no-op，且 start 会重复建任务
+    __weak typeof(self) weakSelf = self;
+    [_session getAllTasksWithCompletionHandler:^(NSArray<NSURLSessionTask *> *tasks) {
+      __strong typeof(weakSelf) strongSelf = weakSelf;
+      if (!strongSelf) return;
+      dispatch_async(strongSelf.queue, ^{
+        for (NSURLSessionTask *task in tasks) {
+          NSString *taskId = task.taskDescription;
+          if (taskId && (task.state == NSURLSessionTaskStateRunning || task.state == NSURLSessionTaskStateSuspended)) {
+            strongSelf.tasks[taskId] = (NSURLSessionDownloadTask *)task;
+          }
+        }
+      });
+    }];
   }
   return self;
 }
@@ -159,7 +175,8 @@ static NSString * const kSessionIdentifier = @"cn.toside.music.mobile.download";
 
 #pragma mark - 事件日志（§4.6）
 
-- (void)writeEvent:(NSDictionary *)eventData withType:(NSString *)type
+// 返回值：本条事件的 seq（供 emitLoggedEvent 把 seq 塞进 JS 的 data）
+- (NSInteger)writeEvent:(NSDictionary *)eventData withType:(NSString *)type
 {
   NSInteger seq = ++_seqCounter;
   NSMutableDictionary *entry = [NSMutableDictionary dictionary];
@@ -178,6 +195,7 @@ static NSString * const kSessionIdentifier = @"cn.toside.music.mobile.download";
   } else {
     [line writeToFile:[self eventsLogPath] atomically:YES encoding:NSUTF8StringEncoding error:nil];
   }
+  return seq;
 }
 
 - (void)emitEvent:(NSString *)type data:(NSDictionary *)data
@@ -196,8 +214,12 @@ static NSString * const kSessionIdentifier = @"cn.toside.music.mobile.download";
 
 - (void)emitLoggedEvent:(NSString *)type data:(NSDictionary *)data
 {
-  [self writeEvent:data withType:type];
-  [self emitEvent:type data:data];
+  NSInteger seq = [self writeEvent:data withType:type];
+  // seq 一并放进发给 JS 的 data：否则 JS 侧 lastAckSeq 恒为 0，
+  // ack(0) 永不清理，events.jsonl 无限增长（修 R3）
+  NSMutableDictionary *dataWithSeq = [NSMutableDictionary dictionaryWithDictionary:data ?: @{}];
+  dataWithSeq[@"seq"] = @(seq);
+  [self emitEvent:type data:dataWithSeq];
 }
 
 #pragma mark - 订阅
@@ -228,6 +250,29 @@ static NSString * const kSessionIdentifier = @"cn.toside.music.mobile.download";
             headers:(nullable NSDictionary<NSString *, NSString *> *)headers
 {
   dispatch_async(self.queue, ^{
+    // 同 id 活跃任务已在跑时直接复用，不再新建（避免孤儿任务）
+    NSURLSessionDownloadTask *existing = self.tasks[taskId];
+    if (existing && (existing.state == NSURLSessionTaskStateRunning || existing.state == NSURLSessionTaskStateSuspended)) {
+      [self setTaskInfoForId:taskId info:@{ @"targetPath": targetPath ?: @"", @"url": url ?: @"" }];
+      [self.jsCancelled removeObject:taskId];
+      return;
+    }
+
+    // 有续传数据时优先续传（修「全部开始」实际从头下载的问题）
+    NSString *resumePath = [[self resumeDir] stringByAppendingPathComponent:[taskId stringByAppendingPathExtension:@"data"]];
+    NSData *resumeData = [NSData dataWithContentsOfFile:resumePath];
+    if (resumeData) {
+      NSURLSessionDownloadTask *task = [self.session downloadTaskWithResumeData:resumeData];
+      task.taskDescription = taskId;
+      self.tasks[taskId] = task;
+      [self setTaskInfoForId:taskId info:@{ @"targetPath": targetPath ?: @"", @"url": url ?: @"" }];
+      [self.jsCancelled removeObject:taskId];
+      [self.startedTasks removeObject:taskId];
+      [task resume];
+      [[NSFileManager defaultManager] removeItemAtPath:resumePath error:nil];
+      return;
+    }
+
     NSURL *requestURL = [NSURL URLWithString:url];
     if (!requestURL) {
       [self emitLoggedEvent:@"error" data:@{ @"taskId": taskId, @"code": @"URL_FAILED", @"message": @"invalid url" }];
