@@ -3,6 +3,8 @@ import { useI18n } from '@/lang'
 import Menu, { type Menus, type MenuType, type Position } from '@/components/common/Menu'
 import { hasDislike } from '@/core/dislikeList'
 import { existsFile } from '@/utils/fs'
+import { isDownloadSupported } from '@/core/download'
+import settingState from '@/store/setting/state'
 import { hasMusicUrlByMusic } from '@/utils/data'
 
 export interface SelectInfo {
@@ -17,6 +19,7 @@ const initSelectInfo = {}
 export interface ListMenuProps {
   onPlay: (selectInfo: SelectInfo) => void
   onPlayLater: (selectInfo: SelectInfo) => void
+  onDownload: (selectInfo: SelectInfo) => void
   onAdd: (selectInfo: SelectInfo) => void
   onMove: (selectInfo: SelectInfo) => void
   onEditMetadata: (selectInfo: SelectInfo) => void
@@ -71,7 +74,6 @@ export default forwardRef<ListMenuType, ListMenuProps>((props, ref) => {
     const menu = [
       { action: 'play', label: t('play') },
       { action: 'playLater', label: t('play_later') },
-      // { action: 'download', label: '下载' },
       { action: 'add', label: t('add_to') },
       { action: 'move', label: t('move_to') },
       { action: 'changePosition', label: t('change_position') },
@@ -84,6 +86,10 @@ export default forwardRef<ListMenuType, ListMenuProps>((props, ref) => {
       { action: 'remove', label: t('delete') },
     ]
     if (isLocal) menu.splice(5, 0, { action: 'editMetadata', disabled: !edit_metadata, label: t('edit_metadata') })
+    // §10.2：下载项 = 平台支持 ∧ 功能开启 ∧ 非本地歌曲
+    if (isDownloadSupported() && settingState.setting['download.enable'] && !isLocal) {
+      menu.splice(2, 0, { action: 'download', label: t('download') })
+    }
     setMenus(menu)
     void Promise.all([isLocal ? hasEditMetadata(musicInfo) : Promise.resolve(false), hasUrlCache(musicInfo)]).then(([_edit_metadata, _has_url_cache]) => {
       // console.log(_edit_metadata)
@@ -112,6 +118,9 @@ export default forwardRef<ListMenuType, ListMenuProps>((props, ref) => {
       case 'playLater':
         props.onPlayLater(selectInfo)
 
+        break
+      case 'download':
+        props.onDownload(selectInfo)
         break
       case 'add':
         props.onAdd(selectInfo)

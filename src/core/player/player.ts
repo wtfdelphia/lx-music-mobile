@@ -20,6 +20,8 @@ import {
   removeTempPlayList,
 } from '@/core/player/tempPlayList'
 import { getMusicUrl, getPicPath, getLyricInfo } from '@/core/music'
+import { lookupLocal } from '@/core/download/downloadIndex'
+import { handleLocalPlayFallback } from '@/core/download'
 import { requestMsg } from '@/utils/message'
 import { getRandom } from '@/utils/common'
 import { filterList } from './utils'
@@ -97,6 +99,18 @@ const getMusicPlayUrl = async(musicInfo: LX.Music.MusicInfo | LX.Download.ListIt
   // this.musicInfo.url = await getMusicPlayUrl(targetSong, type)
   setStatusText(global.i18n.t('player__getting_url'))
   addLoadTimeout()
+
+  // 本地优先（§9）：已下载歌曲非强制刷新时直接走本地文件，
+  // 不进在线取流链路。拦截点放在这里而非 online.ts：
+  // 下载器取链接也调 online.ts，放那里会让下载拿到本地路径。
+  // 下载列表项与本地歌曲走各自链路，不在此拦截
+  if (!isRefresh && !('progress' in musicInfo) && musicInfo.source !== 'local') {
+    const localPath = await lookupLocal(musicInfo)
+    if (localPath) return localPath
+  } else if (isRefresh && !('progress' in musicInfo) && musicInfo.source !== 'local') {
+    // 强制刷新说明本地文件播放失败：回落在线，并对账标文件缺失
+    handleLocalPlayFallback(musicInfo)
+  }
 
   // const type = getPlayType(settingState.setting['player.isPlayHighQuality'], musicInfo)
   let toggleMusicInfo = ('progress' in musicInfo ? musicInfo.metadata.musicInfo : musicInfo).meta.toggleMusicInfo

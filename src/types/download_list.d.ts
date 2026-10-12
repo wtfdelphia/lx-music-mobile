@@ -44,6 +44,10 @@ declare namespace LX {
       isComplate: boolean
       status: DownloadTaskStatus
       statusText: string
+      /**
+       * 出错时的错误码（仅内存，不落盘；重启后按状态重建）
+       */
+      errorCode?: DownloadErrorCode
       downloaded: number
       total: number
       progress: number
@@ -54,7 +58,52 @@ declare namespace LX {
         quality: LX.Quality
         ext: FileExt
         fileName: string
+        /**
+         * 相对 Documents 的路径（iOS 沙箱），读取时拼接
+         */
         filePath: string
+        /**
+         * 来源列表，用于按列表分目录
+         */
+        listId?: string
+        /**
+         * 输出的同名 .lrc 相对路径
+         */
+        lrcPath?: string
+      }
+    }
+
+    /**
+     * 原生下载引擎上报的错误码
+     */
+    type DownloadErrorCode =
+      | 'URL_FAILED'
+      | `HTTP_${number}`
+      | 'DNS'
+      | 'NETWORK'
+      | 'TIMEOUT'
+      | 'NO_SPACE'
+      | 'WRITE_FAILED'
+      | 'ORPHAN'
+      | 'FILE_MISSING'
+      | 'FORCE_QUIT'
+      | 'SYSTEM_CANCELLED'
+      | 'CANCELLED'
+
+    /**
+     * 原生引擎任务事件
+     */
+    interface EngineEvent {
+      seq: number
+      type: 'complete' | 'error'
+      data: {
+        taskId: string
+        path?: string
+        size?: number
+        code?: DownloadErrorCode
+        httpStatus?: number
+        message?: string
+        hasResumeData?: boolean
       }
     }
 

@@ -4,12 +4,13 @@ import { FlatList, View, RefreshControl, type FlatListProps } from 'react-native
 import ListItem from './ListItem'
 // import { navigations } from '@/navigation'
 import { type ListInfoItem } from '@/store/songlist/state'
-import { useLayout } from '@/utils/hooks'
+import { useWindowSize } from '@/utils/hooks'
 import { useTheme } from '@/store/theme/hook'
 import { useI18n } from '@/lang'
 import { scaleSizeW } from '@/utils/pixelRatio'
-import { createStyle } from '@/utils/tools'
+import { createStyle, isHorizontalMode } from '@/utils/tools'
 import Text from '@/components/common/Text'
+import { NAV_WIDTH } from '@/screens/Home/Horizontal/Aside'
 
 type FlatListType = FlatListProps<ListInfoItem>
 
@@ -34,7 +35,14 @@ export default forwardRef<ListType, ListProps>(({ onRefresh, onLoadMore, onOpenD
   const [currentList, setList] = useState<ListInfoItem[]>([])
   const [showSource, setShowSource] = useState(false)
   const [status, setStatus] = useState<Status>('idle')
-  const { onLayout, width } = useLayout()
+  // 排数跟随旋转（对齐 fcc7a95 事件驱动模式）：用 useWindowSize 订阅
+  // windowSizeTools 尺寸事件，旋转时同步重算列数，不再依赖容器 onLayout——
+  // iOS 的 Drawer+PagerView 嵌套下 onLayout 在旋转重挂载后不保证触发，
+  // 是列数冻结的根因。横屏内容区 = 窗宽 − 侧栏宽，竖屏 = 整窗宽。
+  const windowSize = useWindowSize()
+  const width = isHorizontalMode(windowSize.width, windowSize.height)
+    ? windowSize.width - NAV_WIDTH
+    : windowSize.width
   const theme = useTheme()
   // console.log('render songlist')
 
@@ -144,7 +152,7 @@ export default forwardRef<ListType, ListProps>(({ onRefresh, onLoadMore, onOpenD
   // console.log(listInfo.list.map((item) => item.id))
 
   return (
-    <View style={styles.container} onLayout={onLayout}>
+    <View style={styles.container}>
       {
         width == 0
           ? null

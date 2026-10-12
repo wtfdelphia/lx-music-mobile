@@ -3,6 +3,8 @@
 import playerState from '@/store/player/state'
 import { prefetch } from '@/components/common/ImageBackground'
 import { setBgPic } from '@/core/common'
+import { handleEnableChanged } from '@/core/download'
+import settingState from '@/store/setting/state'
 
 // const handleUpdateSourceNmaes = () => {
 //   const prefix = settingState.setting['common.sourceNameType'] == 'real' ? 'source_' : 'source_alias_'
@@ -26,6 +28,9 @@ const formatUri = <T extends string | null>(url: T) => {
 }
 
 export default async(setting: LX.AppSetting) => {
+  global.state_event.on('configUpdated', (keys: Array<keyof LX.AppSetting>) => {
+    if (keys.includes('download.enable')) handleEnableChanged(settingState.setting['download.enable'])
+  })
   // const handleConfigUpdated = (keys: Array<keyof LX.AppSetting>, setting: Partial<LX.AppSetting>) => {
   //   // if (keys.includes('common.sourceNameType')) handleUpdateSourceNmaes()
   //   handleConfigUpdate(keys, setting)

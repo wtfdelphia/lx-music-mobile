@@ -7,6 +7,7 @@ import {
   getLyricInfo as getOnlineLyricInfo,
 } from './online'
 import { buildLyricInfo, getCachedLyricInfo } from './utils'
+import { lookupLocal } from '@/core/download/downloadIndex'
 
 export const getMusicUrl = async({ musicInfo, isRefresh, allowToggleSource = true, onToggleSource = () => {} }: {
   musicInfo: LX.Download.ListItem
@@ -14,10 +15,11 @@ export const getMusicUrl = async({ musicInfo, isRefresh, allowToggleSource = tru
   onToggleSource?: (musicInfo?: LX.Music.MusicInfoOnline) => void
   allowToggleSource?: boolean
 }): Promise<string> => {
-  // if (!isRefresh) {
-  //   const path = await getDownloadFilePath(musicInfo, appSetting['download.savePath'])
-  //   if (path) return path
-  // }
+  // 下载列表内播放同样走本地优先（§9）；文件缺失自动回落在线取流
+  if (!isRefresh) {
+    const path = await lookupLocal(musicInfo.metadata.musicInfo)
+    if (path) return path
+  }
 
   return getOnlineMusicUrl({ musicInfo: musicInfo.metadata.musicInfo, isRefresh, onToggleSource, allowToggleSource })
 }

@@ -6,6 +6,29 @@ Project versioning adheres to [Semantic Versioning](http://semver.org/).
 Commit convention is based on [Conventional Commits](http://conventionalcommits.org).
 Change log format is based on [Keep a Changelog](http://keepachangelog.com/).
 
+## [1.9.1.2](https://github.com/wtfdelphia/lx-music-mobile/compare/v1.9.1.1...v1.9.1.2) - 2026-10-12
+
+本版本为 iOS 新增歌曲下载功能，Android 行为无变化。
+
+### 新增（仅 iOS）
+
+- 歌曲下载：后台会话传输、断点续传、并发调度、音质选择，
+  歌词一并下载保存
+- 下载页：查看、管理下载任务
+- 下载设置分组：下载开关、最大并发数、蜂窝网络下载、
+  自动恢复下载、文件名格式
+- 已下载的歌曲优先播放本地文件
+
+### 修复
+
+- 歌单网格在屏幕旋转后列数冻结、横竖屏切换时尺寸不传播的问题
+- 竖屏首页等页面 `configUpdated` 事件监听清理时误用 `on`
+  导致的监听器泄漏
+
+### 其他
+
+- iOS 应用版本号（系统设置中显示）与发布版本对齐
+
 ## [1.9.1.1](https://github.com/wtfdelphia/lx-music-mobile/compare/v1.9.1...v1.9.1.1) - 2026-09-22
 
 本版本是 wtfdelphia fork 的首个自有发布（基于上游 1.9.1，已含上游

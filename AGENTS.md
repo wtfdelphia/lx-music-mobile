@@ -35,7 +35,7 @@ LX Music 移动版（`lx-music-mobile`），基于 React Native 的音乐播放�
 | 测试 | vitest ^4.1.11 | `npm test` |
 | Rust | stable（CI 用 `dtolnay/rust-toolchain@stable`） | 仅 iOS 加密核心 `rust/lxcore`，Android 不链接 |
 
-平台差异靠 Metro 的平台扩展解析（`*.ios.ts` / `*.android.ts`），业务代码不做 `Platform.OS` 分支散落。现有平台扩展文件：`src/components/common/DrawerLayoutFixed.ios.tsx`、`src/utils/exportPicker.ios.ts`、`src/utils/fs.ios.ts`、`src/utils/localMediaMetadata.ios.ts`、`src/utils/nativeModules/lyricDesktop.ios.ts`、`src/utils/statusbarHeight.ios.ts`、`src/utils/toast.android.ts`、`src/utils/toast.ios.tsx`、`src/utils/version.ios.js`。
+平台差异靠 Metro 的平台扩展解析（`*.ios.ts` / `*.android.ts`），业务代码不做 `Platform.OS` 分支散落。现有平台扩展文件：`src/components/common/DrawerLayoutFixed.ios.tsx`、`src/utils/exportPicker.ios.ts`、`src/utils/fs.ios.ts`、`src/utils/localMediaMetadata.ios.ts`、`src/utils/nativeModules/lyricDesktop.ios.ts`、`src/utils/statusbarHeight.ios.ts`、`src/utils/toast.android.ts`、`src/utils/toast.ios.tsx`、`src/utils/version.ios.js`、`src/core/download/engine.ios.ts`。
 
 长期架构事实见 `spec/design.md`，目录职责见 `spec/structure.md`，业务边界见 `spec/requirements.md`。
 
@@ -130,7 +130,7 @@ CodeGraph 只用于发现入口、调用链、影响面与候选测试。以下�
 
 | 验证项 | 命令 | 状态 | CI 执行位置 |
 |---|---|---|---|
-| 单元测试 | `npm test` | 绿（1 文件 4 用例） | `ios-verify.yml` js-verify job |
+| 单元测试 | `npm test` | 绿（7 文件 65 用例） | `ios-verify.yml` js-verify job |
 | 代码风格 | `npm run lint` | 绿（退出码 0，登记债已清零） | `build-test.yml`，**仅 PR→`dev` 触发** |
 | 类型检查 | `npx tsc --noEmit` | **红：21 errors**，15 个在 `src/utils/ciSelfTest.ts`，6 个在既有业务文件 | **无 CI 覆盖** |
 | Rust 加密黄金基准 | `cd rust/lxcore && cargo test --locked` | 绿 | `rust.yml`、`ios-verify.yml` rust-ios-target job |

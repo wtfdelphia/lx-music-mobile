@@ -11,7 +11,7 @@ import { exitApp, setNavActiveId } from '@/core/common'
 import { BorderWidths } from '@/theme'
 import { useSettingValue } from '@/store/setting/hook'
 
-const NAV_WIDTH = 68
+export const NAV_WIDTH = 68
 
 const styles = createStyle({
   container: {
