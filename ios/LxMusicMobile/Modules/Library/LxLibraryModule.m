@@ -6,7 +6,6 @@
 #import "LxArtworkCache.h"
 #import "LxCredentialStore.h"
 #import <UIKit/UIKit.h>
-#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 // 本地曲库模块实现（§5）。
 // - 所有方法返回 Promise；耗时操作在模块串行队列（lx.library.io 由
@@ -104,12 +103,10 @@ RCT_EXPORT_METHOD(pickFolder:(RCTPromiseResolveBlock)resolve
     self.pendingPickResolve = resolve;
     self.pendingPickReject = reject;
 
-    UIDocumentPickerViewController *picker;
-    if (@available(iOS 14.0, *)) {
-      picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[[UTType folderType]] asCopy:NO];
-    } else {
-      picker = [[UIDocumentPickerViewController alloc] initWithDocumentTypes:@[@"public.folder"] inMode:UIDocumentPickerModeOpen];
-    }
+    // 部署目标 13.4：沿用 UtilsModule 的 documentTypes 惯例（iOS 14 起
+    // 标记废弃但仍可用），避免 UTType 在低部署目标下的可见性问题
+    UIDocumentPickerViewController *picker =
+        [[UIDocumentPickerViewController alloc] initWithDocumentTypes:@[@"public.folder"] inMode:UIDocumentPickerModeOpen];
     picker.delegate = self;
     picker.allowsMultipleSelection = NO;
     self.folderPicker = picker;

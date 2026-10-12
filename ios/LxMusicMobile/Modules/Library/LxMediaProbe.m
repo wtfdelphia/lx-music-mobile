@@ -93,22 +93,22 @@ static const CGFloat kArtworkMaxSide = 600.0;
     id value = item.value;
     NSString *stringValue = item.stringValue;
 
-    if ([identifier isEqualToString:AVMetadataIdentifierCommonIdentifierTitle]) {
+    if ([identifier isEqualToString:AVMetadataCommonIdentifierTitle]) {
       if (result[@"title"] == [NSNull null] || ![result[@"title"] isKindOfClass:[NSString class]] || ![result[@"title"] length]) {
         NSString *t = [self cleanText:stringValue];
         if (t) result[@"title"] = t;
       }
-    } else if ([identifier isEqualToString:AVMetadataIdentifierCommonIdentifierArtist]) {
+    } else if ([identifier isEqualToString:AVMetadataCommonIdentifierArtist]) {
       NSString *t = [self cleanText:stringValue];
       if (t && result[@"artist"] == [NSNull null]) result[@"artist"] = t;
-    } else if ([identifier isEqualToString:AVMetadataIdentifierCommonIdentifierAlbumName]) {
+    } else if ([identifier isEqualToString:AVMetadataCommonIdentifierAlbumName]) {
       NSString *t = [self cleanText:stringValue];
       if (t && result[@"album"] == [NSNull null]) result[@"album"] = t;
-    } else if ([identifier isEqualToString:AVMetadataIdentifierCommonIdentifierArtwork]) {
+    } else if ([identifier isEqualToString:AVMetadataCommonIdentifierArtwork]) {
       if (result[@"artworkData"] == [NSNull null] && [value isKindOfClass:[NSData class]]) {
         result[@"artworkData"] = value;
       }
-    } else if ([identifier isEqualToString:AVMetadataIdentifierCommonIdentifierType] ||
+    } else if ([identifier isEqualToString:AVMetadataCommonIdentifierType] ||
                [identifier isEqualToString:AVMetadataIdentifierID3MetadataContentType]) {
       NSString *t = [self cleanText:stringValue];
       if (t && result[@"genre"] == [NSNull null]) result[@"genre"] = t;

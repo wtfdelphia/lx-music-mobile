@@ -1,5 +1,5 @@
 #import "LxFolderAccess.h"
-#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#import <Foundation/Foundation.h>
 
 // 文件夹授权实现（§5.2）：
 // - bookmark 解析用 NSURLBookmarkResolutionWithoutImplicitStartAccessing，
