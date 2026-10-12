@@ -2,6 +2,7 @@
 #import <AVFoundation/AVFoundation.h>
 #import <ImageIO/ImageIO.h>
 #import <MobileCoreServices/MobileCoreServices.h>
+#import <UIKit/UIKit.h>
 
 // 媒体元数据探测实现（§5.4）：
 // - 按 AVMetadataIdentifier 精确匹配，优先级链见 design 表格
