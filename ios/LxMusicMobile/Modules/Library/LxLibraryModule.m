@@ -5,6 +5,7 @@
 #import "LxMediaProbe.h"
 #import "LxArtworkCache.h"
 #import "LxCredentialStore.h"
+#import <UIKit/UIKit.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 // 本地曲库模块实现（§5）。
