@@ -15,6 +15,8 @@ import {
 import { getLocalFilePath } from '@/utils/music'
 import { readLyric, readPic } from '@/utils/localMediaMetadata'
 import { stat } from '@/utils/fs'
+import { isLibraryLocator } from '@/core/library/locator'
+import { resolveLyric, resolvePicUrl } from '@/core/library/resolver'
 
 const getOtherSourceByLocal = async<T>(musicInfo: LX.Music.MusicInfoLocal, handler: (infos: LX.Music.MusicInfoOnline[]) => Promise<T>) => {
   let result: LX.Music.MusicInfoOnline[] = []
@@ -107,11 +109,15 @@ export const getPicUrl = async({ musicInfo, listId, isRefresh, skipFilePic, onTo
   onToggleSource?: (musicInfo?: LX.Music.MusicInfoOnline) => void
 }): Promise<string> => {
   if (!isRefresh && !skipFilePic) {
-    let pic = await readPic(musicInfo.meta.filePath).catch(() => null)
-    if (pic) {
-      if (pic.startsWith('/')) pic = `file://${pic}`
-      return pic
+    // 曲库定位符走曲库解析器；其余保持原有文件读图逻辑（design §8.4）
+    let pic: string | null
+    if (isLibraryLocator(musicInfo.meta.filePath)) {
+      pic = await resolvePicUrl(musicInfo.meta.filePath)
+    } else {
+      pic = await readPic(musicInfo.meta.filePath).catch(() => null)
+      if (pic && pic.startsWith('/')) pic = `file://${pic}`
     }
+    if (pic) return pic
 
     if (musicInfo.meta.picUrl) return musicInfo.meta.picUrl
   }
@@ -184,7 +190,10 @@ export const parseLyric = (lrc: string): LX.Music.LyricInfo => {
 }
 
 const getMusicFileLyric = async(filePath: string) => {
-  const lyric = await readLyric(filePath).catch(() => null)
+  // 曲库定位符走曲库解析器（内嵌歌词或同名 .lrc），其余读文件（design §8.5）
+  const lyric = isLibraryLocator(filePath)
+    ? await resolveLyric(filePath).catch(() => null)
+    : await readLyric(filePath).catch(() => null)
   if (!lyric) return null
   return parseLyric(lyric)
 }

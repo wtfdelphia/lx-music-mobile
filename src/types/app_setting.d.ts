@@ -405,6 +405,51 @@ declare global {
        * 是否启用同步
        */
       'sync.enable': boolean
+
+      /**
+       * 本地曲库：显示入口（add-ios-local-library §14.6）
+       */
+      'library.enable': boolean
+
+      /**
+       * 本地曲库：冷启动后延迟对本地来源做增量扫描
+       */
+      'library.scanOnLaunch': boolean
+
+      /**
+       * 本地曲库：串流音质
+       */
+      'library.streamQuality': 'raw' | '320' | '192' | '128'
+
+      /**
+       * 本地曲库：蜂窝网络下是否允许串流
+       */
+      'library.allowCellularStream': boolean
+
+      /**
+       * 本地曲库：离线下载音质
+       */
+      'library.downloadQuality': 'raw' | '320' | '192' | '128'
+
+      /**
+       * 本地曲库：远程或本地失效时按歌名回落在线源
+       */
+      'library.onlineFallback': boolean
+
+      /**
+       * 本地曲库：播放上报（scrobble）
+       */
+      'library.scrobble': boolean
+
+      /**
+       * 本地曲库：「喜欢」回写服务端
+       */
+      'library.syncStar': boolean
+
+      /**
+       * 本地曲库：已下载曲目自动关联进曲库（§11）
+       */
+      'library.autoAssociateDownloads': boolean
     }
   }
 }

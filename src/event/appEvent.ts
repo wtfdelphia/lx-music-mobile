@@ -201,6 +201,21 @@ export class AppEvent extends Event {
   selectSyncMode(mode: LX.Sync.ModeType) {
     this.emit('selectSyncMode', mode)
   }
+
+  /**
+   * 曲库来源 / 曲目更新（add-ios-local-library）
+   */
+  librarySourcesUpdated() {
+    this.emit('librarySourcesUpdated')
+  }
+
+  libraryRowsUpdated() {
+    this.emit('libraryRowsUpdated')
+  }
+
+  libraryScanProgressUpdated() {
+    this.emit('libraryScanProgressUpdated')
+  }
 }
 
 

@@ -7,6 +7,7 @@ import initPlayer from './player'
 import dataInit from './dataInit'
 import initSync from './sync'
 import { initDownload } from '@/core/download'
+import { initLibrary } from '@/core/library/init'
 import initCommonState from './common'
 import { initDeeplink } from './deeplink'
 import { setApiSource } from '@/core/apiSource'
@@ -60,6 +61,8 @@ export default async() => {
   bootLog('Data inited.')
   await initDownload()
   bootLog('Download inited.')
+  await initLibrary()
+  bootLog('Library inited.')
   await initCommonState(setting)
   bootLog('Common State inited.')
 

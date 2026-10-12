@@ -341,7 +341,12 @@ export const removeListMusics = async(ids: string[]): Promise<void> => {
 
 
 export const getMusicUrl = async(musicInfo: LX.Music.MusicInfo, type: LX.Quality) => getData<string>(`${storageDataPrefix.musicUrl}${musicInfo.id}_${type}`).then((url) => url ?? '')
-export const saveMusicUrl = async(musicInfo: LX.Music.MusicInfo, type: LX.Quality, url: string) => saveData(`${storageDataPrefix.musicUrl}${musicInfo.id}_${type}`, url)
+export const saveMusicUrl = async(musicInfo: LX.Music.MusicInfo, type: LX.Quality, url: string) => {
+  // 曲库定位符的 URL 不缓存：串流地址带 token 与临时 salt，每次播放重新解析
+  // （add-ios-local-library §8.6）Android 上不存在 lxlib id，守卫为 no-op
+  if (musicInfo.id.startsWith('lxlib://')) return
+  await saveData(`${storageDataPrefix.musicUrl}${musicInfo.id}_${type}`, url)
+}
 export const clearMusicUrl = async(keys?: string[]) => {
   if (!keys) keys = (await getAllKeys()).filter(key => key.startsWith(storageDataPrefix.musicUrl))
   await removeDataMultiple(keys)

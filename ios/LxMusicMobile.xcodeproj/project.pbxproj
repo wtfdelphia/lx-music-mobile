@@ -23,6 +23,14 @@
 		E105A00300000000000000A2 /* user-api-preload.js in Resources */ = {isa = PBXBuildFile; fileRef = E105A00300000000000000B3 /* user-api-preload.js */; };
 		E105A00400000000000000A1 /* CacheModule.m in Sources */ = {isa = PBXBuildFile; fileRef = E105A00400000000000000B2 /* CacheModule.m */; };
 		E105A00500000000000000A1 /* GzipModule.m in Sources */ = {isa = PBXBuildFile; fileRef = E105A00500000000000000B2 /* GzipModule.m */; };
+		E105A00800000000000000A1 /* LxLibraryModule.m in Sources */ = {isa = PBXBuildFile; fileRef = E105A00800000000000000B2 /* LxLibraryModule.m */; };
+		E105A00900000000000000A1 /* LxLibraryStore.m in Sources */ = {isa = PBXBuildFile; fileRef = E105A00900000000000000B2 /* LxLibraryStore.m */; };
+		E105A00A00000000000000A1 /* LxFolderAccess.m in Sources */ = {isa = PBXBuildFile; fileRef = E105A00A00000000000000B2 /* LxFolderAccess.m */; };
+		E105A00B00000000000000A1 /* LxFolderScanner.m in Sources */ = {isa = PBXBuildFile; fileRef = E105A00B00000000000000B2 /* LxFolderScanner.m */; };
+		E105A00C00000000000000A1 /* LxMediaProbe.m in Sources */ = {isa = PBXBuildFile; fileRef = E105A00C00000000000000B2 /* LxMediaProbe.m */; };
+		E105A00D00000000000000A1 /* LxArtworkCache.m in Sources */ = {isa = PBXBuildFile; fileRef = E105A00D00000000000000B2 /* LxArtworkCache.m */; };
+		E105A00E00000000000000A1 /* LxCredentialStore.m in Sources */ = {isa = PBXBuildFile; fileRef = E105A00E00000000000000B2 /* LxCredentialStore.m */; };
+		E105A00F00000000000000A1 /* libsqlite3.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = E105A00F00000000000000B2 /* libsqlite3.tbd */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -69,6 +77,21 @@
 		81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = LaunchScreen.storyboard; path = LxMusicMobile/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		89C6BE57DB24E9ADA2F236DE /* Pods-LxMusicMobile-LxMusicMobileTests.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-LxMusicMobile-LxMusicMobileTests.release.xcconfig"; path = "Target Support Files/Pods-LxMusicMobile-LxMusicMobileTests/Pods-LxMusicMobile-LxMusicMobileTests.release.xcconfig"; sourceTree = "<group>"; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
+		E105A00800000000000000B1 /* LxLibraryModule.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = LxLibraryModule.h; path = LxMusicMobile/Modules/Library/LxLibraryModule.h; sourceTree = "<group>"; };
+		E105A00800000000000000B2 /* LxLibraryModule.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = LxLibraryModule.m; path = LxMusicMobile/Modules/Library/LxLibraryModule.m; sourceTree = "<group>"; };
+		E105A00900000000000000B1 /* LxLibraryStore.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = LxLibraryStore.h; path = LxMusicMobile/Modules/Library/LxLibraryStore.h; sourceTree = "<group>"; };
+		E105A00900000000000000B2 /* LxLibraryStore.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = LxLibraryStore.m; path = LxMusicMobile/Modules/Library/LxLibraryStore.m; sourceTree = "<group>"; };
+		E105A00A00000000000000B1 /* LxFolderAccess.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = LxFolderAccess.h; path = LxMusicMobile/Modules/Library/LxFolderAccess.h; sourceTree = "<group>"; };
+		E105A00A00000000000000B2 /* LxFolderAccess.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = LxFolderAccess.m; path = LxMusicMobile/Modules/Library/LxFolderAccess.m; sourceTree = "<group>"; };
+		E105A00B00000000000000B1 /* LxFolderScanner.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = LxFolderScanner.h; path = LxMusicMobile/Modules/Library/LxFolderScanner.h; sourceTree = "<group>"; };
+		E105A00B00000000000000B2 /* LxFolderScanner.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = LxFolderScanner.m; path = LxMusicMobile/Modules/Library/LxFolderScanner.m; sourceTree = "<group>"; };
+		E105A00C00000000000000B1 /* LxMediaProbe.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = LxMediaProbe.h; path = LxMusicMobile/Modules/Library/LxMediaProbe.h; sourceTree = "<group>"; };
+		E105A00C00000000000000B2 /* LxMediaProbe.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = LxMediaProbe.m; path = LxMusicMobile/Modules/Library/LxMediaProbe.m; sourceTree = "<group>"; };
+		E105A00D00000000000000B1 /* LxArtworkCache.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = LxArtworkCache.h; path = LxMusicMobile/Modules/Library/LxArtworkCache.h; sourceTree = "<group>"; };
+		E105A00D00000000000000B2 /* LxArtworkCache.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = LxArtworkCache.m; path = LxMusicMobile/Modules/Library/LxArtworkCache.m; sourceTree = "<group>"; };
+		E105A00E00000000000000B1 /* LxCredentialStore.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = LxCredentialStore.h; path = LxMusicMobile/Modules/Library/LxCredentialStore.h; sourceTree = "<group>"; };
+		E105A00E00000000000000B2 /* LxCredentialStore.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = LxCredentialStore.m; path = LxMusicMobile/Modules/Library/LxCredentialStore.m; sourceTree = "<group>"; };
+		E105A00F00000000000000B2 /* libsqlite3.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libsqlite3.tbd; path = usr/lib/libsqlite3.tbd; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -85,6 +108,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				0C80B921A6F3F58F76C31292 /* libPods-LxMusicMobile.a in Frameworks */,
+				E105A00F00000000000000A1 /* libsqlite3.tbd in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -131,6 +155,20 @@
 				E105A00600000000000000B2 /* LxDownloadManager.m */,
 				E105A00700000000000000B1 /* DownloadModule.h */,
 				E105A00700000000000000B2 /* DownloadModule.m */,
+				E105A00800000000000000B1 /* LxLibraryModule.h */,
+				E105A00800000000000000B2 /* LxLibraryModule.m */,
+				E105A00900000000000000B1 /* LxLibraryStore.h */,
+				E105A00900000000000000B2 /* LxLibraryStore.m */,
+				E105A00A00000000000000B1 /* LxFolderAccess.h */,
+				E105A00A00000000000000B2 /* LxFolderAccess.m */,
+				E105A00B00000000000000B1 /* LxFolderScanner.h */,
+				E105A00B00000000000000B2 /* LxFolderScanner.m */,
+				E105A00C00000000000000B1 /* LxMediaProbe.h */,
+				E105A00C00000000000000B2 /* LxMediaProbe.m */,
+				E105A00D00000000000000B1 /* LxArtworkCache.h */,
+				E105A00D00000000000000B2 /* LxArtworkCache.m */,
+				E105A00E00000000000000B1 /* LxCredentialStore.h */,
+				E105A00E00000000000000B2 /* LxCredentialStore.m */,
 				E105A00300000000000000B3 /* user-api-preload.js */,
 				E105A00100000000000000B3 /* icomoon.ttf */,
 			);
@@ -143,6 +181,7 @@
 				ED297162215061F000B7C4FE /* JavaScriptCore.framework */,
 				5DCACB8F33CDC322A6C60F78 /* libPods-LxMusicMobile.a */,
 				19F6CBCC0A4E27FBF8BF4A61 /* libPods-LxMusicMobile-LxMusicMobileTests.a */,
+							E105A00F00000000000000B2 /* libsqlite3.tbd */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -444,6 +483,13 @@
 				E105A00500000000000000A1 /* GzipModule.m in Sources */,
 				E105A00600000000000000A1 /* LxDownloadManager.m in Sources */,
 				E105A00700000000000000A1 /* DownloadModule.m in Sources */,
+				E105A00800000000000000A1 /* LxLibraryModule.m in Sources */,
+				E105A00900000000000000A1 /* LxLibraryStore.m in Sources */,
+				E105A00A00000000000000A1 /* LxFolderAccess.m in Sources */,
+				E105A00B00000000000000A1 /* LxFolderScanner.m in Sources */,
+				E105A00C00000000000000A1 /* LxMediaProbe.m in Sources */,
+				E105A00D00000000000000A1 /* LxArtworkCache.m in Sources */,
+				E105A00E00000000000000A1 /* LxCredentialStore.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

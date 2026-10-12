@@ -16,6 +16,7 @@ import MetadataForm, { defaultData, type Metadata, type MetadataFormType } from 
 import { log } from '@/utils/log'
 import { formatPlayTime2 } from '@/utils'
 import { unlink } from '@/utils/fs'
+import { isLibraryLocator } from '@/core/library/locator'
 
 export type {
   Metadata,
@@ -36,6 +37,9 @@ export default forwardRef<MetadataEditType, MetadataEditProps>((props, ref) => {
   const metadata = useRef<Metadata>({ ...defaultData })
   const [visible, setVisible] = useState(false)
   const [processing, setProcessing] = useState(false)
+  // 曲库定位符曲目只读（add-ios-local-library §8.7）：iOS 无写入能力，
+  // 隐藏写入入口，弹窗退化为「标签信息」只读视图
+  const [readOnly, setReadOnly] = useState(false)
   const isUnmounted = useUnmounted()
 
   const handleShow = (filePath: string) => {
@@ -63,6 +67,7 @@ export default forwardRef<MetadataEditType, MetadataEditProps>((props, ref) => {
   useImperativeHandle(ref, () => ({
     show(path) {
       filePath.current = path
+      setReadOnly(isLibraryLocator(path))
       if (visible) handleShow(path)
       else {
         setVisible(true)
@@ -121,11 +126,13 @@ export default forwardRef<MetadataEditType, MetadataEditProps>((props, ref) => {
       ? <ConfirmAlert
           ref={alertRef}
           onConfirm={handleUpdate}
+          showConfirm={!readOnly}
+          closeBtn={readOnly}
           confirmText={processing ? global.i18n.t('metadata_edit_modal_processing') : global.i18n.t('metadata_edit_modal_confirm')}
           disabledConfirm={processing}
         >
           <View style={styles.renameContent} onStartShouldSetResponder={() => true}>
-            <Text style={styles.title}>{global.i18n.t('metadata_edit_modal_title')}</Text>
+            <Text style={styles.title}>{readOnly ? global.i18n.t('metadata_edit_modal_readonly_title') : global.i18n.t('metadata_edit_modal_title')}</Text>
             <MetadataForm ref={metadataFormRef} />
           </View>
         </ConfirmAlert>
