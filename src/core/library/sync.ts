@@ -5,16 +5,19 @@
  * - 冷启动后不自动扫描（只有用户触发，或开启「启动时增量扫描」）
  */
 import * as native from './native'
+import type { ScanProgressEvent, ScanDoneEvent } from './native'
 import { setScanProgress, clearScanProgress, setScanReport, setSources } from '@/store/library/action'
 import state from '@/store/library/state'
-import type { LibrarySource, LibraryScanReport } from './types'
+import type { LibrarySource } from './types'
 
 /** 单飞锁：正在扫描的来源集合 */
 const scanning = new Set<string>()
 let subscribed = false
 
-const handleScanEvent = (event: { sourceId: string, phase?: string, scanned?: number, total?: number, imported?: number, report?: LibraryScanReport }): void => {
-  if ('report' in event && event.report) {
+const handleScanEvent = (event: ScanProgressEvent | ScanDoneEvent): void => {
+  // 完成事件带 report；进度事件带 phase。两个分支都要维护单飞集合，
+  // 否则扫描完成后扫描全部/重复触发的等待永远不会退出
+  if ('report' in event) {
     scanning.delete(event.sourceId)
     clearScanProgress(event.sourceId)
     setScanReport(event.sourceId, event.report)
@@ -23,10 +26,10 @@ const handleScanEvent = (event: { sourceId: string, phase?: string, scanned?: nu
   }
   setScanProgress({
     sourceId: event.sourceId,
-    phase: (event.phase as 'enumerate' | 'probe' | 'upsert') ?? 'enumerate',
-    scanned: event.scanned ?? 0,
+    phase: event.phase,
+    scanned: event.scanned,
     total: event.total,
-    imported: event.imported ?? 0,
+    imported: event.imported,
   })
 }
 
@@ -36,7 +39,7 @@ const handleScanEvent = (event: { sourceId: string, phase?: string, scanned?: nu
 export const subscribeScanEvents = (): void => {
   if (subscribed) return
   subscribed = true
-  native.subscribeScanEvents(handleScanEvent as never)
+  native.subscribeScanEvents(handleScanEvent)
 }
 
 /** 重新拉取来源列表并写入 store */
