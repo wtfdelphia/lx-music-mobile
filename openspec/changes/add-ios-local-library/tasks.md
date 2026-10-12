@@ -1,0 +1,70 @@
+> 进度快照（2026-10-12）：JS 核心层、UI 骨架、设置分组、导航接线、原生模块
+> 源码与工程注册已完成；本地验证通过 110 个单测、lint 仅剩 3 个基线既有错误、
+> tsc 零新增、Metro 双端打包通过。原生真机验证（构建、授权、扫描、播放）需在
+> Mac / CI（ios-verify.yml）执行。
+
+## 0. 净室与工件
+
+- [x] 0.1 四工件入库；`openspec validate --all` 全绿
+- [x] 0.2 PR 模板增加「未参考 LynMusic 源码」勾选项
+- [x] 0.3 净室复核门禁落实：复核已由用户确认通过（2026-10-12）
+- [x] 0.4 `docs/legal-risk-analysis.md` 补「本地曲库净室风险（GPLv3 上游）」节
+
+## 1. 原生模块（P1）
+
+- [x] 1.1 `Modules/Library/` 骨架：`LxLibraryModule`（RCTEventEmitter）、私有串行队列；工程链接 `libsqlite3.tbd`（pbxproj 已注册，待 CI 构建验证）
+- [x] 1.2 `LxLibraryStore`：v1 schema、WAL、`user_version` 迁移、FTS 触发器、结构化 `query`、批量 upsert 即 seen、`finishSync` 清理；真机验证待 CI
+- [x] 1.3 `LxFolderAccess`：选择器（复用稳定呈现思路）、沙箱内识别、bookmark 生成与解析、引用计数、`relink`；真机实证 1 待执行
+- [x] 1.4 `LxFolderScanner`：枚举 + 协调读取（失败回退）、白名单、iCloud 状态、并发 4、取消、进度节流、报告与删除保护；真机实证 2、3 待执行
+- [x] 1.5 `LxMediaProbe`：标识符映射、超时 8s、13.4 分支；真机实证 5 待执行
+- [x] 1.6 `LxArtworkCache` 与 `readLyric`（BOM、UTF-8、GB18030、Big5）；样例比对待执行
+- [x] 1.7 `LxCredentialStore`（Keychain，P2 使用）
+
+## 2. JS 核心（P1）
+
+- [x] 2.1 `native.ios.ts` / `native.ts`；Android 下调用即 reject（vitest 覆盖）
+- [x] 2.2 `locator.ts`、`toMusicInfo.ts`；vitest 覆盖编码、非法段、NFC、映射
+- [x] 2.3 `sources/local.ts`、`sync.ts`（单飞、进度、报告）、`query.ts`（limit 上限、降级）
+- [x] 2.4 `store/library`：来源、进度、Tab、筛选状态与 hook
+- [x] 2.5 `utils/music.ios.ts`：定位符分支与旧路径 rebase；`core/music/local.ts` 封面和歌词分支接入；vitest 覆盖分支矩阵
+- [x] 2.6 URL 缓存跳过 lxlib；预载沿用现有门控（已核实无需改动）
+- [x] 2.7 `associate.ts` 自动关联：差量对账、多音质去重、`kind:'library'` 跳过；纯算法部分 11 用例覆盖
+- [x] 2.8 `core/library/init.ts` 接入启动序列（`initDownload` 之后）
+
+## 3. UI（P1）
+
+- [x] 3.1 `NAV_MENUS_IOS` 加 `nav_library`（图标 `sd-card`）；横竖屏 viewMap 注册；`library.enable` 门控（DrawerNav / Aside / 页面兜底）
+- [x] 3.2 曲库页：顶栏、三 Tab（歌曲、专辑、艺人）、搜索、歌曲行、空状态、添加文件夹
+- [x] 3.3 `LIBRARY_DETAIL_SCREEN`：专辑和艺人详情（P1 先经查询接入，独立屏幕待接入导航）
+- [x] 3.4 来源管理、扫描报告入口（骨架）
+- [x] 3.5 歌曲菜单：播放、稍后播放、标签信息；`MetadataEditModal` 对 lxlib 只读
+- [x] 3.6 设置分组与三语文案；三个 JSON 解析通过、键齐全
+- [x] 3.7 歌词手动搜索（F14）：候选匹配与缓存写入框架（接口已就位，候选列表渲染待接入）
+
+## 4. P1 出口
+
+- [x] 4.1 `npm run lint`（仅基线 3 个既有错误）、`npm test`（110 绿）、`tsc` 零新增、Metro 双端打包通过
+- [ ] 4.2 真机实证 1、4、6 必过，2、3、5 允许带观察项；结果归档到 evidence/（需 Mac / CI）
+
+## 5. 远程来源与离线（P2）
+
+- [ ] 5.1 `sources/subsonic.ts`：认证、ping、search3 分页与回落、字段映射、串流、封面、歌词、star
+- [ ] 5.2 来源管理服务器表单、测试连接、musicFolder 选择；Keychain 接入
+- [ ] 5.3 `scrobble.ts`（Subsonic）；`library.scrobble`、`library.syncStar`
+- [ ] 5.4 下载 `kind:'library'`：类型联合、`createLibraryDownloadInfo`、urlResolver、保存路径、完成回写、对账
+- [ ] 5.5 曲库歌曲菜单与详情页的下载入口；离线标记
+- [ ] 5.6 自动关联接入真实下载完成事件（`initAssociate` 已实现，待联调）
+- [ ] 5.7 真机实证 7（Navidrome）
+
+## 6. P3
+
+- [ ] 6.1 `sources/jellyfin.ts`（Jellyfin 与 Emby）；真机实证 7（Jellyfin）
+- [ ] 6.2 （编号保留）每日推荐已于 2026-10-12 评审砍掉（F12），无任务
+- [ ] 6.3 `textImport.ts` 与导入弹窗
+- [ ] 6.4 （已移入 P1，见 3.7）
+- [ ] 6.5 歌词分享图（截图方案先决策）
+
+## 7. 收尾
+
+- [ ] 7.1 `AGENTS.md` 平台扩展清单、`spec/structure.md` 目录登记、CHANGELOG
+- [ ] 7.2 归档 change，同步主规范
