@@ -319,7 +319,8 @@ static NSString * const kTrackColumns =
       NSString *album = row[@"album"];
       NSString *albumArtist = row[@"album_artist"];
       NSString *artistKey = [((albumArtist.length ? albumArtist : (artist ?: @"")) ?: @"") lowercaseString];
-      NSString *albumKey = [NSString stringWithFormat:@"%@\u0001%@", artistKey, [((album ?: @"")) lowercaseString]];
+      // album_key = artist_key + '\001' + album（\u 转义不允许控制字符，用八进制）
+      NSString *albumKey = [NSString stringWithFormat:@"%@\001%@", artistKey, [((album ?: @"")) lowercaseString]];
       sqlite3_reset(stmt);
       sqlite3_clear_bindings(stmt);
       sqlite3_bind_text(stmt, 1, locator.UTF8String, -1, SQLITE_TRANSIENT);
