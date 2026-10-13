@@ -610,5 +610,10 @@
   "library_search_placeholder": "搜尋歌曲、歌手、專輯",
   "nav_library": "本地曲庫",
   "metadata_edit_modal_readonly_title": "標籤資訊（唯讀）",
-  "metadata_edit_modal_close": "關閉"
+  "metadata_edit_modal_close": "關閉",
+  "library_add_folder_failed": "新增資料夾失敗",
+  "library_scan_busy": "該來源正在掃描中",
+  "library_play_failed": "播放失敗",
+  "library_album": "專輯",
+  "library_artist": "藝人"
 }

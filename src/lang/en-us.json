@@ -610,5 +610,10 @@
   "library_search_placeholder": "Search tracks, artists, albums",
   "nav_library": "Library",
   "metadata_edit_modal_readonly_title": "Tag Info (read-only)",
-  "metadata_edit_modal_close": "Close"
+  "metadata_edit_modal_close": "Close",
+  "library_add_folder_failed": "Failed to add folder",
+  "library_scan_busy": "This source is scanning",
+  "library_play_failed": "Playback failed",
+  "library_album": "Album",
+  "library_artist": "Artist"
 }

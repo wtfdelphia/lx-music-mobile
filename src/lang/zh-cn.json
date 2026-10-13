@@ -610,5 +610,10 @@
   "library_search_placeholder": "搜索歌曲、歌手、专辑",
   "nav_library": "本地曲库",
   "metadata_edit_modal_readonly_title": "标签信息（只读）",
-  "metadata_edit_modal_close": "关闭"
+  "metadata_edit_modal_close": "关闭",
+  "library_add_folder_failed": "添加文件夹失败",
+  "library_scan_busy": "该来源正在扫描中",
+  "library_play_failed": "播放失败",
+  "library_album": "专辑",
+  "library_artist": "艺人"
 }

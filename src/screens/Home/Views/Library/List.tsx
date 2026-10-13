@@ -11,8 +11,8 @@ import type { NativeTrackRow } from '@/core/library/types'
 type FlatListType = FlatListProps<NativeTrackRow>
 
 export interface ListProps {
-  onPlay: (row: NativeTrackRow, index: number) => void
-  onShowMenu: (row: NativeTrackRow, index: number, position: Position) => void
+  onPlay: (locator: string) => void
+  onShowMenu: (locator: string, position: Position) => void
 }
 export interface ListType {
   getRows: () => NativeTrackRow[]
@@ -30,6 +30,9 @@ const toRowItem = (row: NativeTrackRow): LibraryRowItem => ({
 
 export default forwardRef<ListType, ListProps>(({ onPlay, onShowMenu }, ref) => {
   const { rows } = useLibraryRows()
+  // 点击语义：只回传定位符，播放目标由外层按最新列表（state.rows）
+  // 现查。ListItem 的 memo 比较函数不含回调引用，靠闭包传 index 会
+  // 播错条目或点不动
   const listRef = useRef<FlatList>(null)
   const [activeIndex, setActiveIndex] = useState(-1)
   const playMusicInfo = usePlayMusicInfo()
@@ -56,8 +59,8 @@ export default forwardRef<ListType, ListProps>(({ onPlay, onShowMenu }, ref) => 
       item={toRowItem(item)}
       index={index}
       activeIndex={activeIndex}
-      onPress={() => { onPlay(item, index) }}
-      onShowMenu={(_i, _idx, position) => { onShowMenu(item, index, position) }}
+      onPress={() => { onPlay(item.locator) }}
+      onShowMenu={(_i, _idx, position) => { onShowMenu(item.locator, position) }}
     />
   )
 

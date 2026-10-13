@@ -137,16 +137,21 @@ RCT_EXPORT_METHOD(pickFolder:(RCTPromiseResolveBlock)resolve
     self.pendingPickResolve = nil;
     return;
   }
-  // 判断是否在本 App Documents 内（沙箱分支，§5.2）
+  // 判断是否在本 App Documents 内（沙箱分支，§5.2）。
+  // 选择器返回的路径可能带 /private 前缀（符号链接形式），而
+  // NSSearchPath 返回 /var 形式：两边都先解析符号链接再比前缀，
+  // 否则容器内文件夹会被误判为外部文件夹走 bookmark 分支
   NSString *documents = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
-  NSString *path = url.path;
-  BOOL inSandbox = [path hasPrefix:documents];
+  NSString *documentsResolved = [[NSURL fileURLWithPath:documents] URLByResolvingSymlinksInPath].path;
+  NSString *pathResolved = [url URLByResolvingSymlinksInPath].path ?: url.path;
+  NSString *documentsPrefix = [documentsResolved stringByAppendingString:@"/"];
+  BOOL inSandbox = [pathResolved isEqualToString:documentsResolved] || [pathResolved hasPrefix:documentsPrefix];
   NSMutableDictionary *result = [NSMutableDictionary dictionary];
   result[@"label"] = url.lastPathComponent ?: @"";
   if (inSandbox) {
-    NSString *rel = [path substringFromIndex:documents.length];
-    if ([rel hasPrefix:@"/"]) rel = [rel substringFromIndex:1];
-    // 只回传存在的键：不回传 [NSNull null]，下游一律按缺失处理（F5）
+    NSString *rel = [pathResolved isEqualToString:documentsResolved] ? @"" : [pathResolved substringFromIndex:documentsPrefix.length];
+    // 只回传存在的键：不回传 [NSNull null]，下游一律按缺失处理（F5）。
+    // relPath 允许空串 = Documents 根
     result[@"relPath"] = rel;
   } else {
     // 生成 bookmark（§5.2）

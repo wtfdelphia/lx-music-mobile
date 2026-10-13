@@ -56,13 +56,15 @@ typedef NS_ENUM(NSInteger, LxLibraryErrorCode) {
 {
   if (!sourceId.length || ![config isKindOfClass:[NSDictionary class]]) return NO;
   LxGrant *grant = [LxGrant new];
-  // LxStr 清洗：JS null 到达时是 NSNull，对其发 length 会崩（F5）
+  // LxStr 清洗：JS null 到达时是 NSNull，对其发 length 会崩（F5）。
+  // relPath 用键存在性判断：空串合法，表示沙箱分支选中 Documents 根
   NSString *bookmarkBase64 = LxStr(config[@"bookmark"]);
   NSString *relPath = LxStr(config[@"relPath"]);
+  BOOL hasRelPath = [config[@"relPath"] isKindOfClass:[NSString class]];
   if (bookmarkBase64.length) {
     grant.sandbox = NO;
     grant.bookmark = [[NSData alloc] initWithBase64EncodedString:bookmarkBase64 options:0];
-  } else if (relPath.length) {
+  } else if (hasRelPath) {
     grant.sandbox = YES;
     grant.relPath = relPath;
   } else {
@@ -157,11 +159,19 @@ typedef NS_ENUM(NSInteger, LxLibraryErrorCode) {
     if (newBookmark) grant.bookmark = newBookmark;
   }
   if (![url startAccessingSecurityScopedResource]) {
-    if (error) *error = [NSError errorWithDomain:LxLibraryErrorDomain code:LxLibraryErrorReauth userInfo:@{NSLocalizedDescriptionKey: @"startAccess failed"}];
-    return NO;
+    // 容错：部分场景（容器内路径被误存为 bookmark、系统已隐式持有
+    // 访问权）startAccessing 返回 NO 但目录实际可读。可读即继续，
+    // 只有真正不可读才判授权失效
+    BOOL isDir = NO;
+    BOOL readable = [NSFileManager.defaultManager fileExistsAtPath:url.path isDirectory:&isDir] && isDir;
+    if (!readable) {
+      if (error) *error = [NSError errorWithDomain:LxLibraryErrorDomain code:LxLibraryErrorReauth userInfo:@{NSLocalizedDescriptionKey: @"startAccess failed"}];
+      return NO;
+    }
+  } else {
+    grant.accessing = YES;
   }
   grant.url = url;
-  grant.accessing = YES;
   return YES;
 }
 
