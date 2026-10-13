@@ -5,6 +5,12 @@
  * - 同歌多音质按歌曲 id 去重，保留最高音质
  * - 删任务 / 清空已完成 / FILE_MISSING 时移除关联
  * 不修改下载引擎，仅消费其状态；映射键为 `item_key == metadata.filePath`
+ *
+ * 对账约束（2026-10-13 修复）：
+ * - 现有曲目经原生 `listItemKeys` 全量取回，不再受 query limit 200 截断（S3）
+ * - 删除只走 deleteTrack，下载来源不调 finishSync：upsert 只写增量行，
+ *   finishSync 的 seen 语义会把未重写的存量行误删（S4）
+ * - buildTrackRow 省略空值字段，桥上不传 null（NSNull 崩溃的 JS 侧防御）
  */
 import * as native from './native'
 import { buildLocator, buildItemKey } from './locator'
@@ -84,23 +90,29 @@ export const pickBestByMusicId = (tasks: LX.Download.ListItem[]): LX.Download.Li
   return Array.from(best.values())
 }
 
-/** 由下载任务构造曲库行的定位符与 itemKey。导出供测试（§11.2 映射键） */
+/**
+ * 由下载任务构造曲库行的定位符与 itemKey。导出供测试（§11.2 映射键）。
+ * 空值字段直接省略：JS null 经桥转为 NSNull，原生侧对 NSNull 发
+ * NSString 消息会崩（S1），双向防御
+ */
 export const buildTrackRow = (task: LX.Download.ListItem): Record<string, unknown> | null => {
   const filePath = task.metadata.filePath
   if (!filePath) return null
   const musicInfo = task.metadata.musicInfo
-  return {
+  const row: Record<string, unknown> = {
     locator: buildLocator(DOWNLOAD_SOURCE_ID, buildItemKey([filePath])),
     item_key: filePath,
-    title: musicInfo.name,
-    artist: musicInfo.singer || null,
-    album: musicInfo.meta.albumName || null,
-    album_artist: null,
+    // 标题降级链：歌名缺失时取文件名再退到路径（`||` 对空串语义，
+    // `??` 对 pop 的 undefined）
+    title: musicInfo.name || (filePath.split('/').pop() ?? filePath),
     duration_ms: 0,
-    ext: task.metadata.ext,
-    artwork: null,
-    // 元数据由原生侧 `LxMediaProbe` 读实际文件补全（§11.5）
+    has_embedded_lyric: false,
+    // 元数据其余字段由原生侧 `LxMediaProbe` 读实际文件补全（§11.5）
   }
+  if (musicInfo.singer) row.artist = musicInfo.singer
+  if (musicInfo.meta.albumName) row.album = musicInfo.meta.albumName
+  if (task.metadata.ext) row.ext = task.metadata.ext
+  return row
 }
 
 /**
@@ -116,31 +128,31 @@ const reconcile = async(): Promise<void> => {
 
   await ensureDownloadSource()
 
-  // 现有曲库中「下载」来源的曲目
-  const existing = await native.query({
-    kind: 'tracks',
-    sourceIds: [DOWNLOAD_SOURCE_ID],
-    offset: 0,
-    limit: 200,
-  }).catch(() => ({ rows: [], total: 0 }))
-
-  const existingKeys = new Set(existing.rows.map(r => r.itemKey))
+  // S3：全量取 itemKey，不受 query limit 200 截断
+  const existingKeys = await native.listItemKeys(DOWNLOAD_SOURCE_ID).catch(() => [] as string[])
+  const existingKeySet = new Set(existingKeys)
 
   // 待入库：本次应有但库里没有
-  const toAdd = selected.filter(t => !existingKeys.has(t.metadata.filePath))
+  const toAdd = selected.filter(t => !existingKeySet.has(t.metadata.filePath))
   // 待移除：库里有但本次任务已不在（删除 / 清空 / FILE_MISSING）
-  const toRemove = existing.rows.filter(r => !wantedKeys.has(r.itemKey))
+  const toRemoveKeys = existingKeys.filter(key => !wantedKeys.has(key))
 
+  let changed = false
   if (toAdd.length) {
     const rows = toAdd.map(buildTrackRow).filter((r): r is Record<string, unknown> => r != null)
-    if (rows.length) await native.upsertTracks(DOWNLOAD_SOURCE_ID, rows).catch(() => {})
+    if (rows.length) {
+      await native.upsertTracks(DOWNLOAD_SOURCE_ID, rows).catch(() => {})
+      changed = true
+    }
   }
-  for (const row of toRemove) {
-    await native.deleteTrack?.(row.locator).catch(() => {})
+  for (const key of toRemoveKeys) {
+    await native.deleteTrack(buildLocator(DOWNLOAD_SOURCE_ID, buildItemKey([key]))).catch(() => {})
+    changed = true
   }
-  if (toAdd.length || toRemove.length) {
-    void native.finishSync(DOWNLOAD_SOURCE_ID).catch(() => {})
-  }
+  // S4：下载来源不调 finishSync。删除只走 toRemove + deleteTrack；
+  // upsert 只写增量行，finishSync 的 seen 语义会把存量行误删再补回，
+  // 导致曲目数在轮次之间翻转
+  void changed
 }
 
 /**
@@ -157,11 +169,12 @@ const handleDownloadListUpdate = (): void => {
 
 /**
  * 初始化：需在 `initDownload` 与曲库 store 初始化完成后调用（§11.7）。
- * 订阅事件并执行首次差量
+ * 订阅事件并异步执行首次差量。首次差量不阻塞启动链（S2）：
+ * 对账结果只影响曲库页可见性，不影响首页渲染与播放
  */
-export const initAssociate = async(): Promise<void> => {
+export const initAssociate = (): void => {
   global.app_event.on('downloadListUpdate', handleDownloadListUpdate)
-  await reconcile()
+  void reconcile()
 }
 
 /** 测试钩子 */

@@ -46,6 +46,8 @@ export const query = async(spec: LibraryQuerySpec): Promise<LibraryQueryResult> 
 export const upsertTracks = async(sourceId: string, rows: Array<Record<string, unknown>>): Promise<void> => { await call('upsertTracks', sourceId, rows) }
 export const finishSync = async(sourceId: string): Promise<void> => { await call('finishSync', sourceId) }
 export const getTrack = async(locator: string): Promise<NativeTrackRow | null> => call<NativeTrackRow | null>('getTrack', locator)
+/** 全量 itemKey（自动关联差量对账，避免 query limit 截断，S3） */
+export const listItemKeys = async(sourceId: string): Promise<string[]> => call<string[]>('listItemKeysForSourceId', sourceId)
 export const setOffline = async(locator: string, relPath: string | null): Promise<void> => { await call('setOffline', locator, relPath) }
 export const bumpPlay = async(locator: string): Promise<void> => { await call('bumpPlay', locator) }
 export const deleteTrack = async(locator: string): Promise<void> => { await call('deleteTrack', locator) }

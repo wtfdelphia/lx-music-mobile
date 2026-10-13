@@ -12,6 +12,7 @@ const mockNative = vi.hoisted(() => ({
   upsertTracks: vi.fn(async() => {}),
   deleteTrack: vi.fn(async() => {}),
   finishSync: vi.fn(async() => {}),
+  listItemKeys: vi.fn(async() => [] as string[]),
 }))
 
 const mockSetting = vi.hoisted(() => ({
@@ -132,6 +133,20 @@ describe('buildTrackRow', () => {
     expect(row!.item_key).toBe('Download/周杰伦/晴天.mp3')
     expect(row!.locator).toContain(DOWNLOAD_SOURCE_ID)
     expect(row!.title).toBe('晴天')
+    expect(row!.artist).toBe('周杰伦')
+  })
+
+  it('omits empty fields instead of passing null (NSNull 崩溃防御)', () => {
+    const task = makeTask()
+    task.metadata.musicInfo.singer = ''
+    task.metadata.musicInfo.meta.albumName = ''
+    // ext 类型联合不含空串：用 delete 模拟「无扩展名」分支
+    delete (task.metadata as { ext?: string }).ext
+    const row = buildTrackRow(task)
+    expect(row).not.toBeNull()
+    expect('artist' in row!).toBe(false)
+    expect('album' in row!).toBe(false)
+    expect('ext' in row!).toBe(false)
   })
 
   it('returns null without a file path', () => {

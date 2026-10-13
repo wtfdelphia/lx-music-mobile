@@ -28,6 +28,7 @@ export const query = async(_spec: LibraryQuerySpec): Promise<LibraryQueryResult>
 export const upsertTracks = async(_sourceId: string, _rows: Array<Record<string, unknown>>): Promise<void> => notSupported()
 export const finishSync = async(_sourceId: string): Promise<void> => notSupported()
 export const getTrack = async(_locator: string): Promise<NativeTrackRow | null> => notSupported()
+export const listItemKeys = async(_sourceId: string): Promise<string[]> => notSupported()
 export const setOffline = async(_locator: string, _relPath: string | null): Promise<void> => notSupported()
 export const bumpPlay = async(_locator: string): Promise<void> => notSupported()
 export const deleteTrack = async(_locator: string): Promise<void> => notSupported()

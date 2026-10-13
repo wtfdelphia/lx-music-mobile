@@ -31,7 +31,9 @@ export const initLibrary = async(): Promise<void> => {
   if (Platform.OS !== 'ios') return
   try {
     await refreshSources()
-    await initAssociate()
+    // S2：首次对账不阻塞启动链。对账只影响曲库页可见性，
+    // 不影响首页渲染与播放；内部自持节流与错误吞并
+    initAssociate()
     setInited(true)
     if (settingState.setting['library.scanOnLaunch']) scanOnLaunch()
   } catch (err) {

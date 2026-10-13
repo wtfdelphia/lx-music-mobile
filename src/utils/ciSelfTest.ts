@@ -700,6 +700,92 @@ const testUserApi = async() => {
   return { logs: state.userApiLogs.slice(0, 20), events: state.userApiEvents.map(e => e.action) }
 }
 
+// 曲库冒烟（add-ios-local-library）：S1/S3/S4/F2/F3/F4/F5 回归夹具。
+// 三类夹具全部应用内构造，零宿主投递：
+// 1. 沙箱来源（Documents 内目录，F5 路径）+ 6 个 WAV（>4 触发并发探测，F2）
+// 2. 扫描后入库断言（F3）、重复扫描断言数量不翻转（S4）
+// 3. 下载虚拟来源 + resolvePlayFileUrl（F4 播放解析路径）
+const CI_WAV_BASE64 = 'UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YSADAACAh4+XnqWrsbW5vL6/v769uraxrKafmJCJgXlxaWJbVU9KRkNBQEBAQkVJTVJYX2ZudX2FjZWco6qvtLi8vr+/v727t7Otp6GakouDe3NrZF1WUEtHREFAQEBCREdMUVddZGxze4OLk5qhqK6zt7u9v7+/vru4tK+po5yUjYV9dW1mXlhSTUhFQkBAQEFDRktPVVtianF5gYmRmKCmrLK2ur2/v7++vLm1sKuknpaPh393b2hgWlNOSUZDQUBAQUNGSU5UWmBob3d/h4+WnqWrsLW5vL6/v7+9urayrKagmJGJgXlxamJbVU9LRkNBQEBAQkVITVJYX2ZtdX2FjZSco6mvtLi7vr+/v727t7OuqKGak4uDe3NsZF1XUUxHREJAQEBBREdLUVZdZGtze4OLkpqhqK2zt7u9v7+/vry4tK+po5yVjYV9dW5mX1hSTUhFQkBAQEFDRkpPVVtiaXF5gYmQmJ+mrLG2ur2+v7++vLm1saulnpePh393cGhhWlROSkZDQUBAQUJFSU5TWWBnb3d/ho6WnaSqsLW5vL6/v7+9urayraegmZGKgnpyamNcVVBLR0NBQEBAQkRITFJYXmVtdHyEjJSboqmvtLi7vr+/v727t7OuqKKbk4yEfHRsZV5XUUxIREJAQEBBREdLUFZcY2tyeoKKkpmhp62yt7q9v7+/vry4tLCqpJ2VjoZ+dm5mX1lTTUlFQkBAQEFDRkpPVFthaXB4gIiQmJ+lrLG2ury+v7++vLm2sauln5eQiIB4cGhhWlRPSkZDQUBAQEJFSU1TWWBnbnZ+ho6WnaSqsLW5vL6/v7+9ureyraegmZKKgnpyamNcVlBLR0RBQEBAQkRITFFXXmVsdHyEjJSboqius7i7vb+/v767uLOuqaKblIyEfHRsZV5XUkxIREJAQEBBREdLUFZcY2pyeoKKkpmgp62yt7q9v7+/vry5tbCqpJ2WjoZ+dm9nYFlTTklFQkBAQEFDRkpOVFphaHB4gIiPl56lq7G1uby+v7++vbq2saymn5iQiIB4cWliW1VPSkZDQUBAQEJFSU1SWA=='
+
+const testLibrarySmoke = async() => {
+  const lib = await import('@/core/library/native')
+  assert(await lib.ping(), 'LxLibraryModule ping')
+
+  const fs = await import('@/utils/fs')
+  const docsRoot = fs.privateStorageDirectoryPath
+  const libDir = `${docsRoot}/lx-ci-library`
+  // 夹具目录与文件：6 首最小合法 WAV（8kHz mono），>4 触发并发探测
+  await RNFS.mkdir(libDir).catch(() => {})
+  for (let i = 0; i < 6; i++) {
+    await RNFS.writeFile(`${libDir}/ci-track-${i}.wav`, CI_WAV_BASE64, 'base64')
+  }
+
+  // F5：沙箱来源走相对路径分支，不生成 bookmark
+  const sourceId = 'c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1'
+  const ok = await lib.saveSource({
+    id: sourceId,
+    type: 'local',
+    name: 'lx-ci-library',
+    enabled: true,
+    config: JSON.stringify({ relPath: 'lx-ci-library', recursive: true }),
+    state: 'ok',
+    lastScanAt: null,
+    lastScanReport: null,
+    createdAt: Date.now(),
+  })
+  assert(ok, 'saveSource sandbox source')
+
+  await lib.startScan(sourceId, { recursive: true })
+  // 轮询入库结果（6 个小文件应在数秒内完成）
+  let firstCount = 0
+  for (let i = 0; i < 60; i++) {
+    await sleep(500)
+    const result = await lib.query({ kind: 'tracks', sourceIds: [sourceId], offset: 0, limit: 200 })
+    if (result.total >= 6) { firstCount = result.total; break }
+  }
+  assert(firstCount === 6, `scan imported 6 tracks, got ${firstCount}`)
+
+  // S4：重复扫描后数量不得翻转（finishSync 语义对本地来源仍适用）
+  await lib.startScan(sourceId, { recursive: true })
+  let secondCount = 0
+  for (let i = 0; i < 60; i++) {
+    await sleep(500)
+    const keys = await lib.listItemKeys(sourceId)
+    secondCount = keys.length
+    if (secondCount === 6) break
+  }
+  assert(secondCount === 6, `rescan kept 6 tracks, got ${secondCount}`)
+
+  // F4：下载虚拟来源无外部授权，根目录即 Documents；
+  // resolvePlayFileUrl 对已存在文件返回 file://
+  const dlSourceId = 'd0000000000000000000000000000001'
+  await lib.saveSource({
+    id: dlSourceId,
+    type: 'download',
+    name: 'download',
+    enabled: true,
+    config: JSON.stringify({ recursive: false }),
+    state: 'ok',
+    lastScanAt: null,
+    lastScanReport: null,
+    createdAt: Date.now(),
+  })
+  const dlKey = encodeURIComponent('lx-ci-library/ci-track-0.wav')
+  await lib.upsertTracks(dlSourceId, [{
+    locator: `lxlib://${dlSourceId}/${dlKey}`,
+    item_key: 'lx-ci-library/ci-track-0.wav',
+    title: 'ci download track',
+    duration_ms: 0,
+  }])
+  const playUrl = await lib.resolvePlayFileUrl(`lxlib://${dlSourceId}/${dlKey}`)
+  assert(playUrl.startsWith('file://'), `download source play url: ${playUrl}`)
+
+  // 清理夹具：删来源级联删曲目；文件留在沙箱不碍事
+  await lib.deleteSource(sourceId)
+  await lib.deleteSource(dlSourceId)
+  return { firstCount, secondCount, playUrl }
+}
+
 // 5.1 track-player setupPlayer
 const testPlayerSetup = async() => {
   const player = await import('@/plugins/player')
@@ -2039,6 +2125,8 @@ const runSuite = async() => {
     await runTest('cache_module', testCache)
     await runTest('lyric_stubs', testLyricStubs)
     await runTest('local_media_degrade', testLocalMedia)
+    // 曲库冒烟：沙箱来源 + 扫描入库 + 下载来源播放解析（纯应用内）
+    await runTest('library_smoke', testLibrarySmoke, 120_000)
     await runTest('user_api_sandbox', testUserApi)
     await runTest('player_setup', testPlayerSetup)
     await runTest('audio_session', testAudioSession)
