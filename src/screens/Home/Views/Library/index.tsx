@@ -9,7 +9,7 @@ import { setRows, setTabId } from '@/store/library/action'
 import { useLibrarySources } from '@/store/library/hook'
 import state from '@/store/library/state'
 import { pickLocalFolder } from '@/core/library/sources/local'
-import { startSourceScan, refreshSources } from '@/core/library/sync'
+import { startSourceScan, refreshSources, scanAllSources } from '@/core/library/sync'
 import { toast, createStyle } from '@/utils/tools'
 import { useI18n } from '@/lang'
 import { useTheme } from '@/store/theme/hook'
@@ -99,28 +99,39 @@ export default () => {
   }, [loadRows])
 
   const handlePlayRow = useCallback((locator: string) => {
+    const currentRows = state.rows
+    // 下钻视图：行已经是曲目，点击直接播放。此前漏判 drill 状态，
+    // tabId 仍是 albums / artists，导致点曲目被当成再次下钻
+    if (drill) {
+      const index = currentRows.findIndex(r => r.locator === locator)
+      if (index < 0) {
+        toast(t('library_play_failed'), 'short')
+        return
+      }
+      void handlePlay(currentRows, index)
+      return
+    }
     // 专辑 / 艺人视图：点击是下钻而非播放。合成行的 locator 是
     // album_key / artist_key，sourceId 为聚合结果的 MIN(source_id)。
     // 一律从 state.rows 现查，避免 memo 挡住闭包更新
     if (tabId === 'albums') {
-      const row = state.rows.find(r => r.locator === locator)
+      const row = currentRows.find(r => r.locator === locator)
       if (row) setDrill({ type: 'album', sourceId: row.sourceId, key: row.itemKey, title: row.title })
       return
     }
     if (tabId === 'artists') {
-      const row = state.rows.find(r => r.locator === locator)
+      const row = currentRows.find(r => r.locator === locator)
       if (row) setDrill({ type: 'artist', sourceId: row.sourceId, key: row.itemKey, title: row.title })
       return
     }
     // 曲目视图：按定位符在最新列表现查，避开 memo 闭包过期问题
-    const currentRows = state.rows
     const index = currentRows.findIndex(r => r.locator === locator)
     if (index < 0) {
       toast(t('library_play_failed'), 'short')
       return
     }
     void handlePlay(currentRows, index)
-  }, [tabId, t])
+  }, [drill, tabId, t])
 
   const handleShowMenu = useCallback((locator: string, position: { x: number, y: number, w: number, h: number }) => {
     // 同播放路径：按定位符在最新列表现查，避免 memo 闭包过期
@@ -128,6 +139,12 @@ export default () => {
     const index = currentRows.findIndex(r => r.locator === locator)
     if (index < 0) return
     listMenuRef.current?.show(currentRows[index], currentRows, index, position)
+  }, [])
+
+  const handleScanAll = useCallback(() => {
+    // 元数据修复后存量曲目需重扫刷新；扫描中重复点击由
+    // startSourceScan 的单飞锁挡住
+    void scanAllSources().then(() => { void refreshSources() })
   }, [])
 
   const handleAddFolder = useCallback(() => {
@@ -191,6 +208,9 @@ export default () => {
                   />
                 </View>
               )}
+          <Button style={styles.addBtn} onPress={handleScanAll}>
+            <Text size={13} color={theme['c-font']}>{t('library_scan_all')}</Text>
+          </Button>
           <Button style={styles.addBtn} onPress={handleAddFolder}>
             <Text size={13} color={theme['c-primary-font']}>{t('library_add_folder')}</Text>
           </Button>

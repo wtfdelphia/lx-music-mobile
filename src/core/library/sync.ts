@@ -82,17 +82,29 @@ export const cancelSourceScan = async(sourceId: string): Promise<void> => {
 }
 
 /**
- * 扫描全部启用的来源（来源管理「⋮」菜单入口）。
- * 逐个顺序扫描，避免并发打满元数据读取队列
+ * 扫描全部启用的来源（曲库页「扫描全部」入口）。
+ * 逐个顺序扫描，避免并发打满元数据读取队列。
+ * 等待方式：订阅扫描完成事件（事件驱动），不能用忙轮询——
+ * 阻塞式 while 会占住 JS 线程，原生完成事件回不来，形成死锁
  */
 export const scanAllSources = async(): Promise<void> => {
   for (const source of state.sources) {
     if (!source.enabled) continue
-    await startSourceScan(source.id)
-    while (scanning.has(source.id)) {
-      await new Promise(resolve => setTimeout(resolve, 500))
-    }
+    if (!(await startSourceScan(source.id))) continue
+    await waitForScanDone(source.id)
   }
+}
+
+const waitForScanDone = async(sourceId: string): Promise<void> => {
+  if (!scanning.has(sourceId)) return
+  return new Promise(resolve => {
+    const timer = setInterval(() => {
+      if (!scanning.has(sourceId)) {
+        clearInterval(timer)
+        resolve()
+      }
+    }, 500)
+  })
 }
 
 /** 测试钩子：清空单飞锁（生产不调用） */

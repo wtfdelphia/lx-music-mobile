@@ -64,7 +64,7 @@ static const CGFloat kArtworkMaxSide = 600.0;
   AVURLAsset *asset = [AVURLAsset URLAssetWithURL:fileURL options:@{AVURLAssetPreferPreciseDurationAndTimingKey: @NO}];
 
   dispatch_semaphore_t sem = dispatch_semaphore_create(0);
-  NSArray *keys = @[@"commonMetadata", @"duration", @"tracks"];
+  NSArray *keys = @[@"metadata", @"commonMetadata", @"duration", @"tracks"];
   __block BOOL loaded = NO;
   [asset loadValuesAsynchronouslyForKeys:keys completionHandler:^{
     loaded = YES;
@@ -87,39 +87,55 @@ static const CGFloat kArtworkMaxSide = 600.0;
     if (isfinite(seconds) && seconds > 0) result[@"durationMs"] = @((long long)(seconds * 1000));
   }
 
-  NSArray<AVMetadataItem *> *metadata = asset.commonMetadata;
-  for (AVMetadataItem *item in metadata) {
+  // 通用字段按 commonKey 匹配。commonMetadata 条目的 `identifier` 保留
+  // 格式原始标识（如 id3/TIT2、iTunes/©nam），通用映射只在 `commonKey`
+  // 上；用 identifier 比较 `AVMetadataCommonIdentifier*` 对相当一部分
+  // 文件不命中，艺人和专辑读不出来。标题还要主动覆盖文件名占位。
+  BOOL titleFromTag = NO;
+  for (AVMetadataItem *item in asset.commonMetadata) {
+    AVMetadataKey ck = item.commonKey;
+    if (!ck) continue;
+    NSString *stringValue = [self cleanText:item.stringValue];
+
+    if ([ck isEqualToString:AVMetadataCommonKeyTitle]) {
+      if (stringValue && !titleFromTag) { result[@"title"] = stringValue; titleFromTag = YES; }
+    } else if ([ck isEqualToString:AVMetadataCommonKeyArtist]) {
+      if (stringValue && result[@"artist"] == [NSNull null]) result[@"artist"] = stringValue;
+    } else if ([ck isEqualToString:AVMetadataCommonKeyAlbumName]) {
+      if (stringValue && result[@"album"] == [NSNull null]) result[@"album"] = stringValue;
+    } else if ([ck isEqualToString:AVMetadataCommonKeyArtwork]) {
+      NSData *data = item.dataValue;
+      if (data.length && result[@"artworkData"] == [NSNull null]) result[@"artworkData"] = data;
+    } else if ([ck isEqualToString:AVMetadataCommonKeyType]) {
+      if (stringValue && result[@"genre"] == [NSNull null]) result[@"genre"] = stringValue;
+    } else if ([ck isEqualToString:AVMetadataCommonKeyCreationDate]) {
+      if (result[@"year"] == [NSNull null]) {
+        NSInteger year = [self parseYear:stringValue];
+        if (year > 0) result[@"year"] = @(year);
+      }
+    }
+  }
+
+  // 格式专属字段：遍历 asset.metadata（commonMetadata 不含曲序、碟号、
+  // 专辑艺人、年份的其他形式、歌词），沿用原始 `identifier` 分支。
+  for (AVMetadataItem *item in asset.metadata) {
     AVMetadataIdentifier identifier = item.identifier;
+    if (!identifier) continue;
     id value = item.value;
     NSString *stringValue = item.stringValue;
 
-    if ([identifier isEqualToString:AVMetadataCommonIdentifierTitle]) {
-      if (result[@"title"] == [NSNull null] || ![result[@"title"] isKindOfClass:[NSString class]] || ![result[@"title"] length]) {
-        NSString *t = [self cleanText:stringValue];
-        if (t) result[@"title"] = t;
-      }
-    } else if ([identifier isEqualToString:AVMetadataCommonIdentifierArtist]) {
-      NSString *t = [self cleanText:stringValue];
-      if (t && result[@"artist"] == [NSNull null]) result[@"artist"] = t;
-    } else if ([identifier isEqualToString:AVMetadataCommonIdentifierAlbumName]) {
-      NSString *t = [self cleanText:stringValue];
-      if (t && result[@"album"] == [NSNull null]) result[@"album"] = t;
-    } else if ([identifier isEqualToString:AVMetadataCommonIdentifierArtwork]) {
-      if (result[@"artworkData"] == [NSNull null] && [value isKindOfClass:[NSData class]]) {
-        result[@"artworkData"] = value;
-      }
-    } else if ([identifier isEqualToString:AVMetadataCommonIdentifierType] ||
-               [identifier isEqualToString:AVMetadataIdentifierID3MetadataContentType]) {
-      NSString *t = [self cleanText:stringValue];
-      if (t && result[@"genre"] == [NSNull null]) result[@"genre"] = t;
-    } else if ([identifier isEqualToString:AVMetadataIdentifierID3MetadataRecordingTime] ||
-               [identifier isEqualToString:AVMetadataIdentifierID3MetadataYear] ||
-               [identifier isEqualToString:AVMetadataIdentifieriTunesMetadataReleaseDate]) {
+    if ([identifier isEqualToString:AVMetadataIdentifierID3MetadataRecordingTime] ||
+        [identifier isEqualToString:AVMetadataIdentifierID3MetadataYear] ||
+        [identifier isEqualToString:AVMetadataIdentifieriTunesMetadataReleaseDate]) {
       if (result[@"year"] == [NSNull null]) {
         NSString *t = [self cleanText:stringValue];
         NSInteger year = [self parseYear:t];
         if (year > 0) result[@"year"] = @(year);
       }
+    } else if ([identifier isEqualToString:AVMetadataIdentifierID3MetadataContentType] ||
+               [identifier isEqualToString:AVMetadataIdentifieriTunesMetadataUserGenre]) {
+      NSString *t = [self cleanText:stringValue];
+      if (t && result[@"genre"] == [NSNull null]) result[@"genre"] = t;
     } else if ([identifier isEqualToString:AVMetadataIdentifierID3MetadataUnsynchronizedLyric] ||
                [identifier isEqualToString:AVMetadataIdentifieriTunesMetadataLyrics]) {
       if (stringValue.length) result[@"hasEmbeddedLyric"] = @YES;
@@ -148,6 +164,10 @@ static const CGFloat kArtworkMaxSide = 600.0;
                [identifier isEqualToString:AVMetadataIdentifieriTunesMetadataAlbumArtist]) {
       NSString *t = [self cleanText:stringValue];
       if (t && result[@"albumArtist"] == [NSNull null]) result[@"albumArtist"] = t;
+    } else if ([identifier isEqualToString:AVMetadataIdentifierID3MetadataLeadPerformer] ||
+               [identifier isEqualToString:AVMetadataIdentifieriTunesMetadataArtist]) {
+      NSString *t = [self cleanText:stringValue];
+      if (t && result[@"artist"] == [NSNull null]) result[@"artist"] = t;
     }
   }
 
@@ -212,14 +232,15 @@ static const CGFloat kArtworkMaxSide = 600.0;
   AVURLAsset *asset = [AVURLAsset URLAssetWithURL:fileURL options:nil];
   dispatch_semaphore_t sem = dispatch_semaphore_create(0);
   __block BOOL loaded = NO;
-  [asset loadValuesAsynchronouslyForKeys:@[@"commonMetadata"] completionHandler:^{
+  // 歌词只在格式专属的 metadata 里，不在 commonMetadata
+  [asset loadValuesAsynchronouslyForKeys:@[@"metadata"] completionHandler:^{
     loaded = YES;
     dispatch_semaphore_signal(sem);
   }];
   dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kProbeTimeout * NSEC_PER_SEC)));
   if (!loaded) return nil;
 
-  for (AVMetadataItem *item in asset.commonMetadata) {
+  for (AVMetadataItem *item in asset.metadata) {
     if ([item.identifier isEqualToString:AVMetadataIdentifierID3MetadataUnsynchronizedLyric] ||
         [item.identifier isEqualToString:AVMetadataIdentifieriTunesMetadataLyrics]) {
       NSString *text = item.stringValue;
