@@ -1,4 +1,5 @@
 #import "LxLibraryStore.h"
+#import "LxLibraryUtils.h"
 #import <sqlite3.h>
 
 // 曲库索引存储实现（add-ios-local-library §5.1）：
@@ -89,9 +90,15 @@ static NSString *LxEscapeLike(NSString *s)
   NSError *dirError = nil;
   [[NSFileManager defaultManager] createDirectoryAtPath:dir
                             withIntermediateDirectories:YES
-                                             attributes:@{NSURLIsExcludedFromBackupKey: @YES}
+                                             attributes:nil
                                                   error:&dirError];
   if (dirError) return NO;
+  // 排除 iCloud 备份：NSURLIs* 资源键不能作为 createDirectory 的
+  // attributes 生效，必须建目录后用 setResourceValue
+  NSError *backupError = nil;
+  [[NSURL fileURLWithPath:dir] setResourceValue:@YES
+                                         forKey:NSURLIsExcludedFromBackupKey
+                                          error:&backupError];
 
   if (sqlite3_open([self databasePath].UTF8String, &_db) != SQLITE_OK) {
     sqlite3_close(_db);
@@ -241,7 +248,7 @@ static NSString * const kTrackColumns =
 
 - (BOOL)saveSource:(NSDictionary *)source
 {
-  NSString *sourceId = source[@"id"];
+  NSString *sourceId = LxStr(source[@"id"]);
   if (!sourceId.length) return NO;
   __block BOOL ok = NO;
   dispatch_sync(_ioQueue, ^{
@@ -252,19 +259,26 @@ static NSString * const kTrackColumns =
       "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) "
       "ON CONFLICT(id) DO UPDATE SET type=?2, name=?3, enabled=?4, config=?5, state=?6, last_scan_at=?7, last_scan_report=?8";
     if (sqlite3_prepare_v2(self->_db, sql, -1, &stmt, NULL) != SQLITE_OK) return;
+    // 桥值统一经 LxStr / LxNum / LxBool 清洗：JS null 到达时是
+    // NSNull，直接发消息会崩（S1 / F5 修复）
+    NSString *type = LxStr(source[@"type"]) ?: @"local";
+    NSString *name = LxStr(source[@"name"]) ?: @"";
+    NSString *config = LxStr(source[@"config"]) ?: @"{}";
+    NSString *state = LxStr(source[@"state"]) ?: @"ok";
+    NSString *report = LxStr(source[@"lastScanReport"]);
+    NSNumber *lastScanAt = LxNum(source[@"lastScanAt"]);
+    NSNumber *createdAt = LxNum(source[@"createdAt"]) ?: @((long long)([[NSDate date] timeIntervalSince1970] * 1000));
     sqlite3_bind_text(stmt, 1, sourceId.UTF8String, -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 2, [source[@"type"] ?: @"local" UTF8String], -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 3, [source[@"name"] ?: @"" UTF8String], -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int(stmt, 4, [source[@"enabled"] boolValue] ? 1 : 0);
-    sqlite3_bind_text(stmt, 5, [source[@"config"] ?: @"{}" UTF8String], -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 6, [source[@"state"] ?: @"ok" UTF8String], -1, SQLITE_TRANSIENT);
-    id lastScanAt = source[@"lastScanAt"];
-    if (!lastScanAt || lastScanAt == [NSNull null]) sqlite3_bind_null(stmt, 7);
-    else sqlite3_bind_int64(stmt, 7, [lastScanAt longLongValue]);
-    id report = source[@"lastScanReport"];
-    if (!report || report == [NSNull null]) sqlite3_bind_null(stmt, 8);
-    else sqlite3_bind_text(stmt, 8, [report UTF8String], -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int64(stmt, 9, [source[@"createdAt"] ?: @((long long)([[NSDate date] timeIntervalSince1970] * 1000)) longLongValue]);
+    sqlite3_bind_text(stmt, 2, type.UTF8String, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, name.UTF8String, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, 4, LxBool(source[@"enabled"]) ? 1 : 0);
+    sqlite3_bind_text(stmt, 5, config.UTF8String, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 6, state.UTF8String, -1, SQLITE_TRANSIENT);
+    if (lastScanAt) sqlite3_bind_int64(stmt, 7, [lastScanAt longLongValue]);
+    else sqlite3_bind_null(stmt, 7);
+    if (report) sqlite3_bind_text(stmt, 8, report.UTF8String, -1, SQLITE_TRANSIENT);
+    else sqlite3_bind_null(stmt, 8);
+    sqlite3_bind_int64(stmt, 9, [createdAt longLongValue]);
     ok = sqlite3_step(stmt) == SQLITE_DONE;
     sqlite3_finalize(stmt);
   });
@@ -295,75 +309,89 @@ static NSString * const kTrackColumns =
   __block BOOL ok = YES;
   dispatch_sync(_ioQueue, ^{
     if (![self _openOnQueue]) { ok = NO; return; }
-    sqlite3_exec(self->_db, "BEGIN IMMEDIATE;", NULL, NULL, NULL);
-    sqlite3_stmt *stmt = NULL;
-    const char *sql =
-      "INSERT INTO track(locator, source_id, item_key, title, title_sort, artist, album, album_artist, "
-      "album_key, artist_key, track_no, disc_no, year, genre, duration_ms, bitrate, ext, size, mtime, "
-      "artwork, has_embedded_lyric, sidecar_lrc, added_at, seen) "
-      "VALUES (?1, ?2, ?3, ?4, lower(?4), ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, 1) "
-      "ON CONFLICT(locator) DO UPDATE SET title=?4, title_sort=lower(?4), artist=?5, album=?6, album_artist=?7, "
-      "album_key=?8, artist_key=?9, track_no=?10, disc_no=?11, year=?12, genre=?13, duration_ms=?14, bitrate=?15, "
-      "ext=?16, size=?17, mtime=?18, artwork=?19, has_embedded_lyric=?20, sidecar_lrc=?21, seen=1";
-    if (sqlite3_prepare_v2(self->_db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+    // 异常兜底（S1 修复）：单行脏数据不允许把整个事务和 App 一起
+    // 带走。任何 ObjC 异常在这里捕获并回滚，模块层向 JS reject
+    @try {
+      sqlite3_exec(self->_db, "BEGIN IMMEDIATE;", NULL, NULL, NULL);
+      ok = [self _upsertRowsOnQueue:sourceId rows:rows];
+      sqlite3_exec(self->_db, ok ? "COMMIT;" : "ROLLBACK;", NULL, NULL, NULL);
+    } @catch (NSException *exception) {
+      NSLog(@"[LxLibraryStore] upsert exception: %@", exception);
       sqlite3_exec(self->_db, "ROLLBACK;", NULL, NULL, NULL);
       ok = NO;
-      return;
     }
-    long long now = (long long)([[NSDate date] timeIntervalSince1970] * 1000);
-    for (NSDictionary *row in rows) {
-      NSString *locator = row[@"locator"];
-      NSString *itemKey = row[@"item_key"];
-      NSString *title = row[@"title"] ?: itemKey;
-      NSString *artist = row[@"artist"];
-      NSString *album = row[@"album"];
-      NSString *albumArtist = row[@"album_artist"];
-      NSString *artistKey = [((albumArtist.length ? albumArtist : (artist ?: @"")) ?: @"") lowercaseString];
-      // album_key = artist_key + '\001' + album（\u 转义不允许控制字符，用八进制）
-      NSString *albumKey = [NSString stringWithFormat:@"%@\001%@", artistKey, [((album ?: @"")) lowercaseString]];
-      sqlite3_reset(stmt);
-      sqlite3_clear_bindings(stmt);
-      sqlite3_bind_text(stmt, 1, locator.UTF8String, -1, SQLITE_TRANSIENT);
-      sqlite3_bind_text(stmt, 2, sourceId.UTF8String, -1, SQLITE_TRANSIENT);
-      sqlite3_bind_text(stmt, 3, (itemKey ?: @"").UTF8String, -1, SQLITE_TRANSIENT);
-      sqlite3_bind_text(stmt, 4, title.UTF8String, -1, SQLITE_TRANSIENT);
-      if (artist && artist != (id)[NSNull null]) sqlite3_bind_text(stmt, 5, [artist UTF8String], -1, SQLITE_TRANSIENT); else sqlite3_bind_null(stmt, 5);
-      if (album && album != (id)[NSNull null]) sqlite3_bind_text(stmt, 6, [album UTF8String], -1, SQLITE_TRANSIENT); else sqlite3_bind_null(stmt, 6);
-      if (albumArtist && albumArtist != (id)[NSNull null]) sqlite3_bind_text(stmt, 7, [albumArtist UTF8String], -1, SQLITE_TRANSIENT); else sqlite3_bind_null(stmt, 7);
-      sqlite3_bind_text(stmt, 8, albumKey.UTF8String, -1, SQLITE_TRANSIENT);
-      sqlite3_bind_text(stmt, 9, artistKey.UTF8String, -1, SQLITE_TRANSIENT);
-      [self bindNumber:row[@"track_no"] toStatement:stmt index:10];
-      [self bindNumber:row[@"disc_no"] toStatement:stmt index:11];
-      [self bindNumber:row[@"year"] toStatement:stmt index:12];
-      id genre = row[@"genre"];
-      if (genre && genre != [NSNull null]) sqlite3_bind_text(stmt, 13, [genre UTF8String], -1, SQLITE_TRANSIENT); else sqlite3_bind_null(stmt, 13);
-      sqlite3_bind_int64(stmt, 14, [row[@"duration_ms"] ?: @0 longLongValue]);
-      [self bindNumber:row[@"bitrate"] toStatement:stmt index:15];
-      id ext = row[@"ext"];
-      if (ext && ext != [NSNull null]) sqlite3_bind_text(stmt, 16, [ext UTF8String], -1, SQLITE_TRANSIENT); else sqlite3_bind_null(stmt, 16);
-      [self bindNumber:row[@"size"] toStatement:stmt index:17];
-      [self bindNumber:row[@"mtime"] toStatement:stmt index:18];
-      id artwork = row[@"artwork"];
-      if (artwork && artwork != [NSNull null]) sqlite3_bind_text(stmt, 19, [artwork UTF8String], -1, SQLITE_TRANSIENT); else sqlite3_bind_null(stmt, 19);
-      sqlite3_bind_int(stmt, 20, [row[@"has_embedded_lyric"] boolValue] ? 1 : 0);
-      id sidecar = row[@"sidecar_lrc"];
-      if (sidecar && sidecar != [NSNull null]) sqlite3_bind_text(stmt, 21, [sidecar UTF8String], -1, SQLITE_TRANSIENT); else sqlite3_bind_null(stmt, 21);
-      sqlite3_bind_int64(stmt, 22, now);
-      if (sqlite3_step(stmt) != SQLITE_DONE) {
-        NSLog(@"[LxLibraryStore] upsert failed for %@: %s", locator, sqlite3_errmsg(self->_db));
-        ok = NO;
-        break;
-      }
-    }
-    sqlite3_finalize(stmt);
-    sqlite3_exec(self->_db, ok ? "COMMIT;" : "ROLLBACK;", NULL, NULL, NULL);
   });
   return ok;
 }
 
-- (void)bindNumber:(id)value toStatement:(sqlite3_stmt *)stmt index:(int)index
+- (BOOL)_upsertRowsOnQueue:(NSString *)sourceId rows:(NSArray<NSDictionary *> *)rows
 {
-  if (value && value != [NSNull null]) sqlite3_bind_int64(stmt, index, [value longLongValue]);
+  sqlite3_stmt *stmt = NULL;
+  const char *sql =
+    "INSERT INTO track(locator, source_id, item_key, title, title_sort, artist, album, album_artist, "
+    "album_key, artist_key, track_no, disc_no, year, genre, duration_ms, bitrate, ext, size, mtime, "
+    "artwork, has_embedded_lyric, sidecar_lrc, added_at, seen) "
+    "VALUES (?1, ?2, ?3, ?4, lower(?4), ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, 1) "
+    "ON CONFLICT(locator) DO UPDATE SET title=?4, title_sort=lower(?4), artist=?5, album=?6, album_artist=?7, "
+    "album_key=?8, artist_key=?9, track_no=?10, disc_no=?11, year=?12, genre=?13, duration_ms=?14, bitrate=?15, "
+    "ext=?16, size=?17, mtime=?18, artwork=?19, has_embedded_lyric=?20, sidecar_lrc=?21, seen=1";
+  if (sqlite3_prepare_v2(_db, sql, -1, &stmt, NULL) != SQLITE_OK) return NO;
+  long long now = (long long)([[NSDate date] timeIntervalSince1970] * 1000);
+  BOOL ok = YES;
+  for (NSDictionary *row in rows) {
+    // 所有桥值经 LxStr / LxNum 清洗：JS null 到达时是 NSNull，
+    // 直接发消息会崩（S1 根因）
+    NSString *locator = LxStr(row[@"locator"]);
+    NSString *itemKey = LxStr(row[@"item_key"]);
+    if (!locator.length || !itemKey.length) continue;
+    NSString *title = LxStr(row[@"title"]) ?: itemKey;
+    NSString *artist = LxStr(row[@"artist"]);
+    NSString *album = LxStr(row[@"album"]);
+    NSString *albumArtist = LxStr(row[@"album_artist"]);
+    NSString *artistKey = [(albumArtist.length ? albumArtist : (artist ?: @"")) lowercaseString];
+    // album_key = artist_key + '\001' + album（\u 转义不允许控制字符，用八进制）
+    NSString *albumKey = [NSString stringWithFormat:@"%@\001%@", artistKey, [(album ?: @"") lowercaseString]];
+    sqlite3_reset(stmt);
+    sqlite3_clear_bindings(stmt);
+    sqlite3_bind_text(stmt, 1, locator.UTF8String, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, sourceId.UTF8String, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, itemKey.UTF8String, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 4, title.UTF8String, -1, SQLITE_TRANSIENT);
+    if (artist) sqlite3_bind_text(stmt, 5, artist.UTF8String, -1, SQLITE_TRANSIENT); else sqlite3_bind_null(stmt, 5);
+    if (album) sqlite3_bind_text(stmt, 6, album.UTF8String, -1, SQLITE_TRANSIENT); else sqlite3_bind_null(stmt, 6);
+    if (albumArtist) sqlite3_bind_text(stmt, 7, albumArtist.UTF8String, -1, SQLITE_TRANSIENT); else sqlite3_bind_null(stmt, 7);
+    sqlite3_bind_text(stmt, 8, albumKey.UTF8String, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 9, artistKey.UTF8String, -1, SQLITE_TRANSIENT);
+    [self bindNumber:LxNum(row[@"track_no"]) toStatement:stmt index:10];
+    [self bindNumber:LxNum(row[@"disc_no"]) toStatement:stmt index:11];
+    [self bindNumber:LxNum(row[@"year"]) toStatement:stmt index:12];
+    NSString *genre = LxStr(row[@"genre"]);
+    if (genre) sqlite3_bind_text(stmt, 13, genre.UTF8String, -1, SQLITE_TRANSIENT); else sqlite3_bind_null(stmt, 13);
+    sqlite3_bind_int64(stmt, 14, LxLong(row[@"duration_ms"]));
+    [self bindNumber:LxNum(row[@"bitrate"]) toStatement:stmt index:15];
+    NSString *ext = LxStr(row[@"ext"]);
+    if (ext) sqlite3_bind_text(stmt, 16, ext.UTF8String, -1, SQLITE_TRANSIENT); else sqlite3_bind_null(stmt, 16);
+    [self bindNumber:LxNum(row[@"size"]) toStatement:stmt index:17];
+    [self bindNumber:LxNum(row[@"mtime"]) toStatement:stmt index:18];
+    NSString *artwork = LxStr(row[@"artwork"]);
+    if (artwork) sqlite3_bind_text(stmt, 19, artwork.UTF8String, -1, SQLITE_TRANSIENT); else sqlite3_bind_null(stmt, 19);
+    sqlite3_bind_int(stmt, 20, LxBool(row[@"has_embedded_lyric"]) ? 1 : 0);
+    NSString *sidecar = LxStr(row[@"sidecar_lrc"]);
+    if (sidecar) sqlite3_bind_text(stmt, 21, sidecar.UTF8String, -1, SQLITE_TRANSIENT); else sqlite3_bind_null(stmt, 21);
+    sqlite3_bind_int64(stmt, 22, now);
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+      NSLog(@"[LxLibraryStore] upsert failed for %@: %s", locator, sqlite3_errmsg(_db));
+      ok = NO;
+      break;
+    }
+  }
+  sqlite3_finalize(stmt);
+  return ok;
+}
+
+- (void)bindNumber:(NSNumber *)value toStatement:(sqlite3_stmt *)stmt index:(int)index
+{
+  if (value) sqlite3_bind_int64(stmt, index, [value longLongValue]);
   else sqlite3_bind_null(stmt, index);
 }
 
@@ -429,6 +457,64 @@ static NSString * const kTrackColumns =
   return ok;
 }
 
+- (NSArray<NSString *> *)listItemKeysForSourceId:(NSString *)sourceId
+{
+  if (!sourceId.length) return @[];
+  __block NSMutableArray *out = [NSMutableArray array];
+  dispatch_sync(_ioQueue, ^{
+    if (![self _openOnQueue]) return;
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(self->_db, "SELECT item_key FROM track WHERE source_id = ?1", -1, &stmt, NULL) != SQLITE_OK) return;
+    sqlite3_bind_text(stmt, 1, sourceId.UTF8String, -1, SQLITE_TRANSIENT);
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+      const unsigned char *key = sqlite3_column_text(stmt, 0);
+      if (key) [out addObject:[NSString stringWithUTF8String:(const char *)key]];
+    }
+    sqlite3_finalize(stmt);
+  });
+  return out;
+}
+
+- (NSDictionary *)configForSourceId:(NSString *)sourceId
+{
+  if (!sourceId.length) return nil;
+  __block NSDictionary *out = nil;
+  dispatch_sync(_ioQueue, ^{
+    if (![self _openOnQueue]) return;
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(self->_db, "SELECT config, type FROM source WHERE id = ?1", -1, &stmt, NULL) != SQLITE_OK) return;
+    sqlite3_bind_text(stmt, 1, sourceId.UTF8String, -1, SQLITE_TRANSIENT);
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+      const unsigned char *config = sqlite3_column_text(stmt, 0);
+      const unsigned char *type = sqlite3_column_text(stmt, 1);
+      out = @{
+        @"config": config ? [NSString stringWithUTF8String:(const char *)config] : @"{}",
+        @"type": type ? [NSString stringWithUTF8String:(const char *)type] : @"local",
+      };
+    }
+    sqlite3_finalize(stmt);
+  });
+  return out;
+}
+
+- (BOOL)updateScanState:(NSString *)sourceId lastScanAt:(long long)at report:(NSString *)report
+{
+  if (!sourceId.length) return NO;
+  __block BOOL ok = NO;
+  dispatch_sync(_ioQueue, ^{
+    if (![self _openOnQueue]) return;
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(self->_db, "UPDATE source SET last_scan_at = ?2, last_scan_report = ?3, state = 'ok' WHERE id = ?1", -1, &stmt, NULL) != SQLITE_OK) return;
+    sqlite3_bind_text(stmt, 1, sourceId.UTF8String, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(stmt, 2, at);
+    if (report.length) sqlite3_bind_text(stmt, 3, report.UTF8String, -1, SQLITE_TRANSIENT);
+    else sqlite3_bind_null(stmt, 3);
+    ok = sqlite3_step(stmt) == SQLITE_DONE;
+    sqlite3_finalize(stmt);
+  });
+  return ok;
+}
+
 - (BOOL)setOffline:(NSString *)locator relPath:(NSString *)relPath
 {
   if (!locator.length) return NO;
@@ -467,19 +553,19 @@ static NSString * const kTrackColumns =
 
 - (NSDictionary *)query:(NSDictionary *)spec
 {
-  NSString *kind = spec[@"kind"] ?: @"tracks";
+  NSString *kind = LxStr(spec[@"kind"]) ?: @"tracks";
   __block NSMutableArray *rows = [NSMutableArray array];
   __block NSInteger total = 0;
   dispatch_sync(_ioQueue, ^{
     if (![self _openOnQueue]) return;
-    NSInteger offset = [spec[@"offset"] ?: @0 integerValue];
-    NSInteger limit = [spec[@"limit"] ?: @(kQueryLimitMax) integerValue];
+    NSInteger offset = (NSInteger)LxLong(spec[@"offset"]);
+    NSInteger limit = (NSInteger)LxLong(spec[@"limit"]);
     if (limit <= 0 || limit > kQueryLimitMax) limit = kQueryLimitMax;
     if (offset < 0) offset = 0;
-    NSString *keyword = spec[@"keyword"];
+    NSString *keyword = LxStr(spec[@"keyword"]);
     NSArray *sourceIds = spec[@"sourceIds"];
-    NSString *albumKey = spec[@"albumKey"];
-    NSString *artistKey = spec[@"artistKey"];
+    NSString *albumKey = LxStr(spec[@"albumKey"]);
+    NSString *artistKey = LxStr(spec[@"artistKey"]);
 
     if ([kind isEqualToString:@"albums"]) {
       [self _queryAlbumsRows:rows total:&total sourceIds:sourceIds keyword:keyword offset:offset limit:limit];
@@ -505,10 +591,17 @@ static NSString * const kTrackColumns =
 - (void)appendSourceFilter:(NSMutableString *)sql bindings:(NSMutableArray *)bindings sourceIds:(NSArray *)sourceIds
 {
   if (!sourceIds.count) return;
+  // 桥数组可能混入非字符串元素（如 NSNull），过滤后再绑定，
+  // 否则 bindStrings 对其发 UTF8String 会崩
+  NSMutableArray *validIds = [NSMutableArray array];
+  for (id sid in sourceIds) {
+    if ([sid isKindOfClass:[NSString class]] && [(NSString *)sid length]) [validIds addObject:sid];
+  }
+  if (!validIds.count) return;
   NSMutableArray *placeholders = [NSMutableArray array];
-  for (id sid in sourceIds) [placeholders addObject:@"?"];
+  for (id sid in validIds) [placeholders addObject:@"?"];
   [sql appendFormat:@" AND t.source_id IN (%@)", [placeholders componentsJoinedByString:@","]];
-  [bindings addObjectsFromArray:sourceIds];
+  [bindings addObjectsFromArray:validIds];
 }
 
 - (void)appendKeywordFilter:(NSMutableString *)sql bindings:(NSMutableArray *)bindings keyword:(NSString *)keyword

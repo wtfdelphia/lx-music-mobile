@@ -1,4 +1,6 @@
 #import "LxFolderAccess.h"
+#import "LxLibraryStore.h"
+#import "LxLibraryUtils.h"
 #import <Foundation/Foundation.h>
 
 // 文件夹授权实现（§5.2）：
@@ -52,10 +54,11 @@ typedef NS_ENUM(NSInteger, LxLibraryErrorCode) {
 
 - (BOOL)saveGrantForSourceId:(NSString *)sourceId config:(NSDictionary *)config
 {
-  if (!sourceId.length || !config) return NO;
+  if (!sourceId.length || ![config isKindOfClass:[NSDictionary class]]) return NO;
   LxGrant *grant = [LxGrant new];
-  NSString *bookmarkBase64 = config[@"bookmark"];
-  NSString *relPath = config[@"relPath"];
+  // LxStr 清洗：JS null 到达时是 NSNull，对其发 length 会崩（F5）
+  NSString *bookmarkBase64 = LxStr(config[@"bookmark"]);
+  NSString *relPath = LxStr(config[@"relPath"]);
   if (bookmarkBase64.length) {
     grant.sandbox = NO;
     grant.bookmark = [[NSData alloc] initWithBase64EncodedString:bookmarkBase64 options:0];
@@ -69,6 +72,31 @@ typedef NS_ENUM(NSInteger, LxLibraryErrorCode) {
     _grants[sourceId] = grant;
   }
   return YES;
+}
+
+// F4：「下载」虚拟来源等无外部授权的来源，根目录即 Documents
+- (BOOL)ensureGrantForSourceId:(NSString *)sourceId
+{
+  @synchronized (self) {
+    if (_grants[sourceId]) return YES;
+  }
+  NSDictionary *meta = [[LxLibraryStore shared] configForSourceId:sourceId];
+  if (!meta) return NO;
+  NSString *type = LxStr(meta[@"type"]);
+  if ([type isEqualToString:@"download"]) {
+    // 下载来源：文件在 Documents 内，相对路径即 itemKey，无需授权
+    LxGrant *grant = [LxGrant new];
+    grant.sandbox = YES;
+    grant.relPath = @"";
+    @synchronized (self) {
+      _grants[sourceId] = grant;
+    }
+    return YES;
+  }
+  NSString *configJSON = LxStr(meta[@"config"]);
+  if (!configJSON.length) return NO;
+  NSDictionary *config = [NSJSONSerialization JSONObjectWithData:[configJSON dataUsingEncoding:NSUTF8StringEncoding] options:0 error:nil];
+  return [self saveGrantForSourceId:sourceId config:config];
 }
 
 - (NSURL *)documentsURL
@@ -89,11 +117,22 @@ typedef NS_ENUM(NSInteger, LxLibraryErrorCode) {
     }
   }
   if (!grant) {
-    if (error) *error = [NSError errorWithDomain:LxLibraryErrorDomain code:LxLibraryErrorNotFound userInfo:@{NSLocalizedDescriptionKey: @"no grant"}];
-    return NO;
+    // F1：冷启动后内存授权丢失，从 Store 懒加载
+    if ([self ensureGrantForSourceId:sourceId]) {
+      @synchronized (self) {
+        grant = _grants[sourceId];
+        grant.refCount += 1;
+      }
+    } else {
+      if (error) *error = [NSError errorWithDomain:LxLibraryErrorDomain code:LxLibraryErrorNotFound userInfo:@{NSLocalizedDescriptionKey: @"no grant"}];
+      return NO;
+    }
   }
   if (grant.sandbox) {
-    grant.url = [[self documentsURL] URLByAppendingPathComponent:grant.relPath isDirectory:YES];
+    // relPath 为空串（下载虚拟来源，F4）：根目录即 Documents
+    grant.url = grant.relPath.length
+      ? [[self documentsURL] URLByAppendingPathComponent:grant.relPath isDirectory:YES]
+      : [self documentsURL];
     return YES;
   }
   // 外部目录：解析 bookmark

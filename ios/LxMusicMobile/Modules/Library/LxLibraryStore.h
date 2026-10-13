@@ -22,6 +22,12 @@
 - (NSInteger)finishSync:(NSString *)sourceId;
 - (NSDictionary * _Nullable)getTrack:(NSString *)locator;
 - (BOOL)deleteTrack:(NSString *)locator;
+// 全量 itemKey（自动关联差量对账用，避免 limit 200 截断）
+- (NSArray<NSString *> *)listItemKeysForSourceId:(NSString *)sourceId;
+// 来源配置与类型（授权懒加载用，F1）
+- (NSDictionary * _Nullable)configForSourceId:(NSString *)sourceId;
+// 扫描结束时间 / 报告落库（低危项修复）
+- (BOOL)updateScanState:(NSString *)sourceId lastScanAt:(long long)at report:(NSString * _Nullable)report;
 - (BOOL)setOffline:(NSString *)locator relPath:(NSString * _Nullable)relPath;
 - (BOOL)bumpPlay:(NSString *)locator;
 

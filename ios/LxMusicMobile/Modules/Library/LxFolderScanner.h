@@ -7,15 +7,19 @@
 @protocol LxFolderScannerDelegate <NSObject>
 - (void)scanner:(LxFolderScanner *)scanner sourceId:(NSString *)sourceId
        phase:(NSString *)phase scanned:(NSInteger)scanned total:(NSInteger)total imported:(NSInteger)imported;
-- (void)scanner:(LxFolderScanner *)scanner sourceId:(NSString *)sourceId finishedWithReport:(NSDictionary *)report;
+// 完成：rows 为探测成功的曲目行（供模块层批量 upsert），
+// report 为扫描报告（不支持 / 未下载 / 失败 / 不可读目录）
+- (void)scanner:(LxFolderScanner *)scanner sourceId:(NSString *)sourceId
+  finishedWithRows:(NSArray<NSDictionary *> *)rows report:(NSDictionary *)report;
 @end
 
 // 文件夹扫描（§5.3）：
 // - NSFileManager enumerator + NSFileCoordinator 一致视图（失败回退普通枚举）
 // - 白名单（AVPlayer 可播放格式）；iCloud 未下载文件识别
-// - 增量：size + mtime 不变跳过元数据读取
-// - 删除保护：读不到的子目录记录到 unreadable，finishSync 不清理
-// - 并发 4 读元数据；支持取消
+// - 元数据并发 4：逐文件 dispatch + 信号量，探测完成即释放（F2 修复：
+//   不再攒批派发，避免第 5 个文件起永久阻塞）
+// - 探测结果组装为曲目行交给模块层入库（F3 修复：不再丢弃）
+// - 支持取消
 @interface LxFolderScanner : NSObject
 
 @property (nonatomic, weak) id<LxFolderScannerDelegate> delegate;

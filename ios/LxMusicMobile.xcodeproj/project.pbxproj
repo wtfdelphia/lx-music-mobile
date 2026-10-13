@@ -90,6 +90,7 @@
 		E105A00D00000000000000B1 /* LxArtworkCache.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = LxArtworkCache.h; path = LxMusicMobile/Modules/Library/LxArtworkCache.h; sourceTree = "<group>"; };
 		E105A00D00000000000000B2 /* LxArtworkCache.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = LxArtworkCache.m; path = LxMusicMobile/Modules/Library/LxArtworkCache.m; sourceTree = "<group>"; };
 		E105A00E00000000000000B1 /* LxCredentialStore.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = LxCredentialStore.h; path = LxMusicMobile/Modules/Library/LxCredentialStore.h; sourceTree = "<group>"; };
+		E105A01000000000000000B1 /* LxLibraryUtils.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = LxLibraryUtils.h; path = LxMusicMobile/Modules/Library/LxLibraryUtils.h; sourceTree = "<group>"; };
 		E105A00E00000000000000B2 /* LxCredentialStore.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = LxCredentialStore.m; path = LxMusicMobile/Modules/Library/LxCredentialStore.m; sourceTree = "<group>"; };
 		E105A00F00000000000000B2 /* libsqlite3.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libsqlite3.tbd; path = usr/lib/libsqlite3.tbd; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
@@ -169,6 +170,7 @@
 				E105A00D00000000000000B2 /* LxArtworkCache.m */,
 				E105A00E00000000000000B1 /* LxCredentialStore.h */,
 				E105A00E00000000000000B2 /* LxCredentialStore.m */,
+				E105A01000000000000000B1 /* LxLibraryUtils.h */,
 				E105A00300000000000000B3 /* user-api-preload.js */,
 				E105A00100000000000000B3 /* icomoon.ttf */,
 			);

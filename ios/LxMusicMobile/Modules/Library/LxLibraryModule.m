@@ -5,6 +5,7 @@
 #import "LxMediaProbe.h"
 #import "LxArtworkCache.h"
 #import "LxCredentialStore.h"
+#import "LxLibraryUtils.h"
 #import <UIKit/UIKit.h>
 
 // 本地曲库模块实现（§5）。
@@ -69,18 +70,19 @@ RCT_EXPORT_METHOD(saveSource:(NSDictionary *)source
                   resolver:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 {
-  NSString *sourceId = source[@"id"];
+  NSString *sourceId = LxStr(source[@"id"]);
   BOOL ok = [[LxLibraryStore shared] saveSource:source];
-  if (ok) {
-    // 记录授权
-    NSDictionary *config = source[@"config"];
-    if ([config isKindOfClass:[NSString class]]) {
-      NSData *data = [(NSString *)config dataUsingEncoding:NSUTF8StringEncoding];
-      config = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+  if (ok && sourceId.length) {
+    // 记录授权：config 字段是 JSON 字符串；解析失败不阻断落库
+    //（下载虚拟来源等无授权来源由 acquire 时懒加载，F1 / F4）
+    NSString *configStr = LxStr(source[@"config"]);
+    NSDictionary *config = nil;
+    if (configStr.length) {
+      NSData *data = [configStr dataUsingEncoding:NSUTF8StringEncoding];
+      id parsed = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+      if ([parsed isKindOfClass:[NSDictionary class]]) config = parsed;
     }
-    if ([config isKindOfClass:[NSDictionary class]]) {
-      [[LxFolderAccess shared] saveGrantForSourceId:sourceId config:config];
-    }
+    [[LxFolderAccess shared] saveGrantForSourceId:sourceId config:config ?: @{}];
   }
   resolve(@(ok));
 }
@@ -144,8 +146,8 @@ RCT_EXPORT_METHOD(pickFolder:(RCTPromiseResolveBlock)resolve
   if (inSandbox) {
     NSString *rel = [path substringFromIndex:documents.length];
     if ([rel hasPrefix:@"/"]) rel = [rel substringFromIndex:1];
+    // 只回传存在的键：不回传 [NSNull null]，下游一律按缺失处理（F5）
     result[@"relPath"] = rel;
-    result[@"bookmark"] = [NSNull null];
   } else {
     // 生成 bookmark（§5.2）
     BOOL started = [url startAccessingSecurityScopedResource];
@@ -158,7 +160,6 @@ RCT_EXPORT_METHOD(pickFolder:(RCTPromiseResolveBlock)resolve
       return;
     }
     result[@"bookmark"] = [bookmark base64EncodedStringWithOptions:0];
-    result[@"relPath"] = [NSNull null];
   }
   if (self.pendingPickResolve) self.pendingPickResolve(result);
   self.pendingPickResolve = nil;
@@ -206,7 +207,7 @@ RCT_EXPORT_METHOD(startScan:(NSString *)sourceId options:(NSDictionary *)options
                   resolver:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 {
-  BOOL recursive = [options[@"recursive"] boolValue];
+  BOOL recursive = LxBool(options[@"recursive"]);
   NSURL *rootURL = [[LxFolderAccess shared] rootURLForSourceId:sourceId];
   if (!rootURL) {
     // 先 acquire
@@ -238,33 +239,84 @@ RCT_EXPORT_METHOD(cancelScan:(NSString *)sourceId
 - (void)scanner:(LxFolderScanner *)scanner sourceId:(NSString *)sourceId
           phase:(NSString *)phase scanned:(NSInteger)scanned total:(NSInteger)total imported:(NSInteger)imported
 {
-  // 300ms 节流（§5.3）
-  NSDate *now = [NSDate date];
-  if (self.lastProgressEmit && [now timeIntervalSinceDate:self.lastProgressEmit] < 0.3) return;
-  self.lastProgressEmit = now;
-  if (!_hasListeners) return;
-  [self sendEventWithName:kScanProgressEvent body:@{
-    @"sourceId": sourceId,
-    @"phase": phase ?: @"enumerate",
-    @"scanned": @(scanned),
-    @"total": @(total),
-    @"imported": @(imported),
-  }];
+  // 300ms 节流（§5.3）。回调来自扫描线程：节流戳与事件发送统一
+  // 转主队列，消除跨线程读写竞态（低危项修复）
+  dispatch_async(dispatch_get_main_queue(), ^{
+    NSDate *now = [NSDate date];
+    if (self.lastProgressEmit && [now timeIntervalSinceDate:self.lastProgressEmit] < 0.3) return;
+    self.lastProgressEmit = now;
+    if (!self->_hasListeners) return;
+    [self sendEventWithName:kScanProgressEvent body:@{
+      @"sourceId": sourceId,
+      @"phase": phase ?: @"enumerate",
+      @"scanned": @(scanned),
+      @"total": @(total),
+      @"imported": @(imported),
+    }];
+  });
 }
 
-- (void)scanner:(LxFolderScanner *)scanner sourceId:(NSString *)sourceId finishedWithReport:(NSDictionary *)report
+- (void)scanner:(LxFolderScanner *)scanner sourceId:(NSString *)sourceId
+  finishedWithRows:(NSArray<NSDictionary *> *)rows report:(NSDictionary *)report
 {
-  self.lastProgressEmit = nil;
-  // 写回来源的 last_scan_at / report（摘要）
-  NSMutableDictionary *source = [NSMutableDictionary dictionary];
-  source[@"id"] = sourceId;
-  source[@"lastScanAt"] = @((long long)([[NSDate date] timeIntervalSince1970] * 1000));
-  NSData *reportData = [NSJSONSerialization dataWithJSONObject:report options:0 error:nil];
-  if (reportData) source[@"lastScanReport"] = [[NSString alloc] initWithData:reportData encoding:NSUTF8StringEncoding];
-  // 注意：这里只更新扫描时间字段，完整来源行由 JS 侧 getSources 后 saveSource
-  if (_hasListeners) {
-    [self sendEventWithName:kScanDoneEvent body:@{ @"sourceId": sourceId, @"report": report ?: @{} }];
+  // 完成回调来自扫描线程：落库可在 io 队列（线程安全），但事件与
+  // 节流戳必须回主队列；入库先行，事件在其后发出
+  dispatch_async(dispatch_get_main_queue(), ^{
+    self.lastProgressEmit = nil;
+    [self _finishScanOnMain:sourceId rows:rows report:report];
+  });
+}
+
+- (void)_finishScanOnMain:(NSString *)sourceId rows:(NSArray<NSDictionary *> *)rows report:(NSDictionary *)report
+{
+  // 入库（F3 修复）：补定位符后分批 upsert（每批 ≤500，§5.1），
+  // 正常完成的扫描才做 finishSync 清理；取消的扫描不清理（§5.3）
+  BOOL cancelled = [LxBool(report[@"cancelled"]) boolValue];
+  NSInteger imported = 0;
+  if (rows.count) {
+    NSMutableArray *batch = [NSMutableArray array];
+    for (NSDictionary *row in rows) {
+      NSString *itemKey = LxStr(row[@"item_key"]);
+      if (!itemKey.length) continue;
+      NSMutableDictionary *full = [row mutableCopy];
+      full[@"locator"] = [self locatorForSourceId:sourceId itemKey:itemKey];
+      [batch addObject:full];
+      if (batch.count >= 500) {
+        if ([[LxLibraryStore shared] upsertTracks:sourceId rows:batch]) imported += batch.count;
+        [batch removeAllObjects];
+      }
+    }
+    if (batch.count) {
+      if ([[LxLibraryStore shared] upsertTracks:sourceId rows:batch]) imported += batch.count;
+    }
   }
+  if (!cancelled) {
+    [[LxLibraryStore shared] finishSync:sourceId];
+  }
+  // 扫描状态落库（低危修复）：last_scan_at / 报告摘要 / state
+  long long now = (long long)([[NSDate date] timeIntervalSince1970] * 1000);
+  NSMutableDictionary *summary = [report mutableCopy] ?: [NSMutableDictionary dictionary];
+  summary[@"imported"] = @(imported);
+  NSData *reportData = [NSJSONSerialization dataWithJSONObject:summary options:0 error:nil];
+  NSString *reportJSON = reportData ? [[NSString alloc] initWithData:reportData encoding:NSUTF8StringEncoding] : nil;
+  [[LxLibraryStore shared] updateScanState:sourceId lastScanAt:now report:reportJSON];
+  if (_hasListeners) {
+    [self sendEventWithName:kScanDoneEvent body:@{ @"sourceId": sourceId, @"report": summary }];
+  }
+}
+
+// 定位符构造（§4）：lxlib://<sourceId>/<itemKey>，逐段百分号编码，
+// 与 JS 侧 `encodeURIComponent` 的保留集对齐
+- (NSString *)locatorForSourceId:(NSString *)sourceId itemKey:(NSString *)itemKey
+{
+  NSMutableCharacterSet *allowed = [NSMutableCharacterSet alphanumericCharacterSet];
+  [allowed addCharactersInString:@"-._~"];
+  NSMutableArray *encoded = [NSMutableArray array];
+  for (NSString *seg in [itemKey componentsSeparatedByString:@"/"]) {
+    NSString *enc = [seg stringByAddingPercentEncodingWithAllowedCharacters:allowed];
+    [encoded addObject:enc ?: @""];
+  }
+  return [NSString stringWithFormat:@"lxlib://%@/%@", sourceId, [encoded componentsJoinedByString:@"/"]];
 }
 
 #pragma mark - 查询与写入（转发 Store）
@@ -290,6 +342,14 @@ RCT_EXPORT_METHOD(finishSync:(NSString *)sourceId
 {
   NSInteger removed = [[LxLibraryStore shared] finishSync:sourceId];
   resolve(@(removed));
+}
+
+// 全量 itemKey（自动关联差量对账用，避免 query limit 截断，S3）
+RCT_EXPORT_METHOD(listItemKeysForSourceId:(NSString *)sourceId
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  resolve([[LxLibraryStore shared] listItemKeysForSourceId:sourceId]);
 }
 
 RCT_EXPORT_METHOD(getTrack:(NSString *)locator
