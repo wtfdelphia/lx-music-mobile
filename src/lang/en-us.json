@@ -635,5 +635,17 @@
   "library_source_still_in_lists": "{num} song(s) from this source are still in LX lists and will become unplayable",
   "library_multiselect": "Select",
   "library_select_all": "Select all",
-  "library_settings": "Settings"
+  "library_settings": "Settings",
+  "library_more": "More",
+  "library_source_state_ok": "OK",
+  "library_source_state_needs_reauth": "Re-auth needed",
+  "library_source_state_unreachable": "Unreachable",
+  "library_source_state_scanning": "Scanning",
+  "library_source_relink": "Re-auth",
+  "library_source_disable": "Disable",
+  "library_source_enable": "Enable",
+  "library_source_edit": "Edit",
+  "library_tracks": "{num} tracks",
+  "library_scan": "Scan",
+  "library_source_delete_tip": "Deleting this source removes all its tracks. Continue?"
 }

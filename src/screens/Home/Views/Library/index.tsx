@@ -7,6 +7,7 @@ import { handlePlay } from './listAction'
 import { toMusicInfo } from '@/core/library/toMusicInfo'
 import MusicAddModal, { type MusicAddModalType } from '@/components/MusicAddModal'
 import Modal, { type ModalType } from '@/components/common/Modal'
+import SourceManageModal, { type SourceManageModalType } from './SourceManageModal'
 import { queryTracks, queryAlbums, queryArtists, queryAlbumTracks, queryArtistTracks } from '@/core/library/query'
 import { setRows, setTabId, setFilterSourceId } from '@/store/library/action'
 import { useLibrarySources } from '@/store/library/hook'
@@ -17,6 +18,9 @@ import { startSourceScan, refreshSources, scanAllSources } from '@/core/library/
 import { removeFromLibrary, deleteFiles, toggleLove, getLoveSet } from '@/core/library/actions'
 import { searchLyricCandidates, applyLyricCandidate, type LyricCandidate } from '@/core/library/lyricSearch'
 import { toast, createStyle, confirmDialog } from '@/utils/tools'
+import { addListMusics } from '@/core/list'
+import { LIST_IDS } from '@/config/constant'
+import settingState from '@/store/setting/state'
 import { useI18n } from '@/lang'
 import { useTheme } from '@/store/theme/hook'
 import Text from '@/components/common/Text'
@@ -43,6 +47,7 @@ export default () => {
   const listMenuRef = useRef<ListMenuType>(null)
   const metadataEditRef = useRef<MetadataEditType>(null)
   const listAddModalRef = useRef<MusicAddModalType>(null)
+  const sourceManageRef = useRef<SourceManageModalType>(null)
   const [tabId, setTabIdState] = useState<LibraryTabId>(state.tabId)
   const [keyword, setKeyword] = useState('')
   // 专辑 / 艺人下钻状态：P1 先在列内下钻，详情屏（3.3）接入后迁移
@@ -290,6 +295,63 @@ export default () => {
     void refreshSources()
   }, [t])
 
+  // ---- 多选（§14.2 复用现有多选语义）----
+  const [multiSelect, setMultiSelect] = useState(false)
+  const [selectedLocators, setSelectedLocators] = useState<string[]>([])
+
+  const handleMultiSelectModeChange = useCallback((active: boolean, locators: string[]) => {
+    setMultiSelect(active)
+    setSelectedLocators(locators)
+  }, [])
+
+  const selectedRows = useMemo(
+    () => state.rows.filter(r => selectedLocators.includes(r.locator)),
+    // 选中集合变化即重算；state.rows 由订阅驱动，这里按内容比较足够
+    [selectedLocators],
+  )
+
+  const handleBatchPlay = useCallback(() => {
+    if (!selectedRows.length) return
+    void handlePlay(selectedRows, 0)
+    listRef.current?.exitMultiSelect()
+  }, [selectedRows])
+
+  const handleBatchAddToList = useCallback(() => {
+    if (!selectedRows.length) return
+    const musicInfos = selectedRows.map(r => toMusicInfo(r))
+    void addListMusics(LIST_IDS.TEMP, musicInfos, settingState.setting['list.addMusicLocationType'])
+    toast(t('list_add_tip_exists'), 'short')
+    listRef.current?.clearSelection()
+  }, [selectedRows, t])
+
+  const handleBatchRemove = useCallback(async() => {
+    if (!selectedRows.length) return
+    const confirmed = await confirmDialog({
+      message: t('library_remove_confirm'),
+      confirmButtonText: t('library_remove'),
+    })
+    if (!confirmed) return
+    await removeFromLibrary(selectedRows)
+    listRef.current?.exitMultiSelect()
+    void refreshSources()
+  }, [selectedRows, t])
+
+  const handleBatchDeleteFiles = useCallback(async() => {
+    if (!selectedRows.length) return
+    const confirmed = await confirmDialog({
+      message: t('library_delete_file_confirm').replace('{num}', String(selectedRows.length)),
+      confirmButtonText: t('library_delete_file'),
+    })
+    if (!confirmed) return
+    try {
+      await deleteFiles(selectedRows)
+    } catch {
+      toast(t('library_delete_failed'), 'short')
+    }
+    listRef.current?.exitMultiSelect()
+    void refreshSources()
+  }, [selectedRows, t])
+
   const handleScanAll = useCallback(() => {
     // 元数据修复后存量曲目需重扫刷新；扫描中重复点击由
     // startSourceScan 的单飞锁挡住
@@ -371,6 +433,9 @@ export default () => {
                   />
                 </View>
               )}
+          <Button style={styles.addBtn} onPress={() => { sourceManageRef.current?.show() }}>
+            <Text size={13} color={theme['c-font']}>{t('library_source_manage')}</Text>
+          </Button>
           <Button style={styles.addBtn} onPress={handleScanAll}>
             <Text size={13} color={theme['c-font']}>{t('library_scan_all')}</Text>
           </Button>
@@ -379,13 +444,44 @@ export default () => {
           </Button>
         </View>
       </View>
+      {multiSelect
+        ? (
+            <View style={styles.multiBar}>
+              <Button style={styles.multiBtn} onPress={handleBatchPlay}>
+                <Text size={13} color={theme['c-primary-font']}>{t('play')}</Text>
+              </Button>
+              <Button style={styles.multiBtn} onPress={handleBatchAddToList}>
+                <Text size={13} color={theme['c-primary-font']}>{t('library_add_to_list')}</Text>
+              </Button>
+              <Button style={styles.multiBtn} onPress={() => { void handleBatchRemove() }}>
+                <Text size={13} color={theme['c-primary-font']}>{t('library_remove')}</Text>
+              </Button>
+              <Button style={styles.multiBtn} onPress={() => { void handleBatchDeleteFiles() }}>
+                <Text size={13} color="#f24a4a">{t('library_delete_file')}</Text>
+              </Button>
+              <Button style={styles.multiBtn} onPress={() => { listRef.current?.exitMultiSelect() }}>
+                <Text size={13} color={theme['c-font']}>{t('back')}</Text>
+              </Button>
+            </View>
+          )
+        : null}
       {hasSource
         ? (
-            <List ref={listRef} onPlay={handlePlayRow} onShowMenu={handleShowMenu} />
+            <List
+              ref={listRef}
+              onPlay={handlePlayRow}
+              onShowMenu={handleShowMenu}
+              onMultiSelectModeChange={handleMultiSelectModeChange}
+              isTrackView={drill !== null || tabId === 'tracks'}
+              loveSet={loveSet}
+            />
           )
         : (
             <View style={styles.empty}>
               <Text color={theme['c-font-label']}>{t('library_empty')}</Text>
+              <Button style={styles.emptyBtn} onPress={handleAddFolder}>
+                <Text size={13} color={theme['c-primary-font']}>{t('library_add_folder')}</Text>
+              </Button>
             </View>
           )}
       <ListMenu
@@ -403,6 +499,7 @@ export default () => {
       />
       <MetadataEditModal ref={metadataEditRef} onUpdate={() => {}} />
       <MusicAddModal ref={listAddModalRef} />
+      <SourceManageModal ref={sourceManageRef} />
       {/* 歌词搜索候选（§13.1）：按时长差排序，选中即应用 */}
       <Modal
         ref={lyricModalRef}
@@ -506,6 +603,13 @@ const styles = createStyle({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  emptyBtn: {
+    marginTop: 12,
+    paddingLeft: 12,
+    paddingRight: 12,
+    paddingTop: 8,
+    paddingBottom: 8,
+  },
   lyricModal: {
     flex: 1,
     minHeight: 320,
@@ -525,5 +629,21 @@ const styles = createStyle({
     paddingRight: 16,
     paddingTop: 8,
     paddingBottom: 8,
+  },
+  multiBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingLeft: 6,
+    paddingRight: 6,
+    paddingTop: 4,
+    paddingBottom: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(0,0,0,0.08)',
+  },
+  multiBtn: {
+    paddingLeft: 8,
+    paddingRight: 8,
+    paddingTop: 6,
+    paddingBottom: 6,
   },
 })

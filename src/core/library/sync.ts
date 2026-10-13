@@ -6,7 +6,8 @@
  */
 import * as native from './native'
 import type { ScanProgressEvent, ScanDoneEvent } from './native'
-import { setScanProgress, clearScanProgress, setScanReport, setSources } from '@/store/library/action'
+import { setScanProgress, clearScanProgress, setScanReport, setSources, setRows } from '@/store/library/action'
+import { queryTracks } from './query'
 import state from '@/store/library/state'
 import type { LibrarySource } from './types'
 
@@ -22,6 +23,9 @@ const handleScanEvent = (event: ScanProgressEvent | ScanDoneEvent): void => {
     clearScanProgress(event.sourceId)
     setScanReport(event.sourceId, event.report)
     void refreshSources()
+    // 扫描入库由原生完成，刷新行数据让列表反映新曲目（§5.3）
+    void queryTracks({ sourceIds: state.filterSourceId ? [state.filterSourceId] : undefined, offset: 0, limit: 200 })
+      .then(result => { setRows(result.rows, result.total) })
     return
   }
   setScanProgress({

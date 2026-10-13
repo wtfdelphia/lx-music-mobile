@@ -635,5 +635,17 @@
   "library_source_still_in_lists": "LX 列表中仍有 {num} 首该来源的歌曲，删除后将无法播放",
   "library_multiselect": "多选",
   "library_select_all": "全选",
-  "library_settings": "设置"
+  "library_settings": "设置",
+  "library_more": "更多操作",
+  "library_source_state_ok": "正常",
+  "library_source_state_needs_reauth": "需重新授权",
+  "library_source_state_unreachable": "不可达",
+  "library_source_state_scanning": "扫描中",
+  "library_source_relink": "重新授权",
+  "library_source_disable": "停用",
+  "library_source_enable": "启用",
+  "library_source_edit": "编辑",
+  "library_tracks": "{num} 首",
+  "library_scan": "扫描",
+  "library_source_delete_tip": "删除该来源将移除其全部曲目，确定吗？"
 }

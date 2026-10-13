@@ -16,17 +16,25 @@ export interface LibraryRowItem {
   album: string | null
   ext: string | null
   offline: boolean
+  interval: string | null
+  loved: boolean
 }
 
-export default memo(({ item, index, activeIndex, onPress, onShowMenu }: {
+export default memo(({ item, index, activeIndex, onPress, onLongPress, onShowMenu, selectedLocators, isMultiSelectMode, showMoreButton }: {
   item: LibraryRowItem
   index: number
   activeIndex: number
   onPress: (item: LibraryRowItem, index: number) => void
+  onLongPress: (item: LibraryRowItem, index: number) => void
   onShowMenu: (item: LibraryRowItem, index: number, position: { x: number, y: number, w: number, h: number }) => void
+  selectedLocators: Set<string>
+  isMultiSelectMode: boolean
+  /** 聚合视图（专辑 / 艺人）的行不是曲目，不弹歌曲菜单（N2） */
+  showMoreButton: boolean
 }) => {
   const theme = useTheme()
   const isActive = activeIndex === index
+  const isSelected = selectedLocators.has(item.locator)
   const moreButtonRef = useRef<TouchableOpacity>(null)
   const handleShowMenu = () => {
     if (moreButtonRef.current?.measure) {
@@ -37,9 +45,25 @@ export default memo(({ item, index, activeIndex, onPress, onShowMenu }: {
   }
 
   return (
-    <TouchableOpacity style={{ ...styles.listItem, height: ITEM_HEIGHT, backgroundColor: isActive ? theme['c-primary-background-active'] : undefined }}
+    <TouchableOpacity
+      style={{ ...styles.listItem, height: ITEM_HEIGHT, backgroundColor: isSelected ? theme['c-primary-background-active'] : isActive ? theme['c-primary-background-active'] : undefined }}
       onPress={() => { onPress(item, index) }}
+      onLongPress={() => { onLongPress(item, index) }}
     >
+      {/* 多选模式下左侧显示选中圆点 */}
+      {isMultiSelectMode
+        ? (
+            <Icon
+              name={isSelected ? 'checkbox-marked' : 'checkbox-blank-outline'}
+              size={16}
+              color={isSelected ? theme['c-primary-font'] : theme['c-font-label']}
+              style={styles.checkbox}
+            />
+          )
+        : null}
+      {/* 曲目行：序号 + 标题 / 歌手·专辑 + 时长（§14.2）；
+          聚合行（专辑 / 艺人）不显示序号与时长 */}
+      {showMoreButton ? <Text style={styles.sn} size={12} color={theme['c-font-label']}>{index + 1}</Text> : null}
       <View style={styles.listItemSingle}>
         <Text numberOfLines={1}>{item.title}</Text>
         <Text numberOfLines={1} size={12} color={theme['c-font-label']}>
@@ -47,18 +71,28 @@ export default memo(({ item, index, activeIndex, onPress, onShowMenu }: {
         </Text>
       </View>
       <View style={styles.listItemRight}>
+        {item.loved ? <Icon name="love" size={12} color={theme['c-primary-font']} /> : null}
         {item.offline ? <Icon name="download-2" size={12} color={theme['c-primary-font']} /> : null}
-        {item.ext ? <Text size={12} color={theme['c-font-label']} numberOfLines={1}>{item.ext}</Text> : null}
+        {showMoreButton && item.interval ? <Text size={12} color={theme['c-font-label']}>{item.interval}</Text> : null}
       </View>
-      <TouchableOpacity onPress={handleShowMenu} ref={moreButtonRef} style={styles.moreButton}>
-        <Icon name="dots-vertical" style={{ color: theme['c-350'] }} size={12} />
-      </TouchableOpacity>
+      {/* 多选模式下隐藏更多按钮；聚合行不弹歌曲菜单（N2） */}
+      {isMultiSelectMode || !showMoreButton
+        ? null
+        : (
+            <TouchableOpacity onPress={handleShowMenu} ref={moreButtonRef} style={styles.moreButton}>
+              <Icon name="dots-vertical" style={{ color: theme['c-350'] }} size={12} />
+            </TouchableOpacity>
+          )}
     </TouchableOpacity>
   )
 }, (prevProps, nextProps) => {
   return prevProps.item.locator === nextProps.item.locator &&
     prevProps.index === nextProps.index &&
-    prevProps.activeIndex === nextProps.activeIndex
+    prevProps.activeIndex === nextProps.activeIndex &&
+    prevProps.isMultiSelectMode === nextProps.isMultiSelectMode &&
+    prevProps.showMoreButton === nextProps.showMoreButton &&
+    prevProps.item.loved === nextProps.item.loved &&
+    prevProps.selectedLocators === nextProps.selectedLocators
 })
 
 const styles = createStyle({
@@ -69,6 +103,13 @@ const styles = createStyle({
     alignItems: 'center',
     paddingLeft: 10,
     paddingRight: 10,
+  },
+  checkbox: {
+    marginRight: 8,
+  },
+  sn: {
+    width: 30,
+    textAlign: 'center',
   },
   listItemSingle: {
     flexGrow: 1,

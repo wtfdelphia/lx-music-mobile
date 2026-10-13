@@ -63,3 +63,17 @@ export const relinkSource = async(sourceId: string): Promise<void> => {
 export const trackLocator = (sourceId: string, relSegments: string[]): string => {
   return buildLocator(sourceId, buildItemKey(relSegments))
 }
+
+/**
+ * 删除来源：级联删曲目与封面缓存、凭据（§14.4、spec「删除来源」）
+ */
+export const deleteSource = async(sourceId: string): Promise<boolean> => {
+  return native.deleteSource(sourceId).catch(() => false)
+}
+
+/**
+ * 启用 / 停用来源（编辑 enabled 字段）
+ */
+export const setSourceEnabled = async(source: LibrarySource, enabled: boolean): Promise<boolean> => {
+  return native.saveSource({ ...source, enabled }).catch(() => false)
+}
