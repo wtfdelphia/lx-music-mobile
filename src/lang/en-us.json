@@ -615,5 +615,7 @@
   "library_scan_busy": "This source is scanning",
   "library_play_failed": "Playback failed",
   "library_album": "Album",
-  "library_artist": "Artist"
+  "library_artist": "Artist",
+  "library_all_sources": "All sources",
+  "library_rescan_source": "Rescan this source"
 }

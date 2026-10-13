@@ -37,10 +37,14 @@ export const queryArtists = async(spec: Omit<LibraryQuerySpec, 'kind'>): Promise
   }
 }
 
-export const queryAlbumTracks = async(sourceId: string, albumKey: string, offset: number, limit: number): Promise<NativeTrackRow[]> => {
+/**
+ * 专辑曲目下钻。`sourceIds` 传当前来源筛选；无筛选传空数组，
+ * 跨来源聚合同一专辑（原生侧空数组即不过滤）
+ */
+export const queryAlbumTracks = async(sourceIds: string[], albumKey: string, offset: number, limit: number): Promise<NativeTrackRow[]> => {
   try {
     const result = await native.query({
-      kind: 'albumTracks', sourceIds: [sourceId], albumKey, offset, limit: clampLimit(limit),
+      kind: 'albumTracks', sourceIds: sourceIds.length ? sourceIds : undefined, albumKey, offset, limit: clampLimit(limit),
     })
     return result.rows
   } catch {
@@ -48,10 +52,13 @@ export const queryAlbumTracks = async(sourceId: string, albumKey: string, offset
   }
 }
 
-export const queryArtistTracks = async(sourceId: string, artistKey: string, offset: number, limit: number): Promise<NativeTrackRow[]> => {
+/**
+ * 艺人曲目下钻，sourceIds 语义同 `queryAlbumTracks`
+ */
+export const queryArtistTracks = async(sourceIds: string[], artistKey: string, offset: number, limit: number): Promise<NativeTrackRow[]> => {
   try {
     const result = await native.query({
-      kind: 'artistTracks', sourceIds: [sourceId], artistKey, offset, limit: clampLimit(limit),
+      kind: 'artistTracks', sourceIds: sourceIds.length ? sourceIds : undefined, artistKey, offset, limit: clampLimit(limit),
     })
     return result.rows
   } catch {

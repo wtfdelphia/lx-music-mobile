@@ -615,5 +615,7 @@
   "library_scan_busy": "该来源正在扫描中",
   "library_play_failed": "播放失败",
   "library_album": "专辑",
-  "library_artist": "艺人"
+  "library_artist": "艺人",
+  "library_all_sources": "全部来源",
+  "library_rescan_source": "重新扫描此来源"
 }

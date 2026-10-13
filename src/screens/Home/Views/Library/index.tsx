@@ -5,8 +5,9 @@ import List, { type ListType } from './List'
 import ListMenu, { type ListMenuType } from './ListMenu'
 import { handlePlay } from './listAction'
 import { queryTracks, queryAlbums, queryArtists, queryAlbumTracks, queryArtistTracks } from '@/core/library/query'
-import { setRows, setTabId } from '@/store/library/action'
+import { setRows, setTabId, setFilterSourceId } from '@/store/library/action'
 import { useLibrarySources } from '@/store/library/hook'
+import DorpDownMenu from '@/components/common/DorpDownMenu'
 import state from '@/store/library/state'
 import { pickLocalFolder } from '@/core/library/sources/local'
 import { startSourceScan, refreshSources, scanAllSources } from '@/core/library/sync'
@@ -18,7 +19,7 @@ import Button from '@/components/common/Button'
 import Input from '@/components/common/Input'
 import { useSettingValue } from '@/store/setting/hook'
 import MetadataEditModal, { type MetadataEditType } from '@/components/MetadataEditModal'
-import type { NativeTrackRow } from '@/core/library/types'
+import type { NativeTrackRow, LibrarySource } from '@/core/library/types'
 import type { LibraryTabId } from '@/store/library/state'
 
 const TABS: Array<{ id: LibraryTabId, key: 'library_tab_tracks' | 'library_tab_albums' | 'library_tab_artists' }> = [
@@ -39,7 +40,8 @@ export default () => {
   const [tabId, setTabIdState] = useState<LibraryTabId>(state.tabId)
   const [keyword, setKeyword] = useState('')
   // 专辑 / 艺人下钻状态：P1 先在列内下钻，详情屏（3.3）接入后迁移
-  const [drill, setDrill] = useState<{ type: 'album' | 'artist', sourceId: string, key: string, title: string } | null>(null)
+  const [drill, setDrill] = useState<{ type: 'album' | 'artist', key: string, title: string } | null>(null)
+  const [filterSourceId, setFilterSourceIdState] = useState<string | null>(null)
   const sources = useLibrarySources()
   // 行数据不在本组件消费（List 自行订阅），播放 / 菜单一律按定位符
   // 从 state.rows 现查，绕开 memo 闭包过期问题
@@ -49,15 +51,17 @@ export default () => {
 
   const loadRows = useCallback(async(kw: string) => {
     const seq = ++loadSeq.current
+    // 下钻沿用当前来源筛选，不取聚合行的 MIN(source_id)（N3 修复）
+    const filterIds = filterSourceId ? [filterSourceId] : []
     let next: { rows: NativeTrackRow[], total: number }
     if (drill) {
       const trackRows = drill.type === 'album'
-        ? await queryAlbumTracks(drill.sourceId, drill.key, 0, 200)
-        : await queryArtistTracks(drill.sourceId, drill.key, 0, 200)
+        ? await queryAlbumTracks(filterIds, drill.key, 0, 200)
+        : await queryArtistTracks(filterIds, drill.key, 0, 200)
       next = { rows: trackRows, total: trackRows.length }
     } else {
       const spec = {
-        sourceIds: state.filterSourceId ? [state.filterSourceId] : undefined,
+        sourceIds: filterSourceId ? [filterSourceId] : undefined,
         keyword: kw || undefined,
         offset: 0,
         limit: 200,
@@ -72,13 +76,13 @@ export default () => {
     }
     if (seq !== loadSeq.current) return // 过期结果丢弃
     setRows(next.rows, next.total)
-  }, [tabId, drill])
+  }, [tabId, drill, filterSourceId])
 
-  // Tab / 下钻 / 来源变化时重新加载
+  // Tab / 下钻 / 来源筛选 / 来源列表变化时重新加载
   useEffect(() => {
     void loadRows(keyword)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tabId, drill, sources])
+  }, [tabId, drill, filterSourceId, sources])
 
   // 首次进入拉取来源与曲目
   useEffect(() => {
@@ -116,12 +120,12 @@ export default () => {
     // 一律从 state.rows 现查，避免 memo 挡住闭包更新
     if (tabId === 'albums') {
       const row = currentRows.find(r => r.locator === locator)
-      if (row) setDrill({ type: 'album', sourceId: row.sourceId, key: row.itemKey, title: row.title })
+      if (row) setDrill({ type: 'album', key: row.itemKey, title: row.title })
       return
     }
     if (tabId === 'artists') {
       const row = currentRows.find(r => r.locator === locator)
-      if (row) setDrill({ type: 'artist', sourceId: row.sourceId, key: row.itemKey, title: row.title })
+      if (row) setDrill({ type: 'artist', key: row.itemKey, title: row.title })
       return
     }
     // 曲目视图：按定位符在最新列表现查，避开 memo 闭包过期问题
@@ -140,6 +144,47 @@ export default () => {
     if (index < 0) return
     listMenuRef.current?.show(currentRows[index], currentRows, index, position)
   }, [])
+
+  const sourceLabel = useCallback((source: LibrarySource): string => {
+    // 下载虚拟来源的名字是字面量 'download'，走 i18n（复用导航键）
+    return source.type === 'download' ? t('nav_download') : source.name
+  }, [t])
+
+  const handleSourceChange = useCallback(({ action }: { action: string }) => {
+    if (action === 'all') {
+      setFilterSourceIdState(null)
+      setFilterSourceId(null)
+      setDrill(null)
+      return
+    }
+    if (action === 'rescan') {
+      // 「重新扫描当前来源」入口：元数据修复后存量曲目需重扫刷新
+      if (state.filterSourceId) {
+        void startSourceScan(state.filterSourceId).then(started => {
+          if (!started) toast(t('library_scan_busy'), 'short')
+        })
+      }
+      return
+    }
+    if (action.startsWith('src:')) {
+      const id = action.slice(4)
+      setFilterSourceIdState(id)
+      setFilterSourceId(id)
+      setDrill(null)
+    }
+  }, [t])
+
+  // 来源下拉菜单：全部 + 下载虚拟来源 + 各文件夹来源
+  const sourceMenus = useMemo(() => {
+    const items: Array<{ action: string, label: string, disabled?: boolean }> = [
+      { action: 'all', label: t('library_all_sources') },
+    ]
+    for (const source of sources) {
+      items.push({ action: `src:${source.id}`, label: sourceLabel(source) })
+    }
+    items.push({ action: 'rescan', label: t('library_rescan_source'), disabled: !filterSourceId })
+    return items
+  }, [sources, sourceLabel, t, filterSourceId])
 
   const handleScanAll = useCallback(() => {
     // 元数据修复后存量曲目需重扫刷新；扫描中重复点击由
@@ -198,6 +243,20 @@ export default () => {
               )
             : (
                 <View style={styles.searchInputWrap}>
+                  <DorpDownMenu
+                    menus={sourceMenus}
+                    onPress={handleSourceChange}
+                    activeId={filterSourceId ? `src:${filterSourceId}` : 'all'}
+                    btnStyle={styles.sourceBtn}
+                    fontSize={13}
+                  >
+                    <Text size={13} color={theme['c-font']} numberOfLines={1}>
+                      {(() => {
+                        const cur = filterSourceId ? sources.find(s => s.id === filterSourceId) : undefined
+                        return cur ? sourceLabel(cur) : t('library_all_sources')
+                      })()}
+                    </Text>
+                  </DorpDownMenu>
                   <Input
                     onChangeText={handleKeywordChange}
                     placeholder={t('library_search_placeholder')}
@@ -267,10 +326,22 @@ const styles = createStyle({
   },
   searchInputWrap: {
     flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
     marginRight: 8,
   },
+  sourceBtn: {
+    flexGrow: 0,
+    flexShrink: 1,
+    maxWidth: 110,
+    paddingLeft: 6,
+    paddingRight: 6,
+    paddingTop: 7,
+    paddingBottom: 7,
+    marginRight: 6,
+  },
   input: {
-    width: '100%',
+    flex: 1,
   },
   drillBar: {
     flex: 1,
