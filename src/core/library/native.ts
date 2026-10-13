@@ -29,6 +29,16 @@ export const upsertTracks = async(_sourceId: string, _rows: Array<Record<string,
 export const finishSync = async(_sourceId: string): Promise<number> => notSupported()
 export const getTrack = async(_locator: string): Promise<NativeTrackRow | null> => notSupported()
 export const listItemKeys = async(_sourceId: string): Promise<string[]> => notSupported()
+export const excludeTrack = async(_sourceId: string, _itemKey: string): Promise<boolean> => notSupported()
+export const restoreExcluded = async(_sourceId: string): Promise<boolean> => notSupported()
+export const listExcludedItemKeys = async(_sourceId: string): Promise<string[]> => notSupported()
+export const isExcluded = async(_sourceId: string, _itemKey: string): Promise<boolean> => notSupported()
+export interface DeleteSourceFileResult {
+  removedAudio: boolean
+  removedLrc: boolean
+  sourceType: string
+}
+export const deleteSourceFile = async(_locator: string): Promise<DeleteSourceFileResult> => notSupported()
 export const setOffline = async(_locator: string, _relPath: string | null): Promise<boolean> => notSupported()
 export const bumpPlay = async(_locator: string): Promise<boolean> => notSupported()
 export const deleteTrack = async(_locator: string): Promise<boolean> => notSupported()

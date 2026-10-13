@@ -131,10 +131,14 @@ const reconcile = async(): Promise<void> => {
   // S3：全量取 itemKey，不受 query limit 200 截断
   const existingKeys = await native.listItemKeys(DOWNLOAD_SOURCE_ID).catch(() => [] as string[])
   const existingKeySet = new Set(existingKeys)
+  // §16 排除表：已移除的曲目对账不复活
+  const excludedKeys = await native.listExcludedItemKeys(DOWNLOAD_SOURCE_ID).catch(() => [] as string[])
+  const excludedKeySet = new Set(excludedKeys)
 
-  // 待入库：本次应有但库里没有
-  const toAdd = selected.filter(t => !existingKeySet.has(t.metadata.filePath))
-  // 待移除：库里有但本次任务已不在（删除 / 清空 / FILE_MISSING）
+  // 待入库：本次应有但库里没有、且未被排除
+  const toAdd = selected.filter(t => !existingKeySet.has(t.metadata.filePath) && !excludedKeySet.has(t.metadata.filePath))
+  // 待移除：库里有但本次任务已不在（删除 / 清空 / FILE_MISSING）。
+  // 排除项已在 toAdd 侧挡住，这里不再处理（其曲目行本就不存在）
   const toRemoveKeys = existingKeys.filter(key => !wantedKeys.has(key))
 
   let changed = false

@@ -48,6 +48,18 @@ export const finishSync = async(sourceId: string): Promise<number> => call<numbe
 export const getTrack = async(locator: string): Promise<NativeTrackRow | null> => call<NativeTrackRow | null>('getTrack', locator)
 /** 全量 itemKey（自动关联差量对账，避免 query limit 截断，S3） */
 export const listItemKeys = async(sourceId: string): Promise<string[]> => call<string[]>('listItemKeysForSourceId', sourceId)
+// 排除表（§16）：从曲库移除不删文件，重扫 / 对账跳过
+export const excludeTrack = async(sourceId: string, itemKey: string): Promise<boolean> => call<boolean>('excludeTrack', sourceId, itemKey)
+export const restoreExcluded = async(sourceId: string): Promise<boolean> => call<boolean>('restoreExcluded', sourceId)
+export const listExcludedItemKeys = async(sourceId: string): Promise<string[]> => call<string[]>('listExcludedItemKeysForSourceId', sourceId)
+export const isExcluded = async(sourceId: string, itemKey: string): Promise<boolean> => call<boolean>('isExcluded', sourceId, itemKey)
+export interface DeleteSourceFileResult {
+  removedAudio: boolean
+  removedLrc: boolean
+  sourceType: string
+}
+/** §16：仅沙箱内来源可删文件，外部来源原生侧直接拒绝 */
+export const deleteSourceFile = async(locator: string): Promise<DeleteSourceFileResult> => call<DeleteSourceFileResult>('deleteSourceFile', locator)
 export const setOffline = async(locator: string, relPath: string | null): Promise<boolean> => call<boolean>('setOffline', locator, relPath)
 export const bumpPlay = async(locator: string): Promise<boolean> => call<boolean>('bumpPlay', locator)
 export const deleteTrack = async(locator: string): Promise<boolean> => call<boolean>('deleteTrack', locator)

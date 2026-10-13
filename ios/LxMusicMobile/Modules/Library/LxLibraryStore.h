@@ -24,6 +24,11 @@
 - (BOOL)deleteTrack:(NSString *)locator;
 // 全量 itemKey（自动关联差量对账用，避免 limit 200 截断）
 - (NSArray<NSString *> *)listItemKeysForSourceId:(NSString *)sourceId;
+// 排除表：从曲库移除（不删文件），重扫 / 对账不再入库（§16）
+- (BOOL)excludeTrack:(NSString *)sourceId itemKey:(NSString *)itemKey;
+- (BOOL)restoreExcluded:(NSString *)sourceId;
+- (NSArray<NSString *> *)listExcludedItemKeysForSourceId:(NSString *)sourceId;
+- (BOOL)isExcluded:(NSString *)sourceId itemKey:(NSString *)itemKey;
 // 来源配置与类型（授权懒加载用，F1）
 - (NSDictionary * _Nullable)configForSourceId:(NSString *)sourceId;
 // 扫描结束时间 / 报告落库（低危项修复）

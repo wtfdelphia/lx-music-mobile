@@ -349,6 +349,85 @@ RCT_EXPORT_METHOD(finishSync:(NSString *)sourceId
   resolve(@(removed));
 }
 
+#pragma mark - 排除表（§16）
+
+RCT_EXPORT_METHOD(excludeTrack:(NSString *)sourceId itemKey:(NSString *)itemKey
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  BOOL ok = [[LxLibraryStore shared] excludeTrack:LxStr(sourceId) itemKey:LxStr(itemKey)];
+  resolve(@(ok));
+}
+
+RCT_EXPORT_METHOD(restoreExcluded:(NSString *)sourceId
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  BOOL ok = [[LxLibraryStore shared] restoreExcluded:LxStr(sourceId)];
+  resolve(@(ok));
+}
+
+RCT_EXPORT_METHOD(listExcludedItemKeysForSourceId:(NSString *)sourceId
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  resolve([[LxLibraryStore shared] listExcludedItemKeysForSourceId:LxStr(sourceId)]);
+}
+
+RCT_EXPORT_METHOD(isExcluded:(NSString *)sourceId itemKey:(NSString *)itemKey
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  resolve(@([[LxLibraryStore shared] isExcluded:LxStr(sourceId) itemKey:LxStr(itemKey)]));
+}
+
+#pragma mark - 文件删除（§16 分级）
+
+// 只删沙箱内来源（含「下载」虚拟来源，根目录即 Documents）的音频与
+// 同名 .lrc；外部 bookmark 来源拒绝。路径经 resolve 的越界校验
+// （§16 定位符前缀比较）
+RCT_EXPORT_METHOD(deleteSourceFile:(NSString *)locator
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSString *loc = LxStr(locator);
+  NSDictionary *track = [[LxLibraryStore shared] getTrack:loc];
+  if (!track) { reject(@"E_NOT_FOUND", @"track not found", nil); return; }
+  NSString *sourceId = LxStr(track[@"sourceId"]);
+  NSString *itemKey = LxStr(track[@"itemKey"]);
+  NSString *sourceType = LxStr(track[@"sourceType"]);
+
+  if (![[LxFolderAccess shared] isSandboxSource:sourceId]) {
+    reject(@"E_READONLY", @"external folders are read-only", nil);
+    return;
+  }
+  NSError *error = nil;
+  if (![[LxFolderAccess shared] acquire:sourceId error:&error]) {
+    reject(@"E_REAUTH", error.localizedDescription ?: @"acquire failed", error);
+    return;
+  }
+  NSURL *fileURL = [[LxFolderAccess shared] resolveSourceId:sourceId relativePath:itemKey];
+  if (!fileURL) { reject(@"E_NOT_FOUND", @"path escape or missing", nil); return; }
+
+  NSFileManager *fm = NSFileManager.defaultManager;
+  BOOL removedAudio = NO;
+  if ([fm fileExistsAtPath:fileURL.path]) {
+    removedAudio = [fm removeItemAtPath:fileURL.path error:nil];
+  }
+  // sidecar .lrc 一并删除（§16）
+  NSString *lrcPath = [fileURL.path.stringByDeletingPathExtension stringByAppendingPathExtension:@"lrc"];
+  BOOL removedLrc = NO;
+  if ([fm fileExistsAtPath:lrcPath]) removedLrc = [fm removeItemAtPath:lrcPath error:nil];
+  // 曲目行一并移除
+  [[LxLibraryStore shared] deleteTrack:loc];
+
+  resolve(@{
+    @"removedAudio": @(removedAudio),
+    @"removedLrc": @(removedLrc),
+    @"sourceType": sourceType ?: @"",
+  });
+}
+
 // 全量 itemKey（自动关联差量对账用，避免 query limit 截断，S3）
 RCT_EXPORT_METHOD(listItemKeysForSourceId:(NSString *)sourceId
                   resolver:(RCTPromiseResolveBlock)resolve

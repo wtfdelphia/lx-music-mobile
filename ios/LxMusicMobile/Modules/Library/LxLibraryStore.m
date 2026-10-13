@@ -182,6 +182,27 @@ static NSString *LxEscapeLike(NSString *s)
     return;
   }
   sqlite3_exec(_db, "PRAGMA user_version=1;", NULL, NULL, NULL);
+  [self _migrateTo2OnQueue];
+}
+
+// v2：排除表（从曲库移除不删文件，重扫 / 对账跳过，§16）
+- (void)_migrateTo2OnQueue
+{
+  if ([self userVersion] >= 2) return;
+  const char *sql =
+    "CREATE TABLE IF NOT EXISTS excluded ("
+    "  source_id TEXT NOT NULL REFERENCES source(id) ON DELETE CASCADE,"
+    "  item_key TEXT NOT NULL,"
+    "  excluded_at INTEGER NOT NULL,"
+    "  PRIMARY KEY (source_id, item_key)"
+    ");";
+  char *errMsg = NULL;
+  if (sqlite3_exec(_db, sql, NULL, NULL, &errMsg) != SQLITE_OK) {
+    NSLog(@"[LxLibraryStore] migrate v2 failed: %s", errMsg ? errMsg : "?");
+    sqlite3_free(errMsg);
+    return;
+  }
+  sqlite3_exec(_db, "PRAGMA user_version=2;", NULL, NULL, NULL);
 }
 
 #pragma mark - 工具
@@ -344,6 +365,8 @@ static NSString * const kTrackColumns =
     NSString *locator = LxStr(row[@"locator"]);
     NSString *itemKey = LxStr(row[@"item_key"]);
     if (!locator.length || !itemKey.length) continue;
+    // 排除表：已移除的曲目重扫不入库（§16）
+    if ([self _isExcludedOnQueue:sourceId itemKey:itemKey]) continue;
     NSString *title = LxStr(row[@"title"]) ?: itemKey;
     NSString *artist = LxStr(row[@"artist"]);
     NSString *album = LxStr(row[@"album"]);
@@ -455,6 +478,97 @@ static NSString * const kTrackColumns =
     sqlite3_finalize(stmt);
   });
   return ok;
+}
+
+// 排除表内部检查（调用方已持 _ioQueue）
+- (BOOL)_isExcludedOnQueue:(NSString *)sourceId itemKey:(NSString *)itemKey
+{
+  sqlite3_stmt *stmt = NULL;
+  BOOL excluded = NO;
+  if (sqlite3_prepare_v2(_db, "SELECT 1 FROM excluded WHERE source_id = ?1 AND item_key = ?2 LIMIT 1", -1, &stmt, NULL) == SQLITE_OK) {
+    sqlite3_bind_text(stmt, 1, sourceId.UTF8String, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, itemKey.UTF8String, -1, SQLITE_TRANSIENT);
+    excluded = sqlite3_step(stmt) == SQLITE_ROW;
+    sqlite3_finalize(stmt);
+  }
+  return excluded;
+}
+
+- (BOOL)excludeTrack:(NSString *)sourceId itemKey:(NSString *)itemKey
+{
+  if (!sourceId.length || !itemKey.length) return NO;
+  __block BOOL ok = NO;
+  dispatch_sync(_ioQueue, ^{
+    if (![self _openOnQueue]) return;
+    sqlite3_exec(self->_db, "BEGIN IMMEDIATE;", NULL, NULL, NULL);
+    // 写排除表 + 删曲目行（级联触发器同步 FTS）
+    sqlite3_stmt *ins = NULL;
+    long long now = (long long)([[NSDate date] timeIntervalSince1970] * 1000);
+    if (sqlite3_prepare_v2(self->_db, "INSERT OR REPLACE INTO excluded(source_id, item_key, excluded_at) VALUES (?1, ?2, ?3)", -1, &ins, NULL) == SQLITE_OK) {
+      sqlite3_bind_text(ins, 1, sourceId.UTF8String, -1, SQLITE_TRANSIENT);
+      sqlite3_bind_text(ins, 2, itemKey.UTF8String, -1, SQLITE_TRANSIENT);
+      sqlite3_bind_int64(ins, 3, now);
+      ok = sqlite3_step(ins) == SQLITE_DONE;
+      sqlite3_finalize(ins);
+    }
+    if (ok) {
+      sqlite3_stmt *del = NULL;
+      if (sqlite3_prepare_v2(self->_db, "DELETE FROM track WHERE source_id = ?1 AND item_key = ?2", -1, &del, NULL) == SQLITE_OK) {
+        sqlite3_bind_text(del, 1, sourceId.UTF8String, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(del, 2, itemKey.UTF8String, -1, SQLITE_TRANSIENT);
+        sqlite3_step(del);
+        sqlite3_finalize(del);
+      }
+    }
+    sqlite3_exec(self->_db, ok ? "COMMIT;" : "ROLLBACK;", NULL, NULL, NULL);
+  });
+  return ok;
+}
+
+- (BOOL)restoreExcluded:(NSString *)sourceId
+{
+  if (!sourceId.length) return NO;
+  __block BOOL ok = NO;
+  dispatch_sync(_ioQueue, ^{
+    if (![self _openOnQueue]) return;
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(self->_db, "DELETE FROM excluded WHERE source_id = ?1", -1, &stmt, NULL) == SQLITE_OK) {
+      sqlite3_bind_text(stmt, 1, sourceId.UTF8String, -1, SQLITE_TRANSIENT);
+      ok = sqlite3_step(stmt) == SQLITE_DONE;
+      sqlite3_finalize(stmt);
+    }
+  });
+  return ok;
+}
+
+- (NSArray<NSString *> *)listExcludedItemKeysForSourceId:(NSString *)sourceId
+{
+  if (!sourceId.length) return @[];
+  __block NSMutableArray *out = [NSMutableArray array];
+  dispatch_sync(_ioQueue, ^{
+    if (![self _openOnQueue]) return;
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(self->_db, "SELECT item_key FROM excluded WHERE source_id = ?1", -1, &stmt, NULL) == SQLITE_OK) {
+      sqlite3_bind_text(stmt, 1, sourceId.UTF8String, -1, SQLITE_TRANSIENT);
+      while (sqlite3_step(stmt) == SQLITE_ROW) {
+        const unsigned char *key = sqlite3_column_text(stmt, 0);
+        if (key) [out addObject:[NSString stringWithUTF8String:(const char *)key]];
+      }
+      sqlite3_finalize(stmt);
+    }
+  });
+  return out;
+}
+
+- (BOOL)isExcluded:(NSString *)sourceId itemKey:(NSString *)itemKey
+{
+  if (!sourceId.length || !itemKey.length) return NO;
+  __block BOOL excluded = NO;
+  dispatch_sync(_ioQueue, ^{
+    if (![self _openOnQueue]) return;
+    excluded = [self _isExcludedOnQueue:sourceId itemKey:itemKey];
+  });
+  return excluded;
 }
 
 - (NSArray<NSString *> *)listItemKeysForSourceId:(NSString *)sourceId

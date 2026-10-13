@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { View } from 'react-native'
+import { View, FlatList, TouchableOpacity } from 'react-native'
 
 import List, { type ListType } from './List'
 import ListMenu, { type ListMenuType } from './ListMenu'
 import { handlePlay } from './listAction'
+import { toMusicInfo } from '@/core/library/toMusicInfo'
+import MusicAddModal, { type MusicAddModalType } from '@/components/MusicAddModal'
+import Modal, { type ModalType } from '@/components/common/Modal'
 import { queryTracks, queryAlbums, queryArtists, queryAlbumTracks, queryArtistTracks } from '@/core/library/query'
 import { setRows, setTabId, setFilterSourceId } from '@/store/library/action'
 import { useLibrarySources } from '@/store/library/hook'
@@ -11,7 +14,9 @@ import DorpDownMenu from '@/components/common/DorpDownMenu'
 import state from '@/store/library/state'
 import { pickLocalFolder } from '@/core/library/sources/local'
 import { startSourceScan, refreshSources, scanAllSources } from '@/core/library/sync'
-import { toast, createStyle } from '@/utils/tools'
+import { removeFromLibrary, deleteFiles, toggleLove, getLoveSet } from '@/core/library/actions'
+import { searchLyricCandidates, applyLyricCandidate, type LyricCandidate } from '@/core/library/lyricSearch'
+import { toast, createStyle, confirmDialog } from '@/utils/tools'
 import { useI18n } from '@/lang'
 import { useTheme } from '@/store/theme/hook'
 import Text from '@/components/common/Text'
@@ -37,11 +42,18 @@ export default () => {
   const listRef = useRef<ListType>(null)
   const listMenuRef = useRef<ListMenuType>(null)
   const metadataEditRef = useRef<MetadataEditType>(null)
+  const listAddModalRef = useRef<MusicAddModalType>(null)
   const [tabId, setTabIdState] = useState<LibraryTabId>(state.tabId)
   const [keyword, setKeyword] = useState('')
   // 专辑 / 艺人下钻状态：P1 先在列内下钻，详情屏（3.3）接入后迁移
   const [drill, setDrill] = useState<{ type: 'album' | 'artist', key: string, title: string } | null>(null)
   const [filterSourceId, setFilterSourceIdState] = useState<string | null>(null)
+  // 「喜欢」集合：曲目行显示红心用
+  const [loveSet, setLoveSet] = useState<Set<string>>(new Set())
+  // 歌词搜索候选弹窗
+  const [lyricCandidates, setLyricCandidates] = useState<LyricCandidate[] | null>(null)
+  const lyricRowRef = useRef<NativeTrackRow | null>(null)
+  const lyricModalRef = useRef<ModalType>(null)
   const sources = useLibrarySources()
   // 行数据不在本组件消费（List 自行订阅），播放 / 菜单一律按定位符
   // 从 state.rows 现查，绕开 memo 闭包过期问题
@@ -186,6 +198,98 @@ export default () => {
     return items
   }, [sources, sourceLabel, t, filterSourceId])
 
+  // 「喜欢」集合初始化：来源 / 行变化时刷新
+  useEffect(() => {
+    void getLoveSet().then(setLoveSet)
+  }, [sources, tabId, drill, filterSourceId])
+
+  const handleAddToList = useCallback((row: NativeTrackRow) => {
+    const musicAddModalRef = listAddModalRef.current
+    if (!musicAddModalRef) return
+    musicAddModalRef.show({ musicInfo: toMusicInfo(row), listId: '', isMove: false })
+  }, [])
+
+  const handleToggleLove = useCallback(async(row: NativeTrackRow) => {
+    const loved = loveSet.has(row.locator)
+    await toggleLove(row, loved)
+    setLoveSet(await getLoveSet())
+  }, [loveSet])
+
+  const handleSearchLyric = useCallback((row: NativeTrackRow) => {
+    lyricRowRef.current = row
+    toast(t('library_lyric_searching'), 'short')
+    void searchLyricCandidates(row).then(candidates => {
+      setLyricCandidates(candidates)
+      lyricModalRef.current?.setVisible(true)
+    }).catch(() => {
+      toast(t('library_lyric_not_found'), 'short')
+    })
+  }, [t])
+
+  const handleApplyLyric = useCallback(async(candidate: LyricCandidate) => {
+    const row = lyricRowRef.current
+    if (!row) return
+    lyricModalRef.current?.setVisible(false)
+    setLyricCandidates(null)
+    try {
+      await applyLyricCandidate(row, candidate)
+      toast(t('library_lyric_found'), 'short')
+    } catch {
+      toast(t('library_lyric_not_found'), 'short')
+    }
+  }, [t])
+
+  const handleViewAlbum = useCallback((row: NativeTrackRow) => {
+    if (!row.album) return
+    setTabId('albums')
+    setTabIdState('albums')
+    setFilterSourceIdState(row.sourceId)
+    setFilterSourceId(row.sourceId)
+    setDrill(null)
+    void queryAlbums({ sourceIds: [row.sourceId], keyword: row.album, offset: 0, limit: 200 }).then(result => {
+      const albumRow = result.rows.find(r => r.itemKey === row.album || r.title === row.album)
+      if (albumRow) setDrill({ type: 'album', key: albumRow.itemKey, title: albumRow.title })
+    })
+  }, [])
+
+  const handleViewArtist = useCallback((row: NativeTrackRow) => {
+    if (!row.artist) return
+    setTabId('artists')
+    setTabIdState('artists')
+    setFilterSourceIdState(row.sourceId)
+    setFilterSourceId(row.sourceId)
+    setDrill(null)
+    void queryArtists({ sourceIds: [row.sourceId], keyword: row.artist, offset: 0, limit: 200 }).then(result => {
+      const artistRow = result.rows.find(r => r.title === row.artist)
+      if (artistRow) setDrill({ type: 'artist', key: artistRow.itemKey, title: artistRow.title })
+    })
+  }, [])
+
+  const handleRemove = useCallback(async(row: NativeTrackRow) => {
+    const confirmed = await confirmDialog({
+      message: t('library_remove_confirm'),
+      confirmButtonText: t('library_remove'),
+    })
+    if (!confirmed) return
+    await removeFromLibrary([row])
+    void refreshSources()
+  }, [t])
+
+  const handleDeleteFile = useCallback(async(row: NativeTrackRow) => {
+    const confirmed = await confirmDialog({
+      message: t('library_delete_file_confirm').replace('{num}', '1'),
+      confirmButtonText: t('library_delete_file'),
+    })
+    if (!confirmed) return
+    try {
+      await deleteFiles([row])
+    } catch {
+      toast(t('library_delete_failed'), 'short')
+      return
+    }
+    void refreshSources()
+  }, [t])
+
   const handleScanAll = useCallback(() => {
     // 元数据修复后存量曲目需重扫刷新；扫描中重复点击由
     // startSourceScan 的单飞锁挡住
@@ -288,8 +392,40 @@ export default () => {
         ref={listMenuRef}
         onHideMenu={() => {}}
         onTagInfo={(row) => { metadataEditRef.current?.show(row.locator) }}
+        onAddToList={handleAddToList}
+        onToggleLove={(row) => { void handleToggleLove(row) }}
+        onSearchLyric={handleSearchLyric}
+        onViewAlbum={handleViewAlbum}
+        onViewArtist={handleViewArtist}
+        onRemove={(row) => { void handleRemove(row) }}
+        onDeleteFile={(row) => { void handleDeleteFile(row) }}
+        isLoved={(locator) => loveSet.has(locator)}
       />
       <MetadataEditModal ref={metadataEditRef} onUpdate={() => {}} />
+      <MusicAddModal ref={listAddModalRef} />
+      {/* 歌词搜索候选（§13.1）：按时长差排序，选中即应用 */}
+      <Modal
+        ref={lyricModalRef}
+        onHide={() => { setLyricCandidates(null) }}
+      >
+        <View style={styles.lyricModal}>
+          <Text size={15} style={styles.lyricModalTitle}>{t('library_search_lyric')}</Text>
+          <FlatList
+            data={lyricCandidates ?? []}
+            keyExtractor={(item) => item.musicInfo.id}
+            style={styles.lyricList}
+            renderItem={({ item }) => (
+              <TouchableOpacity style={styles.lyricItem} onPress={() => { void handleApplyLyric(item) }}>
+                <Text numberOfLines={1} size={13}>{item.musicInfo.name} - {item.musicInfo.singer}</Text>
+                <Text numberOfLines={1} size={11} color={theme['c-font-label']}>
+                  {item.musicInfo.meta.albumName ?? ''}
+                  {item.durationDiff !== 0 ? ` (${item.durationDiff > 0 ? '+' : ''}${item.durationDiff.toFixed(0)}s)` : ''}
+                </Text>
+              </TouchableOpacity>
+            )}
+          />
+        </View>
+      </Modal>
     </View>
   )
 }
@@ -369,5 +505,25 @@ const styles = createStyle({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  lyricModal: {
+    flex: 1,
+    minHeight: 320,
+    maxHeight: 480,
+    width: '100%',
+  },
+  lyricModalTitle: {
+    textAlign: 'center',
+    paddingTop: 12,
+    paddingBottom: 8,
+  },
+  lyricList: {
+    flexGrow: 0,
+  },
+  lyricItem: {
+    paddingLeft: 16,
+    paddingRight: 16,
+    paddingTop: 8,
+    paddingBottom: 8,
   },
 })
