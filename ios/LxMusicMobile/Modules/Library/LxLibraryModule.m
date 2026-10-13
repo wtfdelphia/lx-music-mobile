@@ -271,7 +271,7 @@ RCT_EXPORT_METHOD(cancelScan:(NSString *)sourceId
 {
   // 入库（F3 修复）：补定位符后分批 upsert（每批 ≤500，§5.1），
   // 正常完成的扫描才做 finishSync 清理；取消的扫描不清理（§5.3）
-  BOOL cancelled = [LxBool(report[@"cancelled"]) boolValue];
+  BOOL cancelled = LxBool(report[@"cancelled"]);
   NSInteger imported = 0;
   if (rows.count) {
     NSMutableArray *batch = [NSMutableArray array];
