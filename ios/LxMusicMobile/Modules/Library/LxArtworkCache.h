@@ -16,6 +16,10 @@
 // 按定位符查缓存（由 Store 里存的缓存文件名）
 - (NSString * _Nullable)pathForCachedName:(NSString *)cachedName;
 
+// 封面缓存文件名 → file:// URL（专辑 / 艺人聚合行的封面展示用）。
+// 未命中返回空串
+- (NSString *)fileUrlForCachedName:(NSString *)cachedName;
+
 - (NSString *)cacheDirectory;
 
 @end

@@ -68,6 +68,8 @@ export const deleteTrack = async(locator: string): Promise<boolean> => call<bool
 /** 本地来源：acquire、拼路径、查存在，返回 `file://…` 或空串（§8.2） */
 export const resolvePlayFileUrl = async(locator: string): Promise<string> => call<string>('resolvePlayFileUrl', locator)
 export const artworkPath = async(locator: string): Promise<string> => call<string>('artworkPath', locator)
+/** 封面缓存文件名 → file:// URL（专辑 / 艺人聚合行封面，§14.2） */
+export const artworkUrlForName = async(cachedName: string): Promise<string> => call<string>('artworkUrlForName', cachedName)
 export const readLyric = async(locator: string): Promise<ReadLyricResult | null> => call<ReadLyricResult | null>('readLyric', locator)
 
 // ---- Keychain（P2 使用，P1 先落接口，§5.7）----

@@ -56,4 +56,10 @@
   return [NSFileManager.defaultManager fileExistsAtPath:path] ? path : nil;
 }
 
+- (NSString *)fileUrlForCachedName:(NSString *)cachedName
+{
+  NSString *path = [self pathForCachedName:cachedName];
+  return path.length ? [NSString stringWithFormat:@"file://%@", path] : @"";
+}
+
 @end

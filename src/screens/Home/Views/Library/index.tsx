@@ -3,6 +3,8 @@ import { View, FlatList, TouchableOpacity } from 'react-native'
 
 import List, { type ListType } from './List'
 import ListMenu, { type ListMenuType } from './ListMenu'
+import AlbumGrid from './AlbumGrid'
+import ArtistList from './ArtistList'
 import { handlePlay } from './listAction'
 import { toMusicInfo } from '@/core/library/toMusicInfo'
 import MusicAddModal, { type MusicAddModalType } from '@/components/MusicAddModal'
@@ -352,6 +354,30 @@ export default () => {
     void refreshSources()
   }, [selectedRows, t])
 
+  const handleOpenAlbum = useCallback((row: NativeTrackRow) => {
+    setDrill({ type: 'album', key: row.itemKey, title: row.title })
+  }, [])
+
+  const handleOpenArtist = useCallback((row: NativeTrackRow) => {
+    setDrill({ type: 'artist', key: row.itemKey, title: row.title })
+  }, [])
+
+  // 下钻视图的「播放全部 / 添加到列表」（§14.3）：
+  // 按当前行的最新数据操作
+  const handleDrillPlayAll = useCallback(() => {
+    const currentRows = state.rows
+    if (!currentRows.length) return
+    void handlePlay(currentRows, 0)
+  }, [])
+
+  const handleDrillAddToList = useCallback(() => {
+    const currentRows = state.rows
+    if (!currentRows.length) return
+    const musicInfos = currentRows.map(r => toMusicInfo(r))
+    void addListMusics(LIST_IDS.TEMP, musicInfos, settingState.setting['list.addMusicLocationType'])
+    toast(t('list_add_tip_exists'), 'short')
+  }, [t])
+
   const handleScanAll = useCallback(() => {
     // 元数据修复后存量曲目需重扫刷新；扫描中重复点击由
     // startSourceScan 的单飞锁挡住
@@ -405,6 +431,12 @@ export default () => {
                     <Text size={13} color={theme['c-primary-font']}>{t('back')}</Text>
                   </Button>
                   <Text style={styles.drillTitle} numberOfLines={1}>{drill.title}</Text>
+                  <Button style={styles.backBtn} onPress={handleDrillPlayAll}>
+                    <Text size={13} color={theme['c-primary-font']}>{t('play')}</Text>
+                  </Button>
+                  <Button style={styles.backBtn} onPress={handleDrillAddToList}>
+                    <Text size={13} color={theme['c-primary-font']}>{t('library_add_to_list')}</Text>
+                  </Button>
                 </View>
               )
             : (
@@ -466,16 +498,31 @@ export default () => {
           )
         : null}
       {hasSource
-        ? (
-            <List
-              ref={listRef}
-              onPlay={handlePlayRow}
-              onShowMenu={handleShowMenu}
-              onMultiSelectModeChange={handleMultiSelectModeChange}
-              isTrackView={drill !== null || tabId === 'tracks'}
-              loveSet={loveSet}
-            />
-          )
+        ? (drill
+            ? (
+                <List
+                  ref={listRef}
+                  onPlay={handlePlayRow}
+                  onShowMenu={handleShowMenu}
+                  onMultiSelectModeChange={handleMultiSelectModeChange}
+                  isTrackView
+                  loveSet={loveSet}
+                />
+              )
+            : tabId === 'albums'
+              ? <AlbumGrid rows={state.rows} onOpenAlbum={handleOpenAlbum} />
+              : tabId === 'artists'
+                ? <ArtistList rows={state.rows} onOpenArtist={handleOpenArtist} />
+                : (
+                    <List
+                      ref={listRef}
+                      onPlay={handlePlayRow}
+                      onShowMenu={handleShowMenu}
+                      onMultiSelectModeChange={handleMultiSelectModeChange}
+                      isTrackView
+                      loveSet={loveSet}
+                    />
+                  ))
         : (
             <View style={styles.empty}>
               <Text color={theme['c-font-label']}>{t('library_empty')}</Text>

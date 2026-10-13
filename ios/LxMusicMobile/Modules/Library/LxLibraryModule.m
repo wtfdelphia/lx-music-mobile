@@ -511,6 +511,14 @@ RCT_EXPORT_METHOD(resolvePlayFileUrl:(NSString *)locator
   resolve([NSString stringWithFormat:@"file://%@", fileURL.path]);
 }
 
+// 封面缓存文件名 → file:// URL（聚合行封面展示，§14.2 专辑网格）
+RCT_EXPORT_METHOD(artworkUrlForName:(NSString *)cachedName
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  resolve([[LxArtworkCache shared] fileUrlForCachedName:LxStr(cachedName)]);
+}
+
 RCT_EXPORT_METHOD(artworkPath:(NSString *)locator
                   resolver:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
