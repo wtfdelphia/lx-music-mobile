@@ -25,32 +25,32 @@ export const ping = async(): Promise<boolean> => call<boolean>('ping')
 
 // ---- 来源 ----
 export const getSources = async(): Promise<LibrarySource[]> => call<LibrarySource[]>('getSources')
-export const saveSource = async(source: LibrarySource): Promise<void> => { await call('saveSource', source) }
-export const deleteSource = async(id: string): Promise<void> => { await call('deleteSource', id) }
+export const saveSource = async(source: LibrarySource): Promise<boolean> => call<boolean>('saveSource', source)
+export const deleteSource = async(id: string): Promise<boolean> => call<boolean>('deleteSource', id)
 export interface PickFolderResult {
   bookmark: string | null
   label: string
   relPath: string | null
 }
 export const pickFolder = async(): Promise<PickFolderResult | null> => call<PickFolderResult | null>('pickFolder')
-export const relink = async(sourceId: string): Promise<void> => { await call('relink', sourceId) }
-export const acquireSource = async(sourceId: string): Promise<void> => { await call('acquire', sourceId) }
-export const releaseSource = async(sourceId: string): Promise<void> => { await call('release', sourceId) }
+export const relink = async(sourceId: string): Promise<boolean> => call<boolean>('relink', sourceId)
+export const acquireSource = async(sourceId: string): Promise<boolean> => call<boolean>('acquire', sourceId)
+export const releaseSource = async(sourceId: string): Promise<boolean> => call<boolean>('release', sourceId)
 
 // ---- 扫描 ----
-export const startScan = async(sourceId: string, options: { recursive: boolean }): Promise<void> => { await call('startScan', sourceId, options) }
-export const cancelScan = async(sourceId: string): Promise<void> => { await call('cancelScan', sourceId) }
+export const startScan = async(sourceId: string, options: { recursive: boolean }): Promise<boolean> => call<boolean>('startScan', sourceId, options)
+export const cancelScan = async(sourceId: string): Promise<boolean> => call<boolean>('cancelScan', sourceId)
 
 // ---- 查询与写入 ----
 export const query = async(spec: LibraryQuerySpec): Promise<LibraryQueryResult> => call<LibraryQueryResult>('query', spec)
-export const upsertTracks = async(sourceId: string, rows: Array<Record<string, unknown>>): Promise<void> => { await call('upsertTracks', sourceId, rows) }
-export const finishSync = async(sourceId: string): Promise<void> => { await call('finishSync', sourceId) }
+export const upsertTracks = async(sourceId: string, rows: Array<Record<string, unknown>>): Promise<boolean> => call<boolean>('upsertTracks', sourceId, rows)
+export const finishSync = async(sourceId: string): Promise<number> => call<number>('finishSync', sourceId)
 export const getTrack = async(locator: string): Promise<NativeTrackRow | null> => call<NativeTrackRow | null>('getTrack', locator)
 /** 全量 itemKey（自动关联差量对账，避免 query limit 截断，S3） */
 export const listItemKeys = async(sourceId: string): Promise<string[]> => call<string[]>('listItemKeysForSourceId', sourceId)
-export const setOffline = async(locator: string, relPath: string | null): Promise<void> => { await call('setOffline', locator, relPath) }
-export const bumpPlay = async(locator: string): Promise<void> => { await call('bumpPlay', locator) }
-export const deleteTrack = async(locator: string): Promise<void> => { await call('deleteTrack', locator) }
+export const setOffline = async(locator: string, relPath: string | null): Promise<boolean> => call<boolean>('setOffline', locator, relPath)
+export const bumpPlay = async(locator: string): Promise<boolean> => call<boolean>('bumpPlay', locator)
+export const deleteTrack = async(locator: string): Promise<boolean> => call<boolean>('deleteTrack', locator)
 
 // ---- 播放 / 封面 / 歌词解析（§8）----
 /** 本地来源：acquire、拼路径、查存在，返回 `file://…` 或空串（§8.2） */
