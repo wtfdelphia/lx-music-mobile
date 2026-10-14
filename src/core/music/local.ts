@@ -203,19 +203,20 @@ export const getLyricInfo = async({ musicInfo, isRefresh, skipFileLyric, onToggl
   isRefresh: boolean
   onToggleSource?: (musicInfo?: LX.Music.MusicInfoOnline) => void
 }): Promise<LX.Player.LyricInfo> => {
-  if (!isRefresh && !skipFileLyric) {
-    // const lyricInfo = await getCachedLyricInfo(musicInfo)
-    // if (lyricInfo?.rawlrcInfo.lyric && lyricInfo.lyric != lyricInfo.rawlrcInfo.lyric) {
-    //   // 存在已编辑歌词
-    //   return buildLyricInfo(lyricInfo)
-    // }
+  // M10：手选歌词（手动搜索应用）写在 _edited 通道，无论刷新与否
+  // 都优先于文件内歌词与同名 .lrc，否则会被内嵌歌词盖住。
+  // getCachedLyricInfo 读 _edited 与普通缓存，靠 lyric != rawlrc 判别编辑态
+  const cachedInfo = await getCachedLyricInfo(musicInfo)
+  if (cachedInfo?.rawlrcInfo.lyric && cachedInfo.lyric != cachedInfo.rawlrcInfo.lyric) {
+    return buildLyricInfo(cachedInfo)
+  }
 
+  if (!isRefresh && !skipFileLyric) {
     // 尝试读取文件内歌词
     const rawlrcInfo = await getMusicFileLyric(musicInfo.meta.filePath)
     if (rawlrcInfo) return buildLyricInfo(rawlrcInfo)
 
-    const lyricInfo = await getCachedLyricInfo(musicInfo)
-    if (lyricInfo?.lyric) return buildLyricInfo(lyricInfo)
+    if (cachedInfo?.lyric) return buildLyricInfo(cachedInfo)
   }
 
   try {

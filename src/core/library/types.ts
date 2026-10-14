@@ -35,6 +35,9 @@ export interface NativeTrackRow {
   ext: string | null
   /** 本地：缓存封面文件名；远程：coverArt id */
   artwork: string | null
+  /** 聚合键：曲目行携带自身分组键，供「查看专辑 / 查看艺人」直接下钻（M7） */
+  albumKey: string
+  artistKey: string
 }
 
 export type LibraryQueryKind = 'tracks' | 'albums' | 'artists' | 'albumTracks' | 'artistTracks'

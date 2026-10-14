@@ -4,6 +4,7 @@ import { FlatList, View, TouchableOpacity, type ListRenderItem } from 'react-nat
 import Text from '@/components/common/Text'
 import { createStyle } from '@/utils/tools'
 import { useTheme } from '@/store/theme/hook'
+import { useI18n } from '@/lang'
 import type { NativeTrackRow } from '@/core/library/types'
 
 export interface ArtistListProps {
@@ -41,6 +42,7 @@ const groupByLetter = (rows: NativeTrackRow[]): ArtistSection[] => {
 
 export default ({ rows, onOpenArtist }: ArtistListProps) => {
   const theme = useTheme()
+  const t = useI18n()
   const listRef = useRef<FlatList>(null)
 
   const sections = useMemo(() => groupByLetter(rows), [rows])
@@ -65,7 +67,7 @@ export default ({ rows, onOpenArtist }: ArtistListProps) => {
     }
     return (
       <TouchableOpacity style={styles.artistRow} onPress={() => { onOpenArtist(item) }}>
-        <Text size={14} numberOfLines={1}>{item.title}</Text>
+        <Text size={14} numberOfLines={1}>{item.title || t('library_unknown_artist')}</Text>
       </TouchableOpacity>
     )
   }

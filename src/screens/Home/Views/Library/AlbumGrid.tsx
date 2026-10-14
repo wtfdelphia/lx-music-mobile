@@ -5,6 +5,7 @@ import Text from '@/components/common/Text'
 import Image from '@/components/common/Image'
 import { createStyle, isHorizontalMode } from '@/utils/tools'
 import { useTheme } from '@/store/theme/hook'
+import { useI18n } from '@/lang'
 import { scaleSizeW } from '@/utils/pixelRatio'
 import { useWindowSize } from '@/utils/hooks'
 import { NAV_WIDTH } from '@/screens/Home/Horizontal/Aside'
@@ -37,13 +38,15 @@ const useArtworkUrl = (artwork: string | null): string | null => {
   return url
 }
 
-const Card = memo(({ item, width, onPress }: {
+const Card = memo(({ item, width, onPress, unknownLabel }: {
   item: NativeTrackRow
   width: number
   onPress: (row: NativeTrackRow) => void
+  unknownLabel: string
 }) => {
   const theme = useTheme()
   const artworkUrl = useArtworkUrl(item.artwork)
+  const title = item.title || unknownLabel
   const itemWidth = width - GAP
   return (
     <View style={{ ...styles.card, width: itemWidth }}>
@@ -53,11 +56,11 @@ const Card = memo(({ item, width, onPress }: {
             ? <Image url={artworkUrl} style={{ width: itemWidth, height: itemWidth, borderRadius: 4 }} />
             : (
                 <View style={styles.cardImgPlaceholder}>
-                  <Text size={12} color={theme['c-font-label']}>{item.title.slice(0, 1)}</Text>
+                  <Text size={12} color={theme['c-font-label']}>{title.slice(0, 1)}</Text>
                 </View>
               )}
         </View>
-        <Text style={styles.cardTitle} numberOfLines={2} size={12}>{item.title}</Text>
+        <Text style={styles.cardTitle} numberOfLines={2} size={12}>{title}</Text>
         <Text style={styles.cardSub} numberOfLines={1} size={11} color={theme['c-font-label']}>{item.artist ?? ''}</Text>
       </TouchableOpacity>
     </View>
@@ -67,6 +70,7 @@ const Card = memo(({ item, width, onPress }: {
 })
 
 export default ({ rows, onOpenAlbum }: AlbumGridProps) => {
+  const t = useI18n()
   // 列数跟随窗口宽度（对齐歌单广场网格的排数逻辑）
   const windowSize = useWindowSize()
   const width = isHorizontalMode(windowSize.width, windowSize.height)
@@ -75,7 +79,7 @@ export default ({ rows, onOpenAlbum }: AlbumGridProps) => {
   const listRef = useRef<FlatList>(null)
 
   const renderItem: FlatListType['renderItem'] = ({ item }) => (
-    <Card item={item} width={width / 3} onPress={onOpenAlbum} />
+    <Card item={item} width={width / 3} onPress={onOpenAlbum} unknownLabel={t('library_unknown_album')} />
   )
 
   return (

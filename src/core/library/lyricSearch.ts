@@ -7,7 +7,9 @@
 import { searchMusic } from '@/utils/musicSdk'
 import { buildLyricInfo } from '@/core/music/utils'
 import { getLyricInfo } from '@/core/music/online'
-import { saveLyric } from '@/utils/data'
+import { saveEditedLyric } from '@/utils/data'
+import { refreshCurrentLyric } from '@/core/player/player'
+import playerState from '@/store/player/state'
 import type { NativeTrackRow } from './types'
 
 export interface LyricCandidate {
@@ -48,9 +50,12 @@ export const applyLyricCandidate = async(row: NativeTrackRow, candidate: LyricCa
     isRefresh: false,
     allowToggleSource: true,
   })
-  // 以曲库定位符为键写入缓存：后续按定位符命中
+  // M10：写 _edited 通道而非普通缓存，避免被文件内嵌歌词 / 同名 .lrc
+  // 盖住（getLyricInfo 优先读编辑歌词）
   const localInfo = toLocalKey(row)
-  await saveLyric(localInfo, lyricInfo)
+  await saveEditedLyric(localInfo, lyricInfo)
+  // 正在播放这首歌时立即刷新歌词界面
+  if (playerState.playMusicInfo.musicInfo?.id === row.locator) refreshCurrentLyric()
   return lyricInfo
 }
 

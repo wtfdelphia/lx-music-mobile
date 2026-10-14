@@ -6,8 +6,7 @@
  */
 import * as native from './native'
 import type { ScanProgressEvent, ScanDoneEvent } from './native'
-import { setScanProgress, clearScanProgress, setScanReport, setSources, setRows } from '@/store/library/action'
-import { queryTracks } from './query'
+import { setScanProgress, clearScanProgress, setScanReport, setSources } from '@/store/library/action'
 import state from '@/store/library/state'
 import type { LibrarySource } from './types'
 
@@ -23,9 +22,10 @@ const handleScanEvent = (event: ScanProgressEvent | ScanDoneEvent): void => {
     clearScanProgress(event.sourceId)
     setScanReport(event.sourceId, event.report)
     void refreshSources()
-    // 扫描入库由原生完成，刷新行数据让列表反映新曲目（§5.3）
-    void queryTracks({ sourceIds: state.filterSourceId ? [state.filterSourceId] : undefined, offset: 0, limit: 200 })
-      .then(result => { setRows(result.rows, result.total) })
+    // H4：扫描入库由原生完成，这里只发事件；由页面按当前
+    // 视图状态（Tab / 下钻 / 筛选 / 关键词 / 排序）自行重载，
+    // 避免用歌曲列表覆盖专辑 / 艺人 / 最近播放 / 下钻视图
+    global.app_event.libraryScanDone(event.sourceId)
     return
   }
   setScanProgress({
@@ -64,6 +64,8 @@ export const startSourceScan = async(sourceId: string): Promise<boolean> => {
   if (scanning.has(sourceId)) return false
   const source = state.sources.find(s => s.id === sourceId)
   if (!source || !source.enabled) return false
+  // H2：「下载」虚拟来源由对账维护，不允许扫描（原生侧也有兜底）
+  if (source.type === 'download') return false
   let recursive = true
   try {
     recursive = (JSON.parse(source.config) as { recursive?: boolean }).recursive ?? true
@@ -91,24 +93,39 @@ export const cancelSourceScan = async(sourceId: string): Promise<void> => {
  * 等待方式：订阅扫描完成事件（事件驱动），不能用忙轮询——
  * 阻塞式 while 会占住 JS 线程，原生完成事件回不来，形成死锁
  */
+let scanAllRunning = false
+/** 单来源等待上限：万首级扫描的兜底，卡死不阻塞后续来源 */
+const SCAN_WAIT_TIMEOUT_MS = 15 * 60 * 1000
+
 export const scanAllSources = async(): Promise<void> => {
-  for (const source of state.sources) {
-    if (!source.enabled) continue
-    if (!(await startSourceScan(source.id))) continue
-    await waitForScanDone(source.id)
+  // 单飞：重复点击不叠加第二轮
+  if (scanAllRunning) return
+  scanAllRunning = true
+  try {
+    for (const source of state.sources) {
+      if (!source.enabled) continue
+      if (source.type === 'download') continue // H2
+      if (!(await startSourceScan(source.id))) continue
+      await waitForScanDone(source.id)
+    }
+  } finally {
+    scanAllRunning = false
   }
 }
 
 const waitForScanDone = async(sourceId: string): Promise<void> => {
   if (!scanning.has(sourceId)) return
-  return new Promise(resolve => {
-    const timer = setInterval(() => {
-      if (!scanning.has(sourceId)) {
-        clearInterval(timer)
-        resolve()
-      }
-    }, 500)
-  })
+  await Promise.race([
+    new Promise<void>(resolve => {
+      const timer = setInterval(() => {
+        if (!scanning.has(sourceId)) {
+          clearInterval(timer)
+          resolve()
+        }
+      }, 500)
+    }),
+    new Promise<void>(resolve => setTimeout(resolve, SCAN_WAIT_TIMEOUT_MS)),
+  ])
 }
 
 /** 测试钩子：清空单飞锁（生产不调用） */

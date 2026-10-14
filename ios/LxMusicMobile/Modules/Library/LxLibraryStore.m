@@ -108,7 +108,10 @@ static NSString *LxEscapeLike(NSString *s)
   sqlite3_exec(_db, "PRAGMA journal_mode=WAL;", NULL, NULL, NULL);
   sqlite3_exec(_db, "PRAGMA foreign_keys=ON;", NULL, NULL, NULL);
 
+  // 各级迁移串联调用，每级自查版本号（H1 修复：存量 v1 库
+  // 必须能继续升到 v2，否则排除表永远建不出来）
   [self _migrateOnQueue];
+  [self _migrateTo2OnQueue];
   _opened = YES;
   return YES;
 }
@@ -182,7 +185,6 @@ static NSString *LxEscapeLike(NSString *s)
     return;
   }
   sqlite3_exec(_db, "PRAGMA user_version=1;", NULL, NULL, NULL);
-  [self _migrateTo2OnQueue];
 }
 
 // v2：排除表（从曲库移除不删文件，重扫 / 对账跳过，§16）
@@ -232,12 +234,16 @@ static NSString *LxEscapeLike(NSString *s)
   row[@"artwork"] = artwork ? [NSString stringWithUTF8String:(const char *)artwork] : [NSNull null];
   const unsigned char *offline = sqlite3_column_text(stmt, 10);
   row[@"offlinePath"] = offline ? [NSString stringWithUTF8String:(const char *)offline] : [NSNull null];
+  const unsigned char *albumKey = sqlite3_column_text(stmt, 11);
+  const unsigned char *artistKey = sqlite3_column_text(stmt, 12);
+  row[@"albumKey"] = albumKey ? [NSString stringWithUTF8String:(const char *)albumKey] : @"";
+  row[@"artistKey"] = artistKey ? [NSString stringWithUTF8String:(const char *)artistKey] : @"";
   return row;
 }
 
 // 曲目查询的列序必须与 rowToDict 一致
 static NSString * const kTrackColumns =
-  @"locator, source_id, item_key, title, artist, album, album_artist, ext, artwork, duration_ms, offline_path";
+  @"locator, source_id, item_key, title, artist, album, album_artist, ext, artwork, duration_ms, offline_path, album_key, artist_key";
 
 #pragma mark - 来源
 
@@ -457,7 +463,7 @@ static NSString * const kTrackColumns =
     if (sqlite3_prepare_v2(self->_db, sql.UTF8String, -1, &stmt, NULL) != SQLITE_OK) return;
     sqlite3_bind_text(stmt, 1, locator.UTF8String, -1, SQLITE_TRANSIENT);
     if (sqlite3_step(stmt) == SQLITE_ROW) {
-      const unsigned char *type = sqlite3_column_text(stmt, 11);
+      const unsigned char *type = sqlite3_column_text(stmt, 13);
       out = [self rowToDict:stmt withType:type ? [NSString stringWithUTF8String:(const char *)type] : @"local"];
     }
     sqlite3_finalize(stmt);
@@ -713,13 +719,15 @@ static NSString * const kTrackColumns =
       [self _queryKeyedTracksRows:rows total:&total sourceIds:sourceIds keyColumn:@"artist_key" key:artistKey offset:offset limit:limit];
       return;
     }
-    [self _queryTracksRows:rows total:&total sourceIds:sourceIds keyword:keyword sort:spec[@"sort"] offset:offset limit:limit];
+    [self _queryTracksRows:rows total:&total sourceIds:sourceIds keyword:keyword sort:LxStr(spec[@"sort"]) offset:offset limit:limit];
   });
   return @{ @"rows": rows, @"total": @(total) };
 }
 
 - (void)appendSourceFilter:(NSMutableString *)sql bindings:(NSMutableArray *)bindings sourceIds:(NSArray *)sourceIds
 {
+  // M5: disabled sources are excluded from all views
+  [sql appendString:@" AND s.enabled = 1"];
   if (!sourceIds.count) return;
   // 桥数组可能混入非字符串元素（如 NSNull），过滤后再绑定，
   // 否则 bindStrings 对其发 UTF8String 会崩
@@ -757,6 +765,8 @@ static NSString * const kTrackColumns =
   NSMutableArray *bindings = [NSMutableArray array];
   [self appendSourceFilter:where bindings:bindings sourceIds:sourceIds];
   [self appendKeywordFilter:where bindings:bindings keyword:keyword];
+  // M6：最近播放视图只返回播过的曲目，未播过的不进列表
+  if ([sort isEqualToString:@"recent"]) [where appendString:@" AND t.last_played_at IS NOT NULL"];
 
   NSString *orderBy = @"t.title_sort";
   if ([sort isEqualToString:@"artist"]) orderBy = @"t.artist_key, t.title_sort";
@@ -771,7 +781,7 @@ static NSString * const kTrackColumns =
   if (sqlite3_prepare_v2(_db, sql.UTF8String, -1, &stmt, NULL) != SQLITE_OK) return;
   [self bindStrings:bindings toStatement:stmt];
   while (sqlite3_step(stmt) == SQLITE_ROW) {
-    const unsigned char *type = sqlite3_column_text(stmt, 11);
+    const unsigned char *type = sqlite3_column_text(stmt, 13);
     [rows addObject:[self rowToDict:stmt withType:type ? [NSString stringWithUTF8String:(const char *)type] : @"local"]];
   }
   sqlite3_finalize(stmt);
@@ -806,8 +816,8 @@ static NSString * const kTrackColumns =
   // 专辑行：合成定位符用 album_key；title=专辑，artist=专辑艺人（§5.1 键）
   NSString *sql = [NSString stringWithFormat:
     @"SELECT t.album_key AS locator, MIN(t.source_id) AS source_id, t.album_key AS item_key, "
-    @"COALESCE(NULLIF(t.album, ''), '(null)') AS title, MIN(t.artist) AS artist, MIN(t.album) AS album, "
-    @"MIN(t.album_artist) AS album_artist, NULL AS ext, MIN(t.artwork) AS artwork, 0 AS duration_ms, NULL AS offline_path, MIN(s.type) AS type "
+    @"COALESCE(NULLIF(t.album, ''), '') AS title, MIN(t.artist) AS artist, MIN(t.album) AS album, "
+    @"MIN(t.album_artist) AS album_artist, NULL AS ext, MIN(t.artwork) AS artwork, 0 AS duration_ms, NULL AS offline_path, t.album_key AS album_key, t.artist_key AS artist_key, MIN(s.type) AS type "
     @"FROM track t JOIN source s ON t.source_id = s.id %@ "
     @"GROUP BY t.album_key ORDER BY t.album_key LIMIT %ld OFFSET %ld",
     where, (long)limit, (long)offset];
@@ -815,7 +825,7 @@ static NSString * const kTrackColumns =
   if (sqlite3_prepare_v2(_db, sql.UTF8String, -1, &stmt, NULL) != SQLITE_OK) return;
   [self bindStrings:bindings toStatement:stmt];
   while (sqlite3_step(stmt) == SQLITE_ROW) {
-    const unsigned char *type = sqlite3_column_text(stmt, 11);
+    const unsigned char *type = sqlite3_column_text(stmt, 13);
     [rows addObject:[self rowToDict:stmt withType:type ? [NSString stringWithUTF8String:(const char *)type] : @"local"]];
   }
   sqlite3_finalize(stmt);
@@ -840,8 +850,8 @@ static NSString * const kTrackColumns =
 
   NSString *sql = [NSString stringWithFormat:
     @"SELECT t.artist_key AS locator, MIN(t.source_id) AS source_id, t.artist_key AS item_key, "
-    @"COALESCE(NULLIF(t.artist, ''), '(null)') AS title, NULL AS artist, NULL AS album, "
-    @"NULL AS album_artist, NULL AS ext, MIN(t.artwork) AS artwork, 0 AS duration_ms, NULL AS offline_path, MIN(s.type) AS type "
+    @"COALESCE(NULLIF(MIN(COALESCE(NULLIF(t.album_artist, ''), t.artist)), ''), '') AS title, NULL AS artist, NULL AS album, "
+    @"NULL AS album_artist, NULL AS ext, MIN(t.artwork) AS artwork, 0 AS duration_ms, NULL AS offline_path, t.album_key AS album_key, t.artist_key AS artist_key, MIN(s.type) AS type "
     @"FROM track t JOIN source s ON t.source_id = s.id %@ "
     @"GROUP BY t.artist_key ORDER BY t.artist_key LIMIT %ld OFFSET %ld",
     where, (long)limit, (long)offset];
@@ -849,7 +859,7 @@ static NSString * const kTrackColumns =
   if (sqlite3_prepare_v2(_db, sql.UTF8String, -1, &stmt, NULL) != SQLITE_OK) return;
   [self bindStrings:bindings toStatement:stmt];
   while (sqlite3_step(stmt) == SQLITE_ROW) {
-    const unsigned char *type = sqlite3_column_text(stmt, 11);
+    const unsigned char *type = sqlite3_column_text(stmt, 13);
     [rows addObject:[self rowToDict:stmt withType:type ? [NSString stringWithUTF8String:(const char *)type] : @"local"]];
   }
   sqlite3_finalize(stmt);
@@ -879,7 +889,7 @@ static NSString * const kTrackColumns =
   if (sqlite3_prepare_v2(_db, sql.UTF8String, -1, &stmt, NULL) != SQLITE_OK) return;
   [self bindStrings:bindings toStatement:stmt];
   while (sqlite3_step(stmt) == SQLITE_ROW) {
-    const unsigned char *type = sqlite3_column_text(stmt, 11);
+    const unsigned char *type = sqlite3_column_text(stmt, 13);
     [rows addObject:[self rowToDict:stmt withType:type ? [NSString stringWithUTF8String:(const char *)type] : @"local"]];
   }
   sqlite3_finalize(stmt);

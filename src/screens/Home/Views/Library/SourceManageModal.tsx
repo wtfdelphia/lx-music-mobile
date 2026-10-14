@@ -26,14 +26,6 @@ const STATE_KEYS: Record<LibrarySource['state'], 'library_source_state_ok' | 'li
   scanning: 'library_source_state_scanning',
 }
 
-const TYPE_LABELS: Record<LibrarySource['type'], string> = {
-  local: '本地',
-  download: '下载',
-  subsonic: 'Subsonic',
-  jellyfin: 'Jellyfin',
-  emby: 'Emby',
-}
-
 const formatLastScan = (ts: number | null): string => {
   if (!ts) return ''
   const d = new Date(ts)
@@ -65,7 +57,7 @@ const SourceItem = ({ source, isScanning, scanned, trackCount, onScan, onCancelS
       <View style={styles.sourceInfo}>
         <Text numberOfLines={1} size={14}>{source.name}</Text>
         <Text numberOfLines={1} size={11} color={theme['c-font-label']}>
-          {TYPE_LABELS[source.type] ?? source.type} · {trackCount}{t('library_tracks_suffix')} · {stateLabel}
+          {source.type === 'local' ? t('library_type_local') : source.type === 'download' ? t('nav_download') : source.type} · {trackCount}{t('library_tracks_suffix')} · {stateLabel}
           {isScanning ? ` (${scanned})` : ''}
           {lastScan ? ` · ${lastScan}` : ''}
         </Text>
@@ -98,9 +90,13 @@ const SourceItem = ({ source, isScanning, scanned, trackCount, onScan, onCancelS
         <Button style={styles.actionBtn} onPress={() => { onRestore(source) }}>
           <Text size={12} color={theme['c-font']}>{t('library_restore_removed')}</Text>
         </Button>
-        <Button style={styles.actionBtn} onPress={() => { onDelete(source) }}>
-          <Text size={12} color="#f24a4a">{t('delete')}</Text>
-        </Button>
+        {source.type !== 'download'
+          ? (
+              <Button style={styles.actionBtn} onPress={() => { onDelete(source) }}>
+                <Text size={12} color="#f24a4a">{t('delete')}</Text>
+              </Button>
+            )
+          : null}
       </View>
     </View>
   )
@@ -190,7 +186,7 @@ export default forwardRef<SourceManageModalType, {}>((_props, ref) => {
   }
 
   const handleRestore = (source: LibrarySource) => {
-    void restoreRemoved(source.id).then(ok => {
+    void restoreRemoved(source.id, source.type).then(ok => {
       if (ok) toast(t('library_restore_removed_done'), 'short')
     })
   }

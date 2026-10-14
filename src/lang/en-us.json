@@ -672,5 +672,9 @@
   "library_sort_title": "Title",
   "library_sort_artist": "Artist",
   "library_sort_album": "Album",
-  "library_add_folder_recursive_tip": "Include subfolders"
+  "library_add_folder_recursive_tip": "Include subfolders",
+  "library_type_local": "Local",
+  "library_unknown_album": "Unknown Album",
+  "library_unknown_artist": "Unknown Artist",
+  "library_delete_skipped_suffix": "track(s) from external folders skipped"
 }

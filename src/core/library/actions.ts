@@ -14,12 +14,26 @@ import { getListMusics, userLists } from '@/utils/listManage'
 import settingState from '@/store/setting/state'
 import { toMusicInfo } from './toMusicInfo'
 import { parseLocator } from './locator'
+import { playNext } from '@/core/player/player'
+import playerState from '@/store/player/state'
 import type { NativeTrackRow } from './types'
+
+/**
+ * M11：被删除 / 移除的曲目若正在播放，先切下一首，
+ * 避免播放器拿着失效定位符反复报错
+ */
+const skipIfPlaying = async(rows: NativeTrackRow[]): Promise<void> => {
+  const cur = playerState.playMusicInfo.musicInfo
+  if (!cur || !('id' in cur)) return
+  const curId = String(cur.id)
+  if (rows.some(r => r.locator === curId)) await playNext(true).catch(() => {})
+}
 
 /**
  * 从曲库移除（不删文件）。返回成功移除的数量
  */
 export const removeFromLibrary = async(rows: NativeTrackRow[]): Promise<number> => {
+  await skipIfPlaying(rows)
   let removed = 0
   for (const row of rows) {
     const parsed = parseLocator(row.locator)
@@ -31,10 +45,21 @@ export const removeFromLibrary = async(rows: NativeTrackRow[]): Promise<number> 
 }
 
 /**
- * 恢复已移除（来源管理入口）
+ * 恢复已移除（来源管理入口，M9）。
+ * 清排除表后：本地来源触发重扫让曲目回来；下载来源触发对账
  */
-export const restoreRemoved = async(sourceId: string): Promise<boolean> => {
-  return native.restoreExcluded(sourceId).catch(() => false)
+export const restoreRemoved = async(sourceId: string, sourceType: string): Promise<boolean> => {
+  const ok = await native.restoreExcluded(sourceId).catch(() => false)
+  if (!ok) return false
+  if (sourceType === 'download') {
+    const { reconcileNow } = await import('./associate')
+    reconcileNow()
+  } else {
+    // 本地 / 外部来源：触发增量扫描把之前排除的曲目重新入库
+    const { startSourceScan } = await import('./sync')
+    void startSourceScan(sourceId)
+  }
+  return ok
 }
 
 /**
@@ -83,33 +108,34 @@ export const deleteLibrarySource = async(sourceId: string, removeFromLists: bool
  * 外部来源：原生拒绝，抛错由调用方提示
  */
 export const deleteFiles = async(rows: NativeTrackRow[]): Promise<number> => {
+  await skipIfPlaying(rows)
   let removed = 0
   const downloadRows = rows.filter(r => r.sourceType === 'download')
   const otherRows = rows.filter(r => r.sourceType !== 'download')
 
-  // 「下载」来源：按 itemKey 反查下载任务（itemKey == metadata.filePath）
+  // 「下载」来源：按 itemKey 反查下载任务（itemKey == metadata.filePath）。
+  // M1：删文件不写排除表——排除表只给「从曲库移除」用；同一首歌重新
+  // 下载（filePath 相同）后必须能重新入库，否则排除表变永久黑名单
   if (downloadRows.length) {
     const keyToLocator = new Map(downloadRows.map(r => [r.itemKey, r.locator]))
     const tasks = getDownloadList().filter(t => keyToLocator.has(t.metadata.filePath))
     if (tasks.length) await removeTasks(tasks, true)
     removed += tasks.length
-    // 排除表挡重扫 / 对账；任务删除后 associate 会自动解绑行，
-    // 这里再写排除确保不被再次完成的任务复活
-    for (const row of downloadRows) {
-      const parsed = parseLocator(row.locator)
-      if (parsed) await native.excludeTrack(parsed.sourceId, parsed.itemKey).catch(() => {})
-    }
   }
 
-  // 其余来源：原生分级处理（外部来源在此被拒绝）
+  // 其余来源：原生分级处理（外部来源在此被拒绝）。
+  // M4：逐条 try，外部只读来源失败不阻断后续沙箱曲目的删除
+  let skipped = 0
   for (const row of otherRows) {
-    const result = await native.deleteSourceFile(row.locator)
-    if (result.removedAudio) {
-      removed++
-      const parsed = parseLocator(row.locator)
-      if (parsed) await native.excludeTrack(parsed.sourceId, parsed.itemKey).catch(() => {})
+    try {
+      const result = await native.deleteSourceFile(row.locator)
+      if (result.removedAudio) removed++
+      else skipped++
+    } catch {
+      skipped++
     }
   }
+  if (skipped > 0 && removed === 0) throw new Error('E_READONLY')
   return removed
 }
 

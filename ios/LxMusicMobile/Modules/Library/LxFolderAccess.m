@@ -246,8 +246,9 @@ typedef NS_ENUM(NSInteger, LxLibraryErrorCode) {
   NSURL *root = [self rootURLForSourceId:sourceId];
   if (!root || !relPath.length) return nil;
   NSURL *candidate = [root URLByAppendingPathComponent:relPath];
-  // 标准化后校验仍在根目录下（防 .. 穿越）（§16）
-  NSString *rootStandard = root.standardizedURL.path;
+  // 标准化后校验仍在根目录下（防 .. 穿越）（§16）。
+  // 前缀比较必须带尾斜杠：/Music 不得匹配 /Music2
+  NSString *rootStandard = [root.standardizedURL.path stringByAppendingString:@"/"];
   NSString *candidateStandard = candidate.standardizedURL.path;
   if (![candidateStandard hasPrefix:rootStandard]) return nil;
   return candidate.standardizedURL;

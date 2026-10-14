@@ -212,6 +212,13 @@ RCT_EXPORT_METHOD(startScan:(NSString *)sourceId options:(NSDictionary *)options
                   resolver:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 {
+  // H2 兜底：「下载」虚拟来源的根是 Documents 且曲目由对账维护，
+  // 扫描会误删曲目行并吞并 Documents 根下的音频，原生侧直接拒绝
+  NSDictionary *meta = [[LxLibraryStore shared] configForSourceId:LxStr(sourceId)];
+  if ([LxStr(meta[@"type"]) isEqualToString:@"download"]) {
+    reject(@"E_INVALID_ARGS", @"download source cannot be scanned", nil);
+    return;
+  }
   BOOL recursive = LxBool(options[@"recursive"]);
   NSURL *rootURL = [[LxFolderAccess shared] rootURLForSourceId:sourceId];
   if (!rootURL) {
@@ -407,19 +414,29 @@ RCT_EXPORT_METHOD(deleteSourceFile:(NSString *)locator
     return;
   }
   NSURL *fileURL = [[LxFolderAccess shared] resolveSourceId:sourceId relativePath:itemKey];
-  if (!fileURL) { reject(@"E_NOT_FOUND", @"path escape or missing", nil); return; }
+  if (!fileURL) {
+    [[LxFolderAccess shared] release:sourceId];
+    reject(@"E_NOT_FOUND", @"path escape or missing", nil);
+    return;
+  }
 
   NSFileManager *fm = NSFileManager.defaultManager;
   BOOL removedAudio = NO;
   if ([fm fileExistsAtPath:fileURL.path]) {
     removedAudio = [fm removeItemAtPath:fileURL.path error:nil];
   }
-  // sidecar .lrc 一并删除（§16）
-  NSString *lrcPath = [fileURL.path.stringByDeletingPathExtension stringByAppendingPathExtension:@"lrc"];
+  // sidecar .lrc 一并删除（§16）：按常见大小写逐个探测
+  NSString *base = fileURL.path.stringByDeletingPathExtension;
+  NSString *lrcPath = nil;
+  for (NSString *ext in @[@"lrc", @"LRC", @"Lrc"]) {
+    NSString *candidatePath = [base stringByAppendingPathExtension:ext];
+    if ([fm fileExistsAtPath:candidatePath]) { lrcPath = candidatePath; break; }
+  }
   BOOL removedLrc = NO;
-  if ([fm fileExistsAtPath:lrcPath]) removedLrc = [fm removeItemAtPath:lrcPath error:nil];
-  // 曲目行一并移除
+  if (lrcPath) removedLrc = [fm removeItemAtPath:lrcPath error:nil];
+  // 曲目行一并移除；释放本次操作的授权引用（修复只 acquire 不 release）
   [[LxLibraryStore shared] deleteTrack:loc];
+  [[LxFolderAccess shared] release:sourceId];
 
   resolve(@{
     @"removedAudio": @(removedAudio),

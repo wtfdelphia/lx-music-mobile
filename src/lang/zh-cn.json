@@ -672,5 +672,9 @@
   "library_sort_title": "按标题",
   "library_sort_artist": "按艺人",
   "library_sort_album": "按专辑",
-  "library_add_folder_recursive_tip": "包含子文件夹"
+  "library_add_folder_recursive_tip": "包含子文件夹",
+  "library_type_local": "本地",
+  "library_unknown_album": "未知专辑",
+  "library_unknown_artist": "未知艺人",
+  "library_delete_skipped_suffix": "首为外部文件夹来源，已跳过"
 }

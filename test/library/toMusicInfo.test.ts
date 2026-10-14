@@ -13,6 +13,8 @@ const base: LibraryTrackRow = {
   durationMs: 269_000,
   ext: 'mp3',
   artwork: 'ab12.jpg',
+  albumKey: '',
+  artistKey: '',
 }
 
 describe('toMusicInfo', () => {

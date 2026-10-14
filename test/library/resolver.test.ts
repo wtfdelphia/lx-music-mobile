@@ -20,6 +20,8 @@ const row = (over: Partial<NativeTrackRow> = {}): NativeTrackRow => ({
   sourceId: SID,
   sourceType: 'local',
   itemKey: 'Music/a.mp3',
+  albumKey: '',
+  artistKey: '周杰伦',
   title: '晴天',
   artist: '周杰伦',
   album: '叶惠美',

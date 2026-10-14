@@ -672,5 +672,9 @@
   "library_sort_title": "按標題",
   "library_sort_artist": "按藝人",
   "library_sort_album": "按專輯",
-  "library_add_folder_recursive_tip": "包含子資料夾"
+  "library_add_folder_recursive_tip": "包含子資料夾",
+  "library_type_local": "本地",
+  "library_unknown_album": "未知專輯",
+  "library_unknown_artist": "未知藝人",
+  "library_delete_skipped_suffix": "首為外部資料夾來源，已跳過"
 }

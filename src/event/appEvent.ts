@@ -216,6 +216,14 @@ export class AppEvent extends Event {
   libraryScanProgressUpdated() {
     this.emit('libraryScanProgressUpdated')
   }
+
+  /**
+   * 扫描完成：页面按当前视图状态自行重载（H4 修复，
+   * 不再由编排层用歌曲列表覆盖当前视图）
+   */
+  libraryScanDone(sourceId: string) {
+    this.emit('libraryScanDone', sourceId)
+  }
 }
 
 

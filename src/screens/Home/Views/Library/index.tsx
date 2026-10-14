@@ -9,12 +9,13 @@ import ArtistList from './ArtistList'
 import { handlePlay } from './listAction'
 import { toMusicInfo } from '@/core/library/toMusicInfo'
 import MusicAddModal, { type MusicAddModalType } from '@/components/MusicAddModal'
+import MusicMultiAddModal, { type MusicMultiAddModalType } from '@/components/MusicMultiAddModal'
 import Modal, { type ModalType } from '@/components/common/Modal'
 import SourceManageModal, { type SourceManageModalType } from './SourceManageModal'
 import { queryTracks, queryAlbums, queryArtists, queryAlbumTracks, queryArtistTracks } from '@/core/library/query'
 import * as native from '@/core/library/native'
 import { setRows, setTabId, setFilterSourceId } from '@/store/library/action'
-import { useLibrarySources } from '@/store/library/hook'
+import { useLibrarySources, useLibraryRows } from '@/store/library/hook'
 import DorpDownMenu from '@/components/common/DorpDownMenu'
 import state from '@/store/library/state'
 import { pickLocalFolder } from '@/core/library/sources/local'
@@ -22,9 +23,6 @@ import { startSourceScan, refreshSources, scanAllSources } from '@/core/library/
 import { removeFromLibrary, deleteFiles, toggleLove, getLoveSet } from '@/core/library/actions'
 import { searchLyricCandidates, applyLyricCandidate, type LyricCandidate } from '@/core/library/lyricSearch'
 import { toast, createStyle, confirmDialog } from '@/utils/tools'
-import { addListMusics } from '@/core/list'
-import { LIST_IDS } from '@/config/constant'
-import settingState from '@/store/setting/state'
 import { useI18n } from '@/lang'
 import { useTheme } from '@/store/theme/hook'
 import Text from '@/components/common/Text'
@@ -52,6 +50,7 @@ export default () => {
   const listMenuRef = useRef<ListMenuType>(null)
   const metadataEditRef = useRef<MetadataEditType>(null)
   const listAddModalRef = useRef<MusicAddModalType>(null)
+  const listMultiAddModalRef = useRef<MusicMultiAddModalType>(null)
   const sourceManageRef = useRef<SourceManageModalType>(null)
   const [tabId, setTabIdState] = useState<LibraryTabId>(state.tabId)
   const [keyword, setKeyword] = useState('')
@@ -71,8 +70,10 @@ export default () => {
   const lyricRowRef = useRef<NativeTrackRow | null>(null)
   const lyricModalRef = useRef<ModalType>(null)
   const sources = useLibrarySources()
-  // 行数据不在本组件消费（List 自行订阅），播放 / 菜单一律按定位符
-  // 从 state.rows 现查，绕开 memo 闭包过期问题
+  // H3：本组件必须订阅 rows——专辑网格 / 艺人分组 / 下钻详情头
+  // 都在此渲染，只读 state.rows 快照不会触发重渲染
+  const { rows } = useLibraryRows()
+  // 播放 / 菜单仍按定位符从 state.rows 现查，绕开 memo 闭包过期问题
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   // 请求序号守卫：慢的旧请求不得覆盖新结果
   const loadSeq = useRef(0)
@@ -109,11 +110,38 @@ export default () => {
     setRows(next.rows, next.total)
   }, [tabId, drill, filterSourceId, trackSort])
 
+  // M8：当前筛选的来源被删除后，下拉显示「全部来源」但列表为空——
+  // 筛选值残留所致。来源列表变化时若筛选值已不存在则重置。
+  // 必须在 inited 之后判断：初始化前 sources 为空，会误重置刚设的筛选
+  useEffect(() => {
+    if (!state.inited) return
+    if (filterSourceId && !sources.some(s => s.id === filterSourceId)) {
+      setFilterSourceIdState(null)
+      setFilterSourceId(null)
+    }
+  }, [sources, filterSourceId])
+
   // Tab / 下钻 / 来源筛选 / 排序 / 来源列表变化时重新加载
   useEffect(() => {
     void loadRows(keyword)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabId, drill, filterSourceId, trackSort, sources])
+
+  // H4：扫描完成后按当前视图状态重载（编排层不再覆盖式刷新）；
+  // M6：最近播放 Tab 上监听切歌，播放后列表即时反映
+  useEffect(() => {
+    const handleScanDone = () => { void loadRows(keyword) }
+    const handlePlayChanged = () => {
+      if (state.tabId === 'recent' || tabId === 'recent') void loadRows(keyword)
+    }
+    global.app_event.on('libraryScanDone', handleScanDone)
+    global.state_event.on('playMusicInfoChanged', handlePlayChanged)
+    return () => {
+      global.app_event.off('libraryScanDone', handleScanDone)
+      global.state_event.off('playMusicInfoChanged', handlePlayChanged)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadRows, keyword, tabId])
 
   // 首次进入拉取来源与曲目
   useEffect(() => {
@@ -125,6 +153,8 @@ export default () => {
     setTabId(id)
     setTabIdState(id)
     setDrill(null)
+    // M3：视图切换时退出多选，选中集合与旧视图绑定无意义
+    listRef.current?.exitMultiSelect()
   }, [])
 
   const handleKeywordChange = useCallback((text: string) => {
@@ -215,6 +245,20 @@ export default () => {
   }, [t])
 
   // 来源下拉菜单：全部 + 下载虚拟来源 + 各文件夹来源
+  // M4：外部文件夹（config 含 bookmark）来源的文件不可删，
+  // 菜单隐藏「删除文件」，避免点了才报只读错误
+  const externalSourceIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const source of sources) {
+      if (source.type !== 'local') continue
+      try {
+        const config = JSON.parse(source.config) as { bookmark?: string | null }
+        if (config.bookmark) ids.add(source.id)
+      } catch { /* config 损坏按可删处理 */ }
+    }
+    return ids
+  }, [sources])
+
   const sourceMenus = useMemo(() => {
     const items: Array<{ action: string, label: string, disabled?: boolean }> = [
       { action: 'all', label: t('library_all_sources') },
@@ -268,29 +312,25 @@ export default () => {
   }, [t])
 
   const handleViewAlbum = useCallback((row: NativeTrackRow) => {
-    if (!row.album) return
+    if (!row.album || !row.albumKey) return
+    // M7：行内已携带 album_key，直接下钻，不再按专辑名搜索匹配
+    // （同名专辑 / 跨来源同名不会选错）
     setTabId('albums')
     setTabIdState('albums')
     setFilterSourceIdState(row.sourceId)
     setFilterSourceId(row.sourceId)
-    setDrill(null)
-    void queryAlbums({ sourceIds: [row.sourceId], keyword: row.album, offset: 0, limit: 200 }).then(result => {
-      const albumRow = result.rows.find(r => r.itemKey === row.album || r.title === row.album)
-      if (albumRow) setDrill({ type: 'album', key: albumRow.itemKey, title: albumRow.title })
-    })
+    setDrill({ type: 'album', key: row.albumKey, title: row.album })
   }, [])
 
   const handleViewArtist = useCallback((row: NativeTrackRow) => {
-    if (!row.artist) return
+    if (!row.artist || !row.artistKey) return
+    // M7：曲目行的 artist_key 由原生在写入时计算（专辑艺人优先），
+    // 直接用它下钻，不再按艺人名搜索匹配（合辑 / feat 场景会匹配错）
     setTabId('artists')
     setTabIdState('artists')
     setFilterSourceIdState(row.sourceId)
     setFilterSourceId(row.sourceId)
-    setDrill(null)
-    void queryArtists({ sourceIds: [row.sourceId], keyword: row.artist, offset: 0, limit: 200 }).then(result => {
-      const artistRow = result.rows.find(r => r.title === row.artist)
-      if (artistRow) setDrill({ type: 'artist', key: artistRow.itemKey, title: artistRow.title })
-    })
+    setDrill({ type: 'artist', key: row.artistKey, title: row.artist })
   }, [])
 
   const handleRemove = useCallback(async(row: NativeTrackRow) => {
@@ -341,11 +381,11 @@ export default () => {
 
   const handleBatchAddToList = useCallback(() => {
     if (!selectedRows.length) return
+    // M2：弹多选添加弹窗让用户选目标列表，不再写死临时列表
     const musicInfos = selectedRows.map(r => toMusicInfo(r))
-    void addListMusics(LIST_IDS.TEMP, musicInfos, settingState.setting['list.addMusicLocationType'])
-    toast(t('list_add_tip_exists'), 'short')
+    listMultiAddModalRef.current?.show({ selectedList: musicInfos, listId: '', isMove: false })
     listRef.current?.clearSelection()
-  }, [selectedRows, t])
+  }, [selectedRows])
 
   const handleBatchRemove = useCallback(async() => {
     if (!selectedRows.length) return
@@ -361,30 +401,40 @@ export default () => {
 
   const handleBatchDeleteFiles = useCallback(async() => {
     if (!selectedRows.length) return
+    // M4：外部文件夹只读，批量删除前先剔除并提示跳过数
+    const deletable = selectedRows.filter(r => !externalSourceIds.has(r.sourceId))
+    const skipped = selectedRows.length - deletable.length
+    if (!deletable.length) {
+      toast(t('library_delete_failed'), 'short')
+      return
+    }
     const confirmed = await confirmDialog({
-      message: t('library_delete_file_confirm').replace('{num}', String(selectedRows.length)),
+      message: t('library_delete_file_confirm').replace('{num}', String(deletable.length)) +
+        (skipped > 0 ? `（${skipped} ${t('library_delete_skipped_suffix')}）` : ''),
       confirmButtonText: t('library_delete_file'),
     })
     if (!confirmed) return
     try {
-      await deleteFiles(selectedRows)
+      await deleteFiles(deletable)
     } catch {
       toast(t('library_delete_failed'), 'short')
     }
     listRef.current?.exitMultiSelect()
     void refreshSources()
-  }, [selectedRows, t])
+  }, [selectedRows, externalSourceIds, t])
 
   const handleOpenAlbum = useCallback((row: NativeTrackRow) => {
     setDrill({ type: 'album', key: row.itemKey, title: row.title })
     setDrillArtworkUrl(null)
     if (row.artwork) void native.artworkUrlForName(row.artwork).then(url => { setDrillArtworkUrl(url || null) })
+    listRef.current?.exitMultiSelect() // M3
   }, [])
 
   const handleOpenArtist = useCallback((row: NativeTrackRow) => {
     setDrill({ type: 'artist', key: row.itemKey, title: row.title })
     setDrillArtworkUrl(null)
     if (row.artwork) void native.artworkUrlForName(row.artwork).then(url => { setDrillArtworkUrl(url || null) })
+    listRef.current?.exitMultiSelect() // M3
   }, [])
 
   // 下钻视图的「播放全部 / 添加到列表」（§14.3）：
@@ -398,10 +448,10 @@ export default () => {
   const handleDrillAddToList = useCallback(() => {
     const currentRows = state.rows
     if (!currentRows.length) return
+    // M2：弹多选添加弹窗
     const musicInfos = currentRows.map(r => toMusicInfo(r))
-    void addListMusics(LIST_IDS.TEMP, musicInfos, settingState.setting['list.addMusicLocationType'])
-    toast(t('list_add_tip_exists'), 'short')
-  }, [t])
+    listMultiAddModalRef.current?.show({ selectedList: musicInfos, listId: '', isMove: false })
+  }, [])
 
   const handleScanAll = useCallback(() => {
     // 元数据修复后存量曲目需重扫刷新；扫描中重复点击由
@@ -523,6 +573,9 @@ export default () => {
       {multiSelect
         ? (
             <View style={styles.multiBar}>
+              <Button style={styles.multiBtn} onPress={() => { listRef.current?.selectAll() }}>
+                <Text size={13} color={theme['c-font']}>{t('library_select_all')}</Text>
+              </Button>
               <Button style={styles.multiBtn} onPress={handleBatchPlay}>
                 <Text size={13} color={theme['c-primary-font']}>{t('play')}</Text>
               </Button>
@@ -554,9 +607,9 @@ export default () => {
                 />
               )
             : tabId === 'albums'
-              ? <AlbumGrid rows={state.rows} onOpenAlbum={handleOpenAlbum} />
+              ? <AlbumGrid rows={rows} onOpenAlbum={handleOpenAlbum} />
               : tabId === 'artists'
-                ? <ArtistList rows={state.rows} onOpenArtist={handleOpenArtist} />
+                ? <ArtistList rows={rows} onOpenArtist={handleOpenArtist} />
                 : (
                     <List
                       ref={listRef}
@@ -586,10 +639,12 @@ export default () => {
         onViewArtist={handleViewArtist}
         onRemove={(row) => { void handleRemove(row) }}
         onDeleteFile={(row) => { void handleDeleteFile(row) }}
+        isExternalSource={(sourceId) => externalSourceIds.has(sourceId)}
         isLoved={(locator) => loveSet.has(locator)}
       />
       <MetadataEditModal ref={metadataEditRef} onUpdate={() => {}} />
       <MusicAddModal ref={listAddModalRef} />
+      <MusicMultiAddModal ref={listMultiAddModalRef} />
       <SourceManageModal ref={sourceManageRef} />
       {/* 歌词搜索候选（§13.1）：按时长差排序，选中即应用 */}
       <Modal

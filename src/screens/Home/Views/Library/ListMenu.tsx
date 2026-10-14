@@ -27,6 +27,8 @@ export interface ListMenuProps {
   onViewArtist: (row: NativeTrackRow) => void
   onRemove: (row: NativeTrackRow) => void
   onDeleteFile: (row: NativeTrackRow) => void
+  /** M4：该来源是否为外部文件夹（文件不可删，隐藏删除项） */
+  isExternalSource: (sourceId: string) => boolean
   /** 当前曲目是否在「我的收藏」中，决定喜欢项文案 */
   isLoved: (locator: string) => boolean
 }
@@ -44,6 +46,7 @@ export default forwardRef<ListMenuType, ListMenuProps>(({
   onViewArtist,
   onRemove,
   onDeleteFile,
+  isExternalSource,
   isLoved,
 }, ref) => {
   const t = useI18n()
@@ -66,18 +69,28 @@ export default forwardRef<ListMenuType, ListMenuProps>(({
     },
   }))
 
-  const menus = useMemo(() => ([
-    { action: 'play', label: t('play') },
-    { action: 'playLater', label: t('play_later') },
-    { action: 'addToList', label: t('library_add_to_list') },
-    { action: 'toggleLove', label: loved ? t('library_unlove') : t('library_love') },
-    { action: 'searchLyric', label: t('library_search_lyric') },
-    { action: 'viewAlbum', label: t('library_view_album') },
-    { action: 'viewArtist', label: t('library_view_artist') },
-    { action: 'tagInfo', label: t('library_tag_info') },
-    { action: 'remove', label: t('library_remove') },
-    { action: 'deleteFile', label: t('library_delete_file') },
-  ]), [t, loved])
+  const rowExternal = useMemo(() => {
+    const row = selectInfoRef.current.row
+    return row?.sourceId ? isExternalSource(row.sourceId) : false
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, isExternalSource])
+
+  const menus = useMemo(() => {
+    const items = [
+      { action: 'play', label: t('play') },
+      { action: 'playLater', label: t('play_later') },
+      { action: 'addToList', label: t('library_add_to_list') },
+      { action: 'toggleLove', label: loved ? t('library_unlove') : t('library_love') },
+      { action: 'searchLyric', label: t('library_search_lyric') },
+      { action: 'viewAlbum', label: t('library_view_album') },
+      { action: 'viewArtist', label: t('library_view_artist') },
+      { action: 'tagInfo', label: t('library_tag_info') },
+      { action: 'remove', label: t('library_remove') },
+    ]
+    // M4：外部文件夹只读，不显示删除文件
+    if (!rowExternal) items.push({ action: 'deleteFile', label: t('library_delete_file') })
+    return items
+  }, [t, loved, rowExternal])
 
   const handleMenuPress = ({ action }: typeof menus[number]) => {
     const { row, rows, index } = selectInfoRef.current

@@ -36,7 +36,8 @@ let throttling = false
 /** 单飞：首次创建来源时并发调用共享同一次检查（§11.1 全库只允许一个） */
 let ensurePromise: Promise<void> | null = null
 
-/** 确保「下载」虚拟来源存在（首次关联时创建） */
+/** 确保「下载」虚拟来源存在（首次关联时创建）。
+ * H5：来源可能被删除（旧版本允许），缓存的 Promise 不能永久挡重建 */
 const ensureDownloadSource = async(): Promise<void> => {
   if (ensurePromise) return ensurePromise
   const run = async(): Promise<void> => {
@@ -54,7 +55,11 @@ const ensureDownloadSource = async(): Promise<void> => {
       createdAt: Date.now(),
     })
   }
-  ensurePromise = run()
+  ensurePromise = run().catch((err: unknown) => {
+    // 失败后重置，下次对账重试（否则一次失败永久不再创建）
+    ensurePromise = null
+    throw err
+  })
   return ensurePromise
 }
 
@@ -157,6 +162,14 @@ const reconcile = async(): Promise<void> => {
   // upsert 只写增量行，finishSync 的 seen 语义会把存量行误删再补回，
   // 导致曲目数在轮次之间翻转
   void changed
+}
+
+/**
+ * 手动触发一次对账（M9：下载来源「恢复已移除」后让曲目回来）。
+ * 内部仍受节流与设置门控约束
+ */
+export const reconcileNow = (): void => {
+  void reconcile()
 }
 
 /**
