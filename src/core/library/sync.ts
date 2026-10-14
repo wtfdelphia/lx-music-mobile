@@ -60,7 +60,7 @@ export const refreshSources = async(): Promise<LibrarySource[]> => {
 /**
  * 触发单来源扫描。来源正在扫描中时返回 `E_SCAN_BUSY` 语义的 false
  */
-export const startSourceScan = async(sourceId: string): Promise<boolean> => {
+export const startSourceScan = async(sourceId: string, onError?: (reason: string) => void): Promise<boolean> => {
   if (scanning.has(sourceId)) return false
   const source = state.sources.find(s => s.id === sourceId)
   if (!source || !source.enabled) return false
@@ -74,8 +74,11 @@ export const startSourceScan = async(sourceId: string): Promise<boolean> => {
   subscribeScanEvents()
   try {
     await native.startScan(sourceId, { recursive })
-  } catch {
+  } catch (err) {
     scanning.delete(sourceId)
+    // 把原生拒绝原因（E_SCAN_BUSY / E_REAUTH / E_NOT_FOUND）透出，
+    // 由调用方决定是否提示用户（此前被吞掉，失败无任何反馈）
+    if (onError) onError(err instanceof Error ? err.message : String(err))
     return false
   }
   return true

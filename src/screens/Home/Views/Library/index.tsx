@@ -24,6 +24,7 @@ import { removeFromLibrary, deleteFiles, toggleLove, getLoveSet } from '@/core/l
 import { searchLyricCandidates, applyLyricCandidate, type LyricCandidate } from '@/core/library/lyricSearch'
 import { toast, createStyle, confirmDialog } from '@/utils/tools'
 import { useI18n } from '@/lang'
+import { useWindowSize } from '@/utils/hooks'
 import { useTheme } from '@/store/theme/hook'
 import Text from '@/components/common/Text'
 import Button from '@/components/common/Button'
@@ -278,6 +279,10 @@ export default () => {
   }, [])
 
 
+  // 窄屏（<360 宽）排序按钮只显示图标，防止工具行溢出
+  const windowSize = useWindowSize()
+  const narrowScreen = windowSize.width < 360
+
   // 扫描反馈（真机反馈：主页面看不到扫描进行中 / 结果）
   const scanProgress = useScanProgress()
   const scanningSourceIds = useMemo(
@@ -511,8 +516,9 @@ export default () => {
         cfg.recursive = includeSub
         await native.saveSource({ ...result.source, config: JSON.stringify(cfg) })
         await refreshSources()
-        const started = await startSourceScan(result.source.id)
-        if (!started) toast(t('library_scan_busy'), 'short')
+        await startSourceScan(result.source.id, (reason) => {
+          toast(`${result.source.name}: ${reason}`, 'short')
+        })
       } catch {
         toast(t('library_add_folder_failed'), 'long')
       }
@@ -538,13 +544,18 @@ export default () => {
       case 'scanAll':
         handleScanAll()
         break
-      case 'rescanCurrent':
-        if (state.filterSourceId) {
-          void startSourceScan(state.filterSourceId).then(started => {
-            if (!started) toast(t('library_scan_busy'), 'short')
+      case 'rescanCurrent': {
+        const sid = state.filterSourceId
+        if (sid) {
+          void startSourceScan(sid).then(started => {
+            if (!started) {
+              const cur = state.sources.find(s => s.id === sid)
+              toast(`${cur?.name ?? ''} ${t('library_scan_busy')}`, 'short')
+            }
           })
         }
         break
+      }
       case 'sourceManage':
         sourceManageRef.current?.show()
         break
@@ -600,7 +611,9 @@ export default () => {
                           fontSize={13}
                         >
                           <Text size={12} color={theme['c-font']} numberOfLines={1}>
-                            {t(trackSort === 'title' ? 'library_sort_title' : trackSort === 'artist' ? 'library_sort_artist' : 'library_sort_album')} ▾
+                            {narrowScreen
+                              ? '↓'
+                              : `${t(trackSort === 'title' ? 'library_sort_title' : trackSort === 'artist' ? 'library_sort_artist' : 'library_sort_album')} ▾`}
                           </Text>
                         </DorpDownMenu>
                       )
