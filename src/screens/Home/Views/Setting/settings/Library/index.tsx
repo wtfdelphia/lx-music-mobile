@@ -10,6 +10,7 @@ import OnlineFallback from './OnlineFallback'
 import Scrobble from './Scrobble'
 import SyncStar from './SyncStar'
 import AutoAssociate from './AutoAssociate'
+import SpaceManage from './SpaceManage'
 import { useI18n } from '@/lang'
 
 /**
@@ -29,6 +30,7 @@ export default memo(() => {
       <Scrobble />
       <SyncStar />
       <AutoAssociate />
+      <SpaceManage />
     </Section>
   )
 })

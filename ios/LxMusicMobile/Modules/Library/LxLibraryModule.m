@@ -519,6 +519,20 @@ RCT_EXPORT_METHOD(artworkUrlForName:(NSString *)cachedName
   resolve([[LxArtworkCache shared] fileUrlForCachedName:LxStr(cachedName)]);
 }
 
+// 空间管理（设置分组）：封面缓存大小与清理
+RCT_EXPORT_METHOD(artworkCacheSize:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  resolve(@([[LxArtworkCache shared] cacheSize]));
+}
+
+RCT_EXPORT_METHOD(clearArtworkCache:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  [[LxArtworkCache shared] clearCache];
+  resolve(@(YES));
+}
+
 RCT_EXPORT_METHOD(artworkPath:(NSString *)locator
                   resolver:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)

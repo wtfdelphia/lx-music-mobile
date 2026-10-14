@@ -417,9 +417,14 @@ declare global {
       'library.scanOnLaunch': boolean
 
       /**
-       * 本地曲库：串流音质
+       * 本地曲库：串流音质（WiFi）
        */
-      'library.streamQuality': 'raw' | '320' | '192' | '128'
+      'library.streamQualityWifi': 'raw' | '320' | '192' | '128'
+
+      /**
+       * 本地曲库：串流音质（移动网络）
+       */
+      'library.streamQualityCellular': 'raw' | '320' | '192' | '128'
 
       /**
        * 本地曲库：蜂窝网络下是否允许串流

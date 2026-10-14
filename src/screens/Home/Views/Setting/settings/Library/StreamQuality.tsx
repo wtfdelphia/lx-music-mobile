@@ -11,10 +11,17 @@ import { useI18n } from '@/lang'
 const QUALITYS = ['raw', '320', '192', '128'] as const
 type Quality = typeof QUALITYS[number]
 
-const Item = ({ id, name }: { id: Quality, name: string }) => {
-  const q = useSettingValue('library.streamQuality')
+// 音质按网络类型分设（对齐参照基线：WiFi 与移动网络各自独立）
+const WifiItem = ({ id }: { id: Quality }) => {
+  const q = useSettingValue('library.streamQualityWifi')
   const isActive = q == id
-  return <CheckBox marginRight={8} check={isActive} label={name} onChange={() => { updateSetting({ 'library.streamQuality': id }) }} need />
+  return <CheckBox marginRight={8} check={isActive} label={id} onChange={() => { updateSetting({ 'library.streamQualityWifi': id }) }} need />
+}
+
+const CellularItem = ({ id }: { id: Quality }) => {
+  const q = useSettingValue('library.streamQualityCellular')
+  const isActive = q == id
+  return <CheckBox marginRight={8} check={isActive} label={id} onChange={() => { updateSetting({ 'library.streamQualityCellular': id }) }} need />
 }
 
 export default memo(() => {
@@ -22,11 +29,18 @@ export default memo(() => {
   const list = useMemo(() => [...QUALITYS], [])
 
   return (
-    <SubTitle title={t('setting_library_stream_quality')}>
-      <View style={styles.list}>
-        {list.map(q => <Item name={q} id={q} key={q} />)}
-      </View>
-    </SubTitle>
+    <>
+      <SubTitle title={t('setting_library_stream_quality_wifi')}>
+        <View style={styles.list}>
+          {list.map(q => <WifiItem id={q} key={q} />)}
+        </View>
+      </SubTitle>
+      <SubTitle title={t('setting_library_stream_quality_cellular')}>
+        <View style={styles.list}>
+          {list.map(q => <CellularItem id={q} key={q} />)}
+        </View>
+      </SubTitle>
+    </>
   )
 })
 

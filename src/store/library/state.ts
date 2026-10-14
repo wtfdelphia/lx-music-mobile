@@ -4,7 +4,7 @@
  */
 import type { LibrarySource, NativeTrackRow, LibraryScanReport } from '@/core/library/types'
 
-export type LibraryTabId = 'tracks' | 'albums' | 'artists'
+export type LibraryTabId = 'tracks' | 'albums' | 'artists' | 'recent'
 
 export interface ScanProgress {
   sourceId: string

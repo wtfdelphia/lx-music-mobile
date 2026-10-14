@@ -8,6 +8,7 @@ import { Platform } from 'react-native'
 import { refreshSources, startSourceScan } from './sync'
 import { setInited } from '@/store/library/action'
 import { initAssociate } from './associate'
+import { subscribePlayTracking } from './playTracker'
 import state from '@/store/library/state'
 import settingState from '@/store/setting/state'
 import { log } from '@/utils/log'
@@ -34,6 +35,7 @@ export const initLibrary = async(): Promise<void> => {
     // S2：首次对账不阻塞启动链。对账只影响曲库页可见性，
     // 不影响首页渲染与播放；内部自持节流与错误吞并
     initAssociate()
+    subscribePlayTracking()
     setInited(true)
     if (settingState.setting['library.scanOnLaunch']) scanOnLaunch()
   } catch (err) {

@@ -647,5 +647,12 @@
   "library_source_edit": "Edit",
   "library_tracks": "{num} tracks",
   "library_scan": "Scan",
-  "library_source_delete_tip": "Deleting this source removes all its tracks. Continue?"
+  "library_source_delete_tip": "Deleting this source removes all its tracks. Continue?",
+  "library_tab_recent": "Recent",
+  "setting_library_space": "Storage",
+  "setting_library_artwork_cache_size": "Artwork cache size",
+  "setting_library_clear_cache": "Clear artwork cache",
+  "setting_library_clear_cache_done": "Artwork cache cleared",
+  "setting_library_stream_quality_wifi": "Stream quality (WiFi)",
+  "setting_library_stream_quality_cellular": "Stream quality (cellular)"
 }

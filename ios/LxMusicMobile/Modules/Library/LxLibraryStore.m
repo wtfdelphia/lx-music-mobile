@@ -746,6 +746,8 @@ static NSString * const kTrackColumns =
   if ([sort isEqualToString:@"artist"]) orderBy = @"t.artist_key, t.title_sort";
   else if ([sort isEqualToString:@"album"]) orderBy = @"t.album_key, t.disc_no, t.track_no";
   else if ([sort isEqualToString:@"added"]) orderBy = @"t.added_at DESC";
+  // 最近播放：按最后播放时间倒序，未播过的排最后
+  else if ([sort isEqualToString:@"recent"]) orderBy = @"COALESCE(t.last_played_at, 0) DESC, t.title_sort";
 
   NSString *sql = [NSString stringWithFormat:@"SELECT %@, s.type FROM track t JOIN source s ON t.source_id = s.id %@ ORDER BY %@ LIMIT %ld OFFSET %ld",
                    kTrackColumns, where, orderBy, (long)limit, (long)offset];

@@ -49,6 +49,27 @@
   return path;
 }
 
+- (long long)cacheSize
+{
+  long long total = 0;
+  NSDirectoryEnumerator *e = [NSFileManager.defaultManager enumeratorAtPath:[self cacheDirectory]];
+  for (NSString *name in e) {
+    NSDictionary *attrs = [e fileAttributes];
+    NSNumber *fileSize = attrs[NSFileSize];
+    if (fileSize) total += [fileSize longLongValue];
+  }
+  return total;
+}
+
+- (void)clearCache
+{
+  NSFileManager *fm = NSFileManager.defaultManager;
+  NSArray *files = [fm contentsOfDirectoryAtPath:[self cacheDirectory] error:nil];
+  for (NSString *name in files) {
+    [fm removeItemAtPath:[[self cacheDirectory] stringByAppendingPathComponent:name] error:nil];
+  }
+}
+
 - (NSString *)pathForCachedName:(NSString *)cachedName
 {
   if (!cachedName.length) return nil;

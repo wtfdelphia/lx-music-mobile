@@ -779,7 +779,8 @@ NFKC，转小写，去掉括号内容（`()`、`（）`、`[]`、`【】`），�
 |---|---|---|
 | `library.enable` | true | 显示入口 |
 | `library.scanOnLaunch` | false | 冷启动后延迟 10 秒，对本地来源做增量扫描 |
-| `library.streamQuality` | `raw` | `raw/320/192/128` |
+| `library.streamQualityWifi` | `raw` | WiFi 下串流音质 `raw/320/192/128` |
+| `library.streamQualityCellular` | `192` | 移动网络下串流音质 |
 | `library.allowCellularStream` | true | 蜂窝网络下是否允许串流 |
 | `library.downloadQuality` | `raw` | 同上 |
 | `library.onlineFallback` | true | 远程或本地失效时按歌名回落在线源 |
@@ -787,7 +788,7 @@ NFKC，转小写，去掉括号内容（`()`、`（）`、`[]`、`【】`），�
 | `library.syncStar` | false | 「喜欢」回写服务端 |
 | `library.autoAssociateDownloads` | true | 已下载曲目自动关联进曲库（第 11 节） |
 
-- 「清理封面缓存」按钮显示缓存大小。
+- 「空间管理」子节：封面缓存占用实时显示与一键清理（`SpaceManage`）。
 - 三语文案写入 `src/lang/{zh-cn,zh-tw,en-us}.json`，键前缀 `library_`。
 
 ## 15. 性能指标（真机实证门禁）

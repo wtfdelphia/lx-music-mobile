@@ -647,5 +647,12 @@
   "library_source_edit": "编辑",
   "library_tracks": "{num} 首",
   "library_scan": "扫描",
-  "library_source_delete_tip": "删除该来源将移除其全部曲目，确定吗？"
+  "library_source_delete_tip": "删除该来源将移除其全部曲目，确定吗？",
+  "library_tab_recent": "最近播放",
+  "setting_library_space": "空间管理",
+  "setting_library_artwork_cache_size": "封面缓存占用",
+  "setting_library_clear_cache": "清理封面缓存",
+  "setting_library_clear_cache_done": "封面缓存已清理",
+  "setting_library_stream_quality_wifi": "串流音质（WiFi）",
+  "setting_library_stream_quality_cellular": "串流音质（移动网络）"
 }

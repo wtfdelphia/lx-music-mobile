@@ -43,7 +43,7 @@ export interface LibraryQuerySpec {
   kind: LibraryQueryKind
   sourceIds?: string[]
   keyword?: string
-  sort?: 'title' | 'artist' | 'album' | 'added'
+  sort?: 'title' | 'artist' | 'album' | 'added' | 'recent'
   /** 专辑曲目用 */
   albumKey?: string
   /** 艺人曲目用 */

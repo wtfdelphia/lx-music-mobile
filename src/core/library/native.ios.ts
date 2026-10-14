@@ -70,6 +70,9 @@ export const resolvePlayFileUrl = async(locator: string): Promise<string> => cal
 export const artworkPath = async(locator: string): Promise<string> => call<string>('artworkPath', locator)
 /** 封面缓存文件名 → file:// URL（专辑 / 艺人聚合行封面，§14.2） */
 export const artworkUrlForName = async(cachedName: string): Promise<string> => call<string>('artworkUrlForName', cachedName)
+/** 封面缓存占用字节数与清理（空间管理） */
+export const artworkCacheSize = async(): Promise<number> => call<number>('artworkCacheSize')
+export const clearArtworkCache = async(): Promise<boolean> => call<boolean>('clearArtworkCache')
 export const readLyric = async(locator: string): Promise<ReadLyricResult | null> => call<ReadLyricResult | null>('readLyric', locator)
 
 // ---- Keychain（P2 使用，P1 先落接口，§5.7）----

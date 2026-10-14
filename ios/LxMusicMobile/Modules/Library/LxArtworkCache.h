@@ -22,4 +22,8 @@
 
 - (NSString *)cacheDirectory;
 
+// 缓存占用（字节）与清理（设置「空间管理」用）
+- (long long)cacheSize;
+- (void)clearCache;
+
 @end

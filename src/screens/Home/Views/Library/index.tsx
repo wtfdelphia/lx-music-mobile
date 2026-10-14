@@ -33,10 +33,11 @@ import MetadataEditModal, { type MetadataEditType } from '@/components/MetadataE
 import type { NativeTrackRow, LibrarySource } from '@/core/library/types'
 import type { LibraryTabId } from '@/store/library/state'
 
-const TABS: Array<{ id: LibraryTabId, key: 'library_tab_tracks' | 'library_tab_albums' | 'library_tab_artists' }> = [
+const TABS: Array<{ id: LibraryTabId, key: 'library_tab_tracks' | 'library_tab_albums' | 'library_tab_artists' | 'library_tab_recent' }> = [
   { id: 'tracks', key: 'library_tab_tracks' },
   { id: 'albums', key: 'library_tab_albums' },
   { id: 'artists', key: 'library_tab_artists' },
+  { id: 'recent', key: 'library_tab_recent' },
 ]
 
 export default () => {
@@ -85,12 +86,15 @@ export default () => {
         offset: 0,
         limit: 200,
       }
-      // Tab 分流：三个 Tab 各查各的视图（此前都查 tracks，切 Tab 无效果）
+      // Tab 分流：各 Tab 各查各的视图（此前都查 tracks，切 Tab 无效果）；
+      // 最近播放按最后播放时间倒序
       const result = tabId === 'albums'
         ? await queryAlbums(spec)
         : tabId === 'artists'
           ? await queryArtists(spec)
-          : await queryTracks(spec)
+          : tabId === 'recent'
+            ? await queryTracks({ ...spec, sort: 'recent' })
+            : await queryTracks(spec)
       next = result
     }
     if (seq !== loadSeq.current) return // 过期结果丢弃
@@ -147,7 +151,8 @@ export default () => {
       if (row) setDrill({ type: 'artist', key: row.itemKey, title: row.title })
       return
     }
-    // 曲目视图：按定位符在最新列表现查，避开 memo 闭包过期问题
+    // tracks / 最近播放：曲目视图，按定位符在最新列表现查，
+    // 避开 memo 闭包过期问题
     const index = currentRows.findIndex(r => r.locator === locator)
     if (index < 0) {
       toast(t('library_play_failed'), 'short')

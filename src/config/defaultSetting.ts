@@ -82,7 +82,8 @@ const defaultSetting: LX.AppSetting = {
 
   'library.enable': true,
   'library.scanOnLaunch': false,
-  'library.streamQuality': 'raw',
+  'library.streamQualityWifi': 'raw',
+  'library.streamQualityCellular': '192',
   'library.allowCellularStream': true,
   'library.downloadQuality': 'raw',
   'library.onlineFallback': true,
