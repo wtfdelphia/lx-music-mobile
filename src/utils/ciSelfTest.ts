@@ -714,13 +714,27 @@ const testLibrarySmoke = async() => {
   // H1 冒烟：存量 v1 库升级 v2。先写标记再删库，下次打开时原生侧
   // 按 v1 schema 预置库文件，再走迁移链建 excluded 表；
   // 断言点：升级后的库能成功执行排除（依赖 excluded 表）
+  const probeSourceId = 'c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0'
   await RNFS.writeFile(`${tmpDir()}/.lx-ci-lib-v1`, String(Date.now()), 'utf8')
   await lib.closeAndDropLibrary()
-  const preseedOk = await lib.excludeTrack('c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0', 'upgrade-probe.mp3')
+  // 注意外键：excluded 表 REFERENCES source 且 foreign_keys=ON，
+  // 探针来源必须先建，否则插入被约束拒绝（上一版失败根因）
+  assert(await lib.saveSource({
+    id: probeSourceId,
+    type: 'local',
+    name: 'upgrade-probe',
+    enabled: true,
+    config: JSON.stringify({ relPath: 'upgrade-probe', recursive: true }),
+    state: 'ok',
+    lastScanAt: null,
+    lastScanReport: null,
+    createdAt: Date.now(),
+  }), 'v1 -> v2 upgrade: saveSource on migrated db')
+  const preseedOk = await lib.excludeTrack(probeSourceId, 'upgrade-probe.mp3')
   assert(preseedOk, 'v1 -> v2 migration created excluded table')
   await RNFS.unlink(`${tmpDir()}/.lx-ci-lib-v1`).catch(() => {})
-  // 清理探针行，避免干扰后续扫描断言
-  await lib.restoreExcluded('c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0')
+  // 清理：删探针来源（级联删 excluded 行），不干扰后续扫描断言
+  await lib.deleteSource(probeSourceId)
 
   const fs = await import('@/utils/fs')
   const docsRoot = fs.privateStorageDirectoryPath
