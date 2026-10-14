@@ -46,6 +46,7 @@ export const deleteTrack = async(_locator: string): Promise<boolean> => notSuppo
 export const resolvePlayFileUrl = async(_locator: string): Promise<string> => notSupported()
 export const artworkPath = async(_locator: string): Promise<string> => notSupported()
 export const artworkUrlForName = async(_cachedName: string): Promise<string> => notSupported()
+export const closeAndDropLibrary = async(): Promise<boolean> => notSupported()
 export const artworkCacheSize = async(): Promise<number> => notSupported()
 export const clearArtworkCache = async(): Promise<boolean> => notSupported()
 export const readLyric = async(_locator: string): Promise<ReadLyricResult | null> => notSupported()

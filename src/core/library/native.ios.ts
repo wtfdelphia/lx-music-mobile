@@ -72,6 +72,8 @@ export const resolvePlayFileUrl = async(locator: string): Promise<string> => cal
 export const artworkPath = async(locator: string): Promise<string> => call<string>('artworkPath', locator)
 /** 封面缓存文件名 → file:// URL（专辑 / 艺人聚合行封面，§14.2） */
 export const artworkUrlForName = async(cachedName: string): Promise<string> => call<string>('artworkUrlForName', cachedName)
+/** 测试钩子：删库重置（仅自测调用），配合 .lx-ci-lib-v1 标记模拟存量库升级 */
+export const closeAndDropLibrary = async(): Promise<boolean> => call<boolean>('closeAndDropLibrary')
 /** 封面缓存占用字节数与清理（空间管理） */
 export const artworkCacheSize = async(): Promise<number> => call<number>('artworkCacheSize')
 export const clearArtworkCache = async(): Promise<boolean> => call<boolean>('clearArtworkCache')

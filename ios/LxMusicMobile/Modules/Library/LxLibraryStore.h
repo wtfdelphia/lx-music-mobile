@@ -31,6 +31,10 @@
 - (BOOL)isExcluded:(NSString *)sourceId itemKey:(NSString *)itemKey;
 // 来源曲目数（来源管理列表显示用）
 - (NSInteger)countTracksForSourceId:(NSString *)sourceId;
+
+// ---- 测试钩子（仅自测标记门控，正式包无副作用） ----
+// 关闭并删除数据库文件，重置打开标记
+- (void)closeAndDrop;
 // 来源配置与类型（授权懒加载用，F1）
 - (NSDictionary * _Nullable)configForSourceId:(NSString *)sourceId;
 // 扫描结束时间 / 报告落库（低危项修复）

@@ -544,6 +544,16 @@ RCT_EXPORT_METHOD(artworkUrlForName:(NSString *)cachedName
   resolve([[LxArtworkCache shared] fileUrlForCachedName:LxStr(cachedName)]);
 }
 
+// 测试钩子：删库重置（仅自测标记门控的 library_smoke 调用，
+// 正式包无调用方）。模拟「存量 v1 库升级」时配合沙箱内的
+// .lx-ci-lib-v1 标记：删库后下次打开先按 v1 schema 预置再迁移
+RCT_EXPORT_METHOD(closeAndDropLibrary:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  [[LxLibraryStore shared] closeAndDrop];
+  resolve(@(YES));
+}
+
 // 空间管理（设置分组）：封面缓存大小与清理
 RCT_EXPORT_METHOD(artworkCacheSize:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)

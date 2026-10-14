@@ -86,6 +86,9 @@ static NSString *LxEscapeLike(NSString *s)
 - (BOOL)_openOnQueue
 {
   if (_opened) return YES;
+  // H1 冒烟钩子：沙箱 tmp 存在标记文件且库文件不存在时，先按 v1
+  // schema 建库，模拟存量设备升级到 v2。无标记或已有库时为空操作。
+  [self lx_testHookPreseedV1OnQueue];
   NSString *dir = [[self databasePath] stringByDeletingLastPathComponent];
   NSError *dirError = nil;
   [[NSFileManager defaultManager] createDirectoryAtPath:dir
@@ -114,6 +117,72 @@ static NSString *LxEscapeLike(NSString *s)
   [self _migrateTo2OnQueue];
   _opened = YES;
   return YES;
+}
+
+- (BOOL)lx_testHookEnabled
+{
+  NSString *tmp = NSTemporaryDirectory();
+  return tmp && [NSFileManager.defaultManager fileExistsAtPath:[tmp stringByAppendingPathComponent:@".lx-ci-lib-v1"]];
+}
+
+- (void)lx_testHookPreseedV1OnQueue
+{
+  if (![self lx_testHookEnabled]) return;
+  if ([NSFileManager.defaultManager fileExistsAtPath:[self databasePath]]) return;
+  NSString *dir = [[self databasePath] stringByDeletingLastPathComponent];
+  [NSFileManager.defaultManager createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+  if (sqlite3_open([self databasePath].UTF8String, &_db) != SQLITE_OK) {
+    sqlite3_close(_db);
+    _db = NULL;
+    return;
+  }
+  const char *v1Schema =
+    "CREATE TABLE IF NOT EXISTS source ("
+    "  id TEXT PRIMARY KEY, type TEXT NOT NULL,"
+    "  name TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,"
+    "  config TEXT NOT NULL,"
+    "  state TEXT NOT NULL DEFAULT 'ok',"
+    "  last_scan_at INTEGER, last_scan_report TEXT,"
+    "  created_at INTEGER NOT NULL"
+    ");"
+    "CREATE TABLE IF NOT EXISTS track ("
+    "  locator TEXT PRIMARY KEY,"
+    "  source_id TEXT NOT NULL REFERENCES source(id) ON DELETE CASCADE,"
+    "  item_key TEXT NOT NULL,"
+    "  title TEXT NOT NULL, title_sort TEXT NOT NULL,"
+    "  artist TEXT, album TEXT, album_artist TEXT,"
+    "  album_key TEXT NOT NULL, artist_key TEXT NOT NULL,"
+    "  track_no INTEGER, disc_no INTEGER, year INTEGER, genre TEXT,"
+    "  duration_ms INTEGER NOT NULL DEFAULT 0,"
+    "  bitrate INTEGER, ext TEXT, size INTEGER, mtime INTEGER,"
+    "  artwork TEXT,"
+    "  has_embedded_lyric INTEGER NOT NULL DEFAULT 0, sidecar_lrc TEXT,"
+    "  remote_starred INTEGER, offline_path TEXT,"
+    "  added_at INTEGER NOT NULL,"
+    "  play_count INTEGER NOT NULL DEFAULT 0, last_played_at INTEGER,"
+    "  seen INTEGER NOT NULL DEFAULT 0"
+    ");"
+    "PRAGMA user_version=1;";
+  sqlite3_exec(_db, v1Schema, NULL, NULL, NULL);
+  // 交给正式打开流程：关闭句柄，后续 _openOnQueue 走迁移链
+  sqlite3_close(_db);
+  _db = NULL;
+}
+
+- (void)closeAndDrop
+{
+  dispatch_sync(_ioQueue, ^{
+    if (self->_db) {
+      sqlite3_close(self->_db);
+      self->_db = NULL;
+    }
+    self->_opened = NO;
+    [NSFileManager.defaultManager removeItemAtPath:[self databasePath] error:nil];
+    NSString *wal = [[self databasePath] stringByAppendingString:@"-wal"];
+    NSString *shm = [[self databasePath] stringByAppendingString:@"-shm"];
+    [NSFileManager.defaultManager removeItemAtPath:wal error:nil];
+    [NSFileManager.defaultManager removeItemAtPath:shm error:nil];
+  });
 }
 
 - (int)userVersion
