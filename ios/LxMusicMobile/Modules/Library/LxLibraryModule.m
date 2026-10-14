@@ -271,15 +271,15 @@ RCT_EXPORT_METHOD(cancelScan:(NSString *)sourceId
 - (void)scanner:(LxFolderScanner *)scanner sourceId:(NSString *)sourceId
   finishedWithRows:(NSArray<NSDictionary *> *)rows report:(NSDictionary *)report
 {
-  // 完成回调来自扫描线程：落库可在 io 队列（线程安全），但事件与
-  // 节流戳必须回主队列；入库先行，事件在其后发出
-  dispatch_async(dispatch_get_main_queue(), ^{
-    self.lastProgressEmit = nil;
-    [self _finishScanOnMain:sourceId rows:rows report:report];
+  // 完成回调来自扫描线程。入库与落库在后台执行（不依赖主队列），
+  // 只有事件发送回主队列。此前整体 dispatch 到主队列，无头模拟器
+  // 上主队列消费不及时导致入库延迟、冒烟轮询超时
+  dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+    [self _finishScanWork:sourceId rows:rows report:report];
   });
 }
 
-- (void)_finishScanOnMain:(NSString *)sourceId rows:(NSArray<NSDictionary *> *)rows report:(NSDictionary *)report
+- (void)_finishScanWork:(NSString *)sourceId rows:(NSArray<NSDictionary *> *)rows report:(NSDictionary *)report
 {
   // 入库（F3 修复）：补定位符后分批 upsert（每批 ≤500，§5.1），
   // 正常完成的扫描才做 finishSync 清理；取消的扫描不清理（§5.3）
@@ -312,9 +312,12 @@ RCT_EXPORT_METHOD(cancelScan:(NSString *)sourceId
   NSData *reportData = [NSJSONSerialization dataWithJSONObject:summary options:0 error:nil];
   NSString *reportJSON = reportData ? [[NSString alloc] initWithData:reportData encoding:NSUTF8StringEncoding] : nil;
   [[LxLibraryStore shared] updateScanState:sourceId lastScanAt:now report:reportJSON];
-  if (_hasListeners) {
-    [self sendEventWithName:kScanDoneEvent body:@{ @"sourceId": sourceId, @"report": summary }];
-  }
+  dispatch_async(dispatch_get_main_queue(), ^{
+    self.lastProgressEmit = nil;
+    if (self->_hasListeners) {
+      [self sendEventWithName:kScanDoneEvent body:@{ @"sourceId": sourceId, @"report": summary }];
+    }
+  });
 }
 
 // 定位符构造（§4）：lxlib://<sourceId>/<itemKey>，逐段百分号编码，

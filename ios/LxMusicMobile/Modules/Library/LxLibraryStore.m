@@ -136,34 +136,10 @@ static NSString *LxEscapeLike(NSString *s)
     _db = NULL;
     return;
   }
-  const char *v1Schema =
-    "CREATE TABLE IF NOT EXISTS source ("
-    "  id TEXT PRIMARY KEY, type TEXT NOT NULL,"
-    "  name TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,"
-    "  config TEXT NOT NULL,"
-    "  state TEXT NOT NULL DEFAULT 'ok',"
-    "  last_scan_at INTEGER, last_scan_report TEXT,"
-    "  created_at INTEGER NOT NULL"
-    ");"
-    "CREATE TABLE IF NOT EXISTS track ("
-    "  locator TEXT PRIMARY KEY,"
-    "  source_id TEXT NOT NULL REFERENCES source(id) ON DELETE CASCADE,"
-    "  item_key TEXT NOT NULL,"
-    "  title TEXT NOT NULL, title_sort TEXT NOT NULL,"
-    "  artist TEXT, album TEXT, album_artist TEXT,"
-    "  album_key TEXT NOT NULL, artist_key TEXT NOT NULL,"
-    "  track_no INTEGER, disc_no INTEGER, year INTEGER, genre TEXT,"
-    "  duration_ms INTEGER NOT NULL DEFAULT 0,"
-    "  bitrate INTEGER, ext TEXT, size INTEGER, mtime INTEGER,"
-    "  artwork TEXT,"
-    "  has_embedded_lyric INTEGER NOT NULL DEFAULT 0, sidecar_lrc TEXT,"
-    "  remote_starred INTEGER, offline_path TEXT,"
-    "  added_at INTEGER NOT NULL,"
-    "  play_count INTEGER NOT NULL DEFAULT 0, last_played_at INTEGER,"
-    "  seen INTEGER NOT NULL DEFAULT 0"
-    ");"
-    "PRAGMA user_version=1;";
-  sqlite3_exec(_db, v1Schema, NULL, NULL, NULL);
+  // 必须与正式 v1 迁移完全一致（含索引 / FTS / 触发器）：
+  // 正式迁移见 user_version>=1 即跳过，预置缺什么就永远缺什么
+  sqlite3_exec(_db, [self _schemaV1], NULL, NULL, NULL);
+  sqlite3_exec(_db, "PRAGMA user_version=1;", NULL, NULL, NULL);
   // 交给正式打开流程：关闭句柄，后续 _openOnQueue 走迁移链
   sqlite3_close(_db);
   _db = NULL;
@@ -196,10 +172,11 @@ static NSString *LxEscapeLike(NSString *s)
   return version;
 }
 
-- (void)_migrateOnQueue
+// v1 schema 单一出处：正式迁移与自测预置（模拟存量库）共用，
+// 任何一处改动自动同步另一处
+- (const char *)_schemaV1
 {
-  if ([self userVersion] >= 1) return;
-  const char *schema =
+  return
     "CREATE TABLE IF NOT EXISTS source ("
     "  id TEXT PRIMARY KEY, type TEXT NOT NULL,"
     "  name TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,"
@@ -247,8 +224,13 @@ static NSString *LxEscapeLike(NSString *s)
     "  INSERT INTO track_fts(rowid, title, artist, album)"
     "  VALUES (new.rowid, new.title, COALESCE(new.artist,''), COALESCE(new.album,''));"
     "END;";
+}
+
+- (void)_migrateOnQueue
+{
+  if ([self userVersion] >= 1) return;
   char *errMsg = NULL;
-  if (sqlite3_exec(_db, schema, NULL, NULL, &errMsg) != SQLITE_OK) {
+  if (sqlite3_exec(_db, [self _schemaV1], NULL, NULL, &errMsg) != SQLITE_OK) {
     NSLog(@"[LxLibraryStore] migrate failed: %s", errMsg ? errMsg : "?");
     sqlite3_free(errMsg);
     return;
@@ -795,8 +777,10 @@ static NSString * const kTrackColumns =
 
 - (void)appendSourceFilter:(NSMutableString *)sql bindings:(NSMutableArray *)bindings sourceIds:(NSArray *)sourceIds
 {
-  // M5: disabled sources are excluded from all views
-  [sql appendString:@" AND s.enabled = 1"];
+  // M5：停用来源不参与任何视图。用子查询而不是 s.enabled——
+  // 本片段同时被「有 JOIN source 的行查询」和「无 JOIN 的计数 /
+  // 按键查询」复用，直接引用别名会让后者 prepare 失败（冒烟实证）
+  [sql appendString:@" AND t.source_id IN (SELECT id FROM source WHERE enabled = 1)"];
   if (!sourceIds.count) return;
   // 桥数组可能混入非字符串元素（如 NSNull），过滤后再绑定，
   // 否则 bindStrings 对其发 UTF8String 会崩

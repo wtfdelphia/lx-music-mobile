@@ -761,14 +761,19 @@ const testLibrarySmoke = async() => {
   assert(ok, 'saveSource sandbox source')
 
   await lib.startScan(sourceId, { recursive: true })
-  // 轮询入库结果（6 个小文件应在数秒内完成）
+  // 轮询入库结果（6 个小文件应在数秒内完成）。
+  // 用 listItemKeys 直接数行，不依赖 query.total 与完成事件时序，
+  // 判据最稳定（run 38540942013 实证 total 通路曾单独坏过）
   let firstCount = 0
   for (let i = 0; i < 60; i++) {
     await sleep(500)
-    const result = await lib.query({ kind: 'tracks', sourceIds: [sourceId], offset: 0, limit: 200 })
-    if (result.total >= 6) { firstCount = result.total; break }
+    firstCount = (await lib.listItemKeys(sourceId)).length
+    if (firstCount >= 6) break
   }
   assert(firstCount === 6, `scan imported 6 tracks, got ${firstCount}`)
+  // total 通路独立断言：query 返回的行数与 total 必须一致
+  const q = await lib.query({ kind: 'tracks', sourceIds: [sourceId], offset: 0, limit: 200 })
+  assert(q.total === 6 && q.rows.length === 6, `query total/rows mismatch: ${q.total}/${q.rows.length}`)
 
   // S4：重复扫描后数量不得翻转（finishSync 语义对本地来源仍适用）
   await lib.startScan(sourceId, { recursive: true })
@@ -808,7 +813,7 @@ const testLibrarySmoke = async() => {
   // 清理夹具：删来源级联删曲目；文件留在沙箱不碍事
   await lib.deleteSource(sourceId)
   await lib.deleteSource(dlSourceId)
-  return { firstCount, secondCount, playUrl }
+  return { firstCount, secondCount, playUrl, queryTotal: q.total }
 }
 
 // 5.1 track-player setupPlayer
