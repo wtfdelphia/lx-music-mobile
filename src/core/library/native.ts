@@ -21,7 +21,7 @@ export interface PickFolderResult {
   relPath: string | null
 }
 export const pickFolder = async(): Promise<PickFolderResult | null> => notSupported()
-export const relink = async(_sourceId: string): Promise<boolean> => notSupported()
+export const relink = async(_sourceId: string): Promise<boolean | null> => notSupported()
 export const acquireSource = async(_sourceId: string): Promise<boolean> => notSupported()
 export const releaseSource = async(_sourceId: string): Promise<boolean> => notSupported()
 export const startScan = async(_sourceId: string, _options: { recursive: boolean }): Promise<boolean> => notSupported()

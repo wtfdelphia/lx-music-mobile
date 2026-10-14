@@ -41,6 +41,8 @@
 - (BOOL)updateScanState:(NSString *)sourceId lastScanAt:(long long)at report:(NSString * _Nullable)report;
 // 单字段更新：避免整行 saveSource 覆盖并发写入的扫描状态（真机反馈：重命名无效）
 - (BOOL)renameSource:(NSString *)sourceId name:(NSString *)name;
+// 重新授权：只替换 config 中的 bookmark / relPath，不改变定位符（§5.2）
+- (BOOL)setSourceConfig:(NSString *)sourceId config:(NSString *)config state:(NSString * _Nullable)state;
 - (BOOL)setSourceEnabled:(NSString *)sourceId enabled:(BOOL)enabled;
 - (BOOL)setOffline:(NSString *)locator relPath:(NSString * _Nullable)relPath;
 - (BOOL)bumpPlay:(NSString *)locator;

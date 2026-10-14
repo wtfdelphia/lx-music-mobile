@@ -57,15 +57,31 @@ export const refreshSources = async(): Promise<LibrarySource[]> => {
   }
 }
 
+/** 扫描启动失败原因：UI 按原因分别提示，不再一律显示「正在扫描中」 */
+const mapNativeScanError = (err: unknown): string => {
+  const code = (err as { code?: string } | null)?.code ?? (err instanceof Error ? err.message : String(err))
+  if (code.includes('E_SCAN_BUSY')) return 'busy'
+  if (code.includes('E_REAUTH')) return 'reauth'
+  if (code.includes('E_NOT_FOUND')) return 'not_found'
+  return code
+}
+
 /**
- * 触发单来源扫描。来源正在扫描中时返回 `E_SCAN_BUSY` 语义的 false
+ * 触发单来源扫描。失败时经 `onError` 透出原因：
+ * `busy`（JS 单飞 / 原生忙）、`disabled`、`not_found`、`download`、
+ * `reauth` 或原生原始信息。调用方据此提示，不再一律「正在扫描中」
  */
 export const startSourceScan = async(sourceId: string, onError?: (reason: string) => void): Promise<boolean> => {
-  if (scanning.has(sourceId)) return false
+  const fail = (reason: string): boolean => {
+    if (onError) onError(reason)
+    return false
+  }
+  if (scanning.has(sourceId)) return fail('busy')
   const source = state.sources.find(s => s.id === sourceId)
-  if (!source || !source.enabled) return false
+  if (!source) return fail('not_found')
+  if (!source.enabled) return fail('disabled')
   // H2：「下载」虚拟来源由对账维护，不允许扫描（原生侧也有兜底）
-  if (source.type === 'download') return false
+  if (source.type === 'download') return fail('download')
   let recursive = true
   try {
     recursive = (JSON.parse(source.config) as { recursive?: boolean }).recursive ?? true
@@ -76,12 +92,26 @@ export const startSourceScan = async(sourceId: string, onError?: (reason: string
     await native.startScan(sourceId, { recursive })
   } catch (err) {
     scanning.delete(sourceId)
-    // 把原生拒绝原因（E_SCAN_BUSY / E_REAUTH / E_NOT_FOUND）透出，
+    // 把原生拒绝原因（E_SCAN_BUSY / E_REAUTH / E_NOT_FOUND）归一后透出，
     // 由调用方决定是否提示用户（此前被吞掉，失败无任何反馈）
-    if (onError) onError(err instanceof Error ? err.message : String(err))
-    return false
+    return fail(mapNativeScanError(err))
   }
   return true
+}
+
+/** 失败原因的提示文案（core 层可用 global.i18n，同 tools.confirmDialog） */
+export const scanFailTip = (sourceName: string, reason: string): string => {
+  const t = global.i18n.t
+  const name = sourceName ? `${sourceName}: ` : ''
+  switch (reason) {
+    case 'busy':
+    case 'download':
+      return `${sourceName} ${t('library_scan_busy')}`.trim()
+    case 'reauth': return `${name}${t('library_source_state_needs_reauth')}`
+    case 'disabled': return `${name}${t('library_source_disabled')}`
+    case 'not_found': return `${name}${t('library_source_state_unreachable')}`
+    default: return `${name}${reason}`
+  }
 }
 
 export const cancelSourceScan = async(sourceId: string): Promise<void> => {
@@ -118,17 +148,23 @@ export const scanAllSources = async(): Promise<void> => {
 
 const waitForScanDone = async(sourceId: string): Promise<void> => {
   if (!scanning.has(sourceId)) return
-  await Promise.race([
-    new Promise<void>(resolve => {
-      const timer = setInterval(() => {
-        if (!scanning.has(sourceId)) {
-          clearInterval(timer)
-          resolve()
-        }
-      }, 500)
-    }),
-    new Promise<void>(resolve => setTimeout(resolve, SCAN_WAIT_TIMEOUT_MS)),
-  ])
+  let timer: ReturnType<typeof setInterval> | null = null
+  const done = new Promise<boolean>(resolve => {
+    timer = setInterval(() => {
+      if (!scanning.has(sourceId)) resolve(true)
+    }, 500)
+  })
+  const timedOut = new Promise<boolean>(resolve => { setTimeout(() => { resolve(false) }, SCAN_WAIT_TIMEOUT_MS) })
+  const finished = await Promise.race([done, timedOut])
+  if (timer) clearInterval(timer)
+  if (!finished) {
+    // 兜底：超时后强制清掉单飞锁并尝试取消原生扫描。此前超时只退出
+    // 等待，scanning 集合不清理，该来源会被永久判忙，之后所有扫描
+    // 入口一律显示「正在扫描中」（真机反馈第 4 条的放大器）
+    scanning.delete(sourceId)
+    clearScanProgress(sourceId)
+    void cancelSourceScan(sourceId)
+  }
 }
 
 /** 测试钩子：清空单飞锁（生产不调用） */

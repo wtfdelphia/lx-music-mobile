@@ -111,7 +111,16 @@ const Menu = ({
     if (showInRight) {
       frameStyle.left = buttonPosition.x
     } else {
-      frameStyle.right = windowSize.width - buttonPosition.x - buttonPosition.w
+      // 右对齐：按钮左侧空间不足以容纳菜单时，锚点钳制到屏幕左缘。
+      // 不钳制时 left 会算出负值、菜单溢出屏幕（曲库来源下拉
+      // menuWidth 大于按钮右缘到屏幕右缘距离时触发，真机反馈）
+      const right = windowSize.width - buttonPosition.x - buttonPosition.w
+      const leftIfRightAligned = windowSize.width - right - menuWidth
+      if (leftIfRightAligned < 0) {
+        frameStyle.left = 0
+      } else {
+        frameStyle.right = right
+      }
     }
     return frameStyle
   }, [menus.length, menuItemStyle, buttonPosition, windowSize])

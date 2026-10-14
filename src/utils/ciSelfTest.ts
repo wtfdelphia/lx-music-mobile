@@ -775,16 +775,33 @@ const testLibrarySmoke = async() => {
   const q = await lib.query({ kind: 'tracks', sourceIds: [sourceId], offset: 0, limit: 200 })
   assert(q.total === 6 && q.rows.length === 6, `query total/rows mismatch: ${q.total}/${q.rows.length}`)
 
-  // S4：重复扫描后数量不得翻转（finishSync 语义对本地来源仍适用）
+  // S4：重复扫描后数量不得翻转（finishSync 语义对本地来源仍适用）。
+  // 同时断言扫描事件链路：进度 / 完成事件必须真实到达 JS——
+  // 曲库页的扫描反馈、单飞锁释放、来源计数全部挂在这条链上，
+  // 此前冒烟只轮询行数，事件通路从未被覆盖（真机反馈第 4 条
+  // 「一直显示正在扫描中」的盲区）
+  let progressSeen = false
+  let doneEvent: { sourceId: string, report: Record<string, unknown> } | null = null
+  const unsubScan = lib.subscribeScanEvents(event => {
+    if (!('report' in event)) {
+      if (event.sourceId === sourceId) progressSeen = true
+      return
+    }
+    if (event.sourceId === sourceId) doneEvent = { sourceId: event.sourceId, report: event.report as unknown as Record<string, unknown> }
+  })
   await lib.startScan(sourceId, { recursive: true })
   let secondCount = 0
   for (let i = 0; i < 60; i++) {
     await sleep(500)
     const keys = await lib.listItemKeys(sourceId)
     secondCount = keys.length
-    if (secondCount === 6) break
+    if (secondCount === 6 && doneEvent) break
   }
+  unsubScan()
   assert(secondCount === 6, `rescan kept 6 tracks, got ${secondCount}`)
+  assert(doneEvent !== null, 'scan done event reached JS')
+  assert((doneEvent as unknown as { report: { imported: number } }).report.imported >= 0, 'scan done report has imported')
+  // 进度事件在 6 个文件上可能被 300ms 节流合并掉，只记观察值不断言
 
   // F4：下载虚拟来源无外部授权，根目录即 Documents；
   // resolvePlayFileUrl 对已存在文件返回 file://
@@ -813,7 +830,7 @@ const testLibrarySmoke = async() => {
   // 清理夹具：删来源级联删曲目；文件留在沙箱不碍事
   await lib.deleteSource(sourceId)
   await lib.deleteSource(dlSourceId)
-  return { firstCount, secondCount, playUrl, queryTotal: q.total }
+  return { firstCount, secondCount, playUrl, queryTotal: q.total, scanDoneEvent: doneEvent !== null, scanProgressSeen: progressSeen }
 }
 
 // 5.1 track-player setupPlayer

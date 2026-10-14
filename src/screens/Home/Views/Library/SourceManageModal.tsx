@@ -9,7 +9,7 @@ import { useI18n } from '@/lang'
 import { useTheme } from '@/store/theme/hook'
 import { createStyle, confirmDialog, toast } from '@/utils/tools'
 import { useLibrarySources, useScanProgress, useScanReport } from '@/store/library/hook'
-import { startSourceScan, cancelSourceScan, refreshSources } from '@/core/library/sync'
+import { startSourceScan, cancelSourceScan, refreshSources, scanFailTip } from '@/core/library/sync'
 import { setSourceEnabled, relinkSource, renameSource } from '@/core/library/sources/local'
 import { restoreRemoved, countListRefsForSource, deleteLibrarySource } from '@/core/library/actions'
 import * as native from '@/core/library/native'
@@ -55,7 +55,7 @@ const SourceItem = ({ source, isScanning, scanned, trackCount, onScan, onCancelS
   return (
     <View style={styles.sourceItem}>
       <View style={styles.sourceInfo}>
-        <Text numberOfLines={1} size={14}>{source.name}</Text>
+        <Text numberOfLines={1} size={14} color={source.enabled ? undefined : theme['c-font-label']}>{source.name}</Text>
         <Text numberOfLines={1} size={11} color={theme['c-font-label']}>
           {source.type === 'local' ? t('library_type_local') : source.type === 'download' ? t('nav_download') : source.type} · {trackCount}{t('library_tracks_suffix')} · {stateLabel}
           {isScanning ? ` (${scanned})` : ''}
@@ -69,11 +69,13 @@ const SourceItem = ({ source, isScanning, scanned, trackCount, onScan, onCancelS
                 <Text size={12} color="#f24a4a">{t('dialog_cancel')}</Text>
               </Button>
             )
-          : (
-              <Button style={styles.actionBtn} onPress={() => { onScan(source) }}>
-                <Text size={12} color={theme['c-primary-font']}>{t('library_scan')}</Text>
-              </Button>
-            )}
+          : source.type !== 'download'
+            ? (
+                <Button style={styles.actionBtn} onPress={() => { onScan(source) }}>
+                  <Text size={12} color={theme['c-primary-font']}>{t('library_scan')}</Text>
+                </Button>
+              )
+            : null}
         {source.type === 'local'
           ? (
               <Button style={styles.actionBtn} onPress={() => { onRelink(source) }}>
@@ -81,9 +83,14 @@ const SourceItem = ({ source, isScanning, scanned, trackCount, onScan, onCancelS
               </Button>
             )
           : null}
-        <Button style={styles.actionBtn} onPress={() => { onRename(source) }}>
-          <Text size={12} color={theme['c-font']}>{t('library_source_edit')}</Text>
-        </Button>
+        {/* 下载虚拟来源不支持重命名：显示名固定走 i18n「下载」（§11.6） */}
+        {source.type !== 'download'
+          ? (
+              <Button style={styles.actionBtn} onPress={() => { onRename(source) }}>
+                <Text size={12} color={theme['c-font']}>{t('library_source_edit')}</Text>
+              </Button>
+            )
+          : null}
         <Button style={styles.actionBtn} onPress={() => { onToggleEnabled(source) }}>
           <Text size={12} color={theme['c-font']}>{source.enabled ? t('library_source_disable') : t('library_source_enable')}</Text>
         </Button>
@@ -226,8 +233,11 @@ export default forwardRef<SourceManageModalType, {}>((_props, ref) => {
   }, [sources, countsTick])
 
   const handleScan = (source: LibrarySource) => {
-    void startSourceScan(source.id).then(started => {
-      if (!started) void confirmDialog({ message: t('library_scan_busy') }).catch(() => {})
+    // 失败原因透传：此前一律提示「正在扫描中」，与授权失效 / 停用 /
+    // 原生忙混淆（真机反馈第 4 条）
+    void startSourceScan(source.id, (reason) => {
+      if (reason === 'busy' || reason === 'download') return // 原生忙不弹框，按钮态已可见
+      void confirmDialog({ message: scanFailTip(source.name, reason) }).catch(() => {})
     })
   }
 
@@ -242,7 +252,15 @@ export default forwardRef<SourceManageModalType, {}>((_props, ref) => {
   }
 
   const handleRelink = (source: LibrarySource) => {
-    void relinkSource(source.id).then(() => { void refreshSources() })
+    // 重新授权：弹系统文件夹选择器，选中后只替换授权，定位符不变。
+    // 用户取消返回 null，静默处理；失败提示（此前是空桩，点了无反应）
+    void relinkSource(source.id).then(ok => {
+      if (ok === null) return
+      void refreshSources().then(() => {
+        if (ok) toast(t('library_source_relinked'), 'short')
+        else toast(t('library_relink_failed'), 'long')
+      })
+    })
   }
 
   const handleRestore = (source: LibrarySource) => {
@@ -366,22 +384,23 @@ const styles = createStyle({
   list: {
     flexGrow: 0,
   },
+  // 两行布局（真机反馈：横排时操作按钮无 flexShrink 占满行宽，
+  // 名称 / 数量信息区被压成 0 宽，竖屏必现）
   sourceItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: 'column',
+    alignItems: 'stretch',
     paddingLeft: 12,
     paddingRight: 12,
     paddingTop: 8,
     paddingBottom: 4,
   },
   sourceInfo: {
-    flex: 1,
-    marginRight: 8,
+    marginBottom: 4,
   },
   sourceActions: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    justifyContent: 'flex-end',
+    justifyContent: 'flex-start',
   },
   actionBtn: {
     paddingLeft: 6,

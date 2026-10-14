@@ -35,7 +35,8 @@ export interface PickFolderResult {
   relPath: string | null
 }
 export const pickFolder = async(): Promise<PickFolderResult | null> => call<PickFolderResult | null>('pickFolder')
-export const relink = async(sourceId: string): Promise<boolean> => call<boolean>('relink', sourceId)
+/** 重新授权：重新选中目录后替换授权。用户取消返回 null，失败 false（§5.2） */
+export const relink = async(sourceId: string): Promise<boolean | null> => call<boolean | null>('relink', sourceId)
 export const acquireSource = async(sourceId: string): Promise<boolean> => call<boolean>('acquire', sourceId)
 export const releaseSource = async(sourceId: string): Promise<boolean> => call<boolean>('release', sourceId)
 

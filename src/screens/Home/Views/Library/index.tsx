@@ -19,7 +19,7 @@ import { useLibrarySources, useLibraryRows, useScanProgress } from '@/store/libr
 import DorpDownMenu from '@/components/common/DorpDownMenu'
 import state from '@/store/library/state'
 import { pickLocalFolder } from '@/core/library/sources/local'
-import { startSourceScan, refreshSources, scanAllSources } from '@/core/library/sync'
+import { startSourceScan, refreshSources, scanAllSources, scanFailTip } from '@/core/library/sync'
 import { removeFromLibrary, deleteFiles, toggleLove, getLoveSet } from '@/core/library/actions'
 import { searchLyricCandidates, applyLyricCandidate, type LyricCandidate } from '@/core/library/lyricSearch'
 import { toast, createStyle, confirmDialog } from '@/utils/tools'
@@ -237,10 +237,13 @@ export default () => {
       return
     }
     if (action === 'rescan') {
-      // 「重新扫描当前来源」入口：元数据修复后存量曲目需重扫刷新
-      if (state.filterSourceId) {
-        void startSourceScan(state.filterSourceId).then(started => {
-          if (!started) toast(t('library_scan_busy'), 'short')
+      // 「重新扫描当前来源」入口：元数据修复后存量曲目需重扫刷新。
+      // 失败原因按类别提示，不再一律「正在扫描中」
+      const sid = state.filterSourceId
+      if (sid) {
+        void startSourceScan(sid, (reason) => {
+          const cur = state.sources.find(s => s.id === sid)
+          toast(scanFailTip(cur ? (cur.type === 'download' ? t('nav_download') : cur.name) : '', reason), 'short')
         })
       }
       return
@@ -486,9 +489,15 @@ export default () => {
 
   const handleScanAll = useCallback(() => {
     // 元数据修复后存量曲目需重扫刷新；扫描中重复点击由
-    // startSourceScan 的单飞锁挡住
+    // startSourceScan 的单飞锁挡住。没有可扫的文件夹来源时明确提示，
+    // 此前「扫描全部」跳过下载来源后静默结束，看起来像没用（真机反馈）
+    const scannable = state.sources.filter(s => s.enabled && s.type !== 'download')
+    if (!scannable.length) {
+      toast(t('library_no_scannable_source'), 'long')
+      return
+    }
     void scanAllSources().then(() => { void refreshSources() })
-  }, [])
+  }, [t])
 
   const handleAddFolder = useCallback(() => {
     // 顺序关键：必须等来源列表刷新进 store 后才能发起扫描，
@@ -505,11 +514,15 @@ export default () => {
         return
       }
       if (!result) return
+      // bgClose=false：确认框背景点击也返回 false，若允许背景关闭会
+      // 静默变成「仅当前层」，违背设计默认「包含子文件夹」（§14.4）。
+      // 强制显式二选一
       const includeSub = await confirmDialog({
         message: t('library_add_folder_recursive_confirm'),
         confirmButtonText: t('library_add_folder_recursive_yes'),
         cancelButtonText: t('library_add_folder_recursive_no'),
-      }).catch(() => true)
+        bgClose: false,
+      })
       try {
         // recursive 写入来源 config（扫描从 config 读取）
         const cfg = JSON.parse(result.source.config) as Record<string, unknown>
@@ -547,11 +560,9 @@ export default () => {
       case 'rescanCurrent': {
         const sid = state.filterSourceId
         if (sid) {
-          void startSourceScan(sid).then(started => {
-            if (!started) {
-              const cur = state.sources.find(s => s.id === sid)
-              toast(`${cur?.name ?? ''} ${t('library_scan_busy')}`, 'short')
-            }
+          void startSourceScan(sid, (reason) => {
+            const cur = state.sources.find(s => s.id === sid)
+            toast(scanFailTip(cur ? (cur.type === 'download' ? t('nav_download') : cur.name) : '', reason), 'short')
           })
         }
         break

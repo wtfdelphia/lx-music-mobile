@@ -17,11 +17,22 @@
 NSString * const kScanProgressEvent = @"library_scan_progress";
 NSString * const kScanDoneEvent = @"library_scan_done";
 
+// 文件夹选择器呈现管线预算（对齐 UtilsModule 的竞态安全口径）：
+// 等视图层级稳定后呈现，呈现被并发退场吞掉则重试；预算耗尽
+// resolve null，绝不把 Promise 挂死（真机反馈：⋮ 菜单 Modal 关闭
+// 动画中 present 被 UIKit 静默吞掉，delegate 永不回调）
+static const NSTimeInterval kLxPickWaitInterval = 0.15;
+static const NSTimeInterval kLxPickPresentBudget = 3.0;
+
 @interface LxLibraryModule () <UIDocumentPickerDelegate, LxFolderScannerDelegate>
 @property (nonatomic, strong) LxFolderScanner *scanner;
 @property (nonatomic, strong) UIDocumentPickerViewController *folderPicker;
+@property (nonatomic, strong) UIDocumentPickerViewController *pendingPicker;
 @property (nonatomic, copy) RCTPromiseResolveBlock pendingPickResolve;
 @property (nonatomic, copy) RCTPromiseRejectBlock pendingPickReject;
+@property (nonatomic, copy) NSString *pendingRelinkSourceId;
+@property (nonatomic, copy) RCTPromiseResolveBlock pendingRelinkResolve;
+@property (nonatomic, copy) RCTPromiseRejectBlock pendingRelinkReject;
 @property (nonatomic, strong) NSDate *lastProgressEmit;
 @property (nonatomic, assign) BOOL hasListeners;
 @end
@@ -119,41 +130,100 @@ RCT_EXPORT_METHOD(pickFolder:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 {
   dispatch_async(dispatch_get_main_queue(), ^{
+    // 同一时刻只允许一个选择器：上一个挂起中的选择按取消处理
+    [self cancelPendingPickerPicks];
     self.pendingPickResolve = resolve;
     self.pendingPickReject = reject;
-
-    // 部署目标 13.4：沿用 UtilsModule 的 documentTypes 惯例（iOS 14 起
-    // 标记废弃但仍可用），避免 UTType 在低部署目标下的可见性问题
-    UIDocumentPickerViewController *picker =
-        [[UIDocumentPickerViewController alloc] initWithDocumentTypes:@[@"public.folder"] inMode:UIDocumentPickerModeOpen];
-    picker.delegate = self;
-    picker.allowsMultipleSelection = NO;
-    self.folderPicker = picker;
-
-    UIViewController *top = [self lx_topViewController];
-    if (!top) {
-      resolve([NSNull null]);
-      return;
-    }
-    [top presentViewController:picker animated:YES completion:nil];
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:kLxPickPresentBudget];
+    [self presentFolderPickerWithDeadline:deadline];
   });
 }
 
-- (UIViewController *)lx_topViewController
+// 竞态安全呈现：调用点多在 ⋮ 菜单等 RN Modal 的 onPress 回调内，此时
+// 菜单 Modal 正在退场动画中。旧实现直接取 presentedViewController 链
+// 尾并 present，UIKit 会静默拒绝（isBeingDismissed 的 VC 不能再
+// present），delegate 回调永不到来，JS Promise 挂死（真机反馈：
+// 添加文件夹点击无反应）。这里等层级稳定后再呈现，被吞掉则重试；
+// 预算耗尽 resolve null 让 JS 侧提示失败
+- (void)presentFolderPickerWithDeadline:(NSDate *)deadline
 {
-  UIViewController *root = [UIApplication sharedApplication].delegate.window.rootViewController;
-  while (root.presentedViewController) root = root.presentedViewController;
-  return root;
-}
-
-- (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls
-{
-  NSURL *url = urls.firstObject;
-  if (!url) {
-    if (self.pendingPickResolve) self.pendingPickResolve([NSNull null]);
-    self.pendingPickResolve = nil;
+  UIViewController *top = [self lx_stableTopViewController];
+  if (!top) {
+    if ([deadline timeIntervalSinceNow] <= 0) {
+      [self failPendingPickerPicks];
+      return;
+    }
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kLxPickWaitInterval * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      [self presentFolderPickerWithDeadline:deadline];
+    });
     return;
   }
+  // 部署目标 13.4：沿用 UtilsModule 的 documentTypes 惯例（iOS 14 起
+  // 标记废弃但仍可用），避免 UTType 在低部署目标下的可见性问题
+  UIDocumentPickerViewController *picker =
+      [[UIDocumentPickerViewController alloc] initWithDocumentTypes:@[@"public.folder"] inMode:UIDocumentPickerModeOpen];
+  picker.delegate = self;
+  picker.allowsMultipleSelection = NO;
+  self.folderPicker = picker;
+  self.pendingPicker = picker;
+  __weak typeof(self) weakSelf = self;
+  [top presentViewController:picker animated:YES completion:^{
+    // completion 不等于存活：被并发退场吞掉时 completion 照样回调，
+    // VC 随后被收走。延迟校验存活，不存活则重试
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      __strong typeof(weakSelf) self = weakSelf;
+      if (!self || self.pendingPicker != picker) return;
+      BOOL alive = picker.presentingViewController != nil && picker.view.window != nil;
+      if (alive) { self.pendingPicker = nil; return; }
+      self.pendingPicker = nil;
+      self.folderPicker = nil;
+      if ([deadline timeIntervalSinceNow] <= 0) {
+        [self failPendingPickerPicks];
+        return;
+      }
+      [self presentFolderPickerWithDeadline:deadline];
+    });
+  }];
+  // completion 看门狗：目标 VC 不在窗口层级时 UIKit 根本不回调
+  // completion，没有看门狗重试链会停在这里，成为另一处静默挂起
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    __strong typeof(weakSelf) self = weakSelf;
+    if (!self || self.pendingPicker != picker) return;
+    if (picker.presentingViewController != nil) [picker dismissViewControllerAnimated:NO completion:nil];
+    self.pendingPicker = nil;
+    self.folderPicker = nil;
+    if ([deadline timeIntervalSinceNow] <= 0) {
+      [self failPendingPickerPicks];
+      return;
+    }
+    [self presentFolderPickerWithDeadline:deadline];
+  });
+}
+
+// 稳定顶层 VC：presentedViewController 链上任一节点处于转场中
+//（呈现 / 退场动画未结束）即返回 nil，由调用方重试。口径与
+// UtilsModule.lx_stableTopViewController 一致
+- (UIViewController *)lx_stableTopViewController
+{
+  UIWindow *window = nil;
+  for (UIWindow *w in [UIApplication sharedApplication].windows) {
+    if (w.isKeyWindow) { window = w; break; }
+  }
+  if (!window) window = [UIApplication sharedApplication].delegate.window;
+  UIViewController *vc = window.rootViewController;
+  while (vc) {
+    if (vc.isBeingPresented || vc.isBeingDismissed || vc.isMovingFromParentViewController || vc.isMovingToParentViewController) return nil;
+    if (!vc.presentedViewController) return vc;
+    vc = vc.presentedViewController;
+  }
+  return nil;
+}
+
+// 选中 URL → config 片段：沙箱内返回 @{@"relPath": …}，外部返回
+// @{@"bookmark": base64}；bookmark 生成失败返回 nil。两条路径
+//（pickFolder / relink）共用，保证口径一致
+- (NSDictionary * _Nullable)configFragmentForPickedURL:(NSURL *)url
+{
   // 判断是否在本 App Documents 内（沙箱分支，§5.2）。
   // 选择器返回的路径可能带 /private 前缀（符号链接形式），而
   // NSSearchPath 返回 /var 形式：两边都先解析符号链接再比前缀，
@@ -163,42 +233,118 @@ RCT_EXPORT_METHOD(pickFolder:(RCTPromiseResolveBlock)resolve
   NSString *pathResolved = [url URLByResolvingSymlinksInPath].path ?: url.path;
   NSString *documentsPrefix = [documentsResolved stringByAppendingString:@"/"];
   BOOL inSandbox = [pathResolved isEqualToString:documentsResolved] || [pathResolved hasPrefix:documentsPrefix];
-  NSMutableDictionary *result = [NSMutableDictionary dictionary];
-  result[@"label"] = url.lastPathComponent ?: @"";
   if (inSandbox) {
     NSString *rel = [pathResolved isEqualToString:documentsResolved] ? @"" : [pathResolved substringFromIndex:documentsPrefix.length];
-    // 只回传存在的键：不回传 [NSNull null]，下游一律按缺失处理（F5）。
-    // relPath 允许空串 = Documents 根
-    result[@"relPath"] = rel;
-  } else {
-    // 生成 bookmark（§5.2）
-    BOOL started = [url startAccessingSecurityScopedResource];
-    NSError *bmError = nil;
-    NSData *bookmark = [url bookmarkDataWithOptions:0 includingResourceValuesForKeys:nil relativeToURL:nil error:&bmError];
-    if (started) [url stopAccessingSecurityScopedResource];
-    if (!bookmark) {
-      if (self.pendingPickResolve) self.pendingPickResolve([NSNull null]);
-      self.pendingPickResolve = nil;
-      return;
-    }
-    result[@"bookmark"] = [bookmark base64EncodedStringWithOptions:0];
+    return @{ @"relPath": rel };
   }
-  if (self.pendingPickResolve) self.pendingPickResolve(result);
-  self.pendingPickResolve = nil;
+  BOOL started = [url startAccessingSecurityScopedResource];
+  NSError *bmError = nil;
+  NSData *bookmark = [url bookmarkDataWithOptions:0 includingResourceValuesForKeys:nil relativeToURL:nil error:&bmError];
+  if (started) [url stopAccessingSecurityScopedResource];
+  if (!bookmark) return nil;
+  return @{ @"bookmark": [bookmark base64EncodedStringWithOptions:0] };
+}
+
+- (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls
+{
+  NSURL *url = urls.firstObject;
+  if (!url) { [self cancelPendingPickerPicks]; return; }
+
+  NSDictionary *fragment = [self configFragmentForPickedURL:url];
+  NSString *label = url.lastPathComponent ?: @"";
+
+  // relink：只替换授权，不改变定位符（§5.2）。成功 / 失败回 bool，
+  // 取消在 cancelPendingPickerPicks 里回 NSNull
+  NSString *relinkSourceId = self.pendingRelinkSourceId;
+  if (relinkSourceId.length) {
+    RCTPromiseResolveBlock resolve = self.pendingRelinkResolve;
+    [self clearPendingPickerState];
+    if (!fragment) { if (resolve) resolve(@(NO)); return; }
+    NSDictionary *meta = [[LxLibraryStore shared] configForSourceId:relinkSourceId];
+    NSString *oldConfigJSON = LxStr(meta[@"config"]);
+    NSMutableDictionary *config = [NSMutableDictionary dictionary];
+    if (oldConfigJSON.length) {
+      id parsed = [NSJSONSerialization JSONObjectWithData:[oldConfigJSON dataUsingEncoding:NSUTF8StringEncoding] options:NSJSONReadingMutableContainers error:nil];
+      if ([parsed isKindOfClass:[NSDictionary class]]) config = [parsed mutableCopy];
+    }
+    // 新授权覆盖旧授权：沙箱分支清掉失效 bookmark，外部分支清掉旧
+    // relPath，避免两种授权并存
+    [config removeObjectForKey:@"bookmark"];
+    [config removeObjectForKey:@"relPath"];
+    [config addEntriesFromDictionary:fragment];
+    NSData *data = [NSJSONSerialization dataWithJSONObject:config options:0 error:nil];
+    NSString *newConfigJSON = data ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : nil;
+    BOOL ok = newConfigJSON.length && [[LxLibraryStore shared] setSourceConfig:relinkSourceId config:newConfigJSON state:@"ok"];
+    if (ok) {
+      [[LxFolderAccess shared] saveGrantForSourceId:relinkSourceId config:config];
+    }
+    if (resolve) resolve(@(ok));
+    return;
+  }
+
+  // pickFolder：回传来源创建素材
+  RCTPromiseResolveBlock resolve = self.pendingPickResolve;
+  [self clearPendingPickerState];
+  if (!fragment || !resolve) return;
+  NSMutableDictionary *result = [fragment mutableCopy];
+  result[@"label"] = label;
+  resolve(result);
 }
 
 - (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)controller
 {
-  if (self.pendingPickResolve) self.pendingPickResolve([NSNull null]);
+  [self cancelPendingPickerPicks];
+}
+
+// 清理选择器挂起态（不 resolve）
+- (void)clearPendingPickerState
+{
   self.pendingPickResolve = nil;
+  self.pendingPickReject = nil;
+  self.pendingRelinkResolve = nil;
+  self.pendingRelinkReject = nil;
+  self.pendingRelinkSourceId = nil;
+}
+
+// 用户取消：选择按取消处理（pick → null，relink → null），
+// 与失败区分开
+- (void)cancelPendingPickerPicks
+{
+  if (self.pendingPickResolve) self.pendingPickResolve([NSNull null]);
+  if (self.pendingRelinkResolve) self.pendingRelinkResolve([NSNull null]);
+  [self clearPendingPickerState];
+}
+
+// 呈现预算耗尽等系统级失败：不算用户取消。pick 走 reject，
+// JS 侧据此提示「添加文件夹失败」（与用户取消的静默区分开，
+// 否则超时后点击仍然像没反应）；relink 回 NO
+- (void)failPendingPickerPicks
+{
+  if (self.pendingPickReject) self.pendingPickReject(@"E_PICKER_PRESENT_FAILED", @"folder picker could not be presented within budget", nil);
+  if (self.pendingRelinkResolve) self.pendingRelinkResolve(@(NO));
+  [self clearPendingPickerState];
 }
 
 RCT_EXPORT_METHOD(relink:(NSString *)sourceId
                   resolver:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 {
-  // relink 走 pickFolder 流程；此处接收已选中的 bookmark（模块层编排）
-  resolve([NSNull null]);
+  // relink 复用文件夹选择器：用户重新选中目录后只替换授权
+  //（bookmark / relPath），定位符不变（§5.2）。此前是空桩，
+  // 授权失效后点「重新授权」什么都不发生（真机反馈第 4 条的配套缺口）
+  NSString *sid = LxStr(sourceId);
+  if (!sid.length || ![[LxLibraryStore shared] configForSourceId:sid]) {
+    resolve(@(NO));
+    return;
+  }
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [self cancelPendingPickerPicks];
+    self.pendingRelinkSourceId = sid;
+    self.pendingRelinkResolve = resolve;
+    self.pendingRelinkReject = reject;
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:kLxPickPresentBudget];
+    [self presentFolderPickerWithDeadline:deadline];
+  });
 }
 
 RCT_EXPORT_METHOD(acquire:(NSString *)sourceId

@@ -51,10 +51,11 @@ export const pickLocalFolder = async(options: { recursive?: boolean } = {}): Pro
 }
 
 /**
- * 重新关联：只替换授权，不改变定位符（design §5.2 `relink`）
+ * 重新关联：只替换授权，不改变定位符（design §5.2 `relink`）。
+ * 返回 true 成功 / false 失败 / null 用户取消
  */
-export const relinkSource = async(sourceId: string): Promise<void> => {
-  await native.relink(sourceId)
+export const relinkSource = async(sourceId: string): Promise<boolean | null> => {
+  return native.relink(sourceId).catch(() => false)
 }
 
 /**

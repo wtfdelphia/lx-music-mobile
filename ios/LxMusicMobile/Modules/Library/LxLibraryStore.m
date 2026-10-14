@@ -719,6 +719,24 @@ static NSString * const kTrackColumns =
   return ok;
 }
 
+- (BOOL)setSourceConfig:(NSString *)sourceId config:(NSString *)config state:(NSString *)state
+{
+  if (!sourceId.length || !config.length) return NO;
+  __block BOOL ok = NO;
+  dispatch_sync(_ioQueue, ^{
+    if (![self _openOnQueue]) return;
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(self->_db, "UPDATE source SET config = ?2, state = ?3 WHERE id = ?1", -1, &stmt, NULL) == SQLITE_OK) {
+      sqlite3_bind_text(stmt, 1, sourceId.UTF8String, -1, SQLITE_TRANSIENT);
+      sqlite3_bind_text(stmt, 2, config.UTF8String, -1, SQLITE_TRANSIENT);
+      sqlite3_bind_text(stmt, 3, (state.length ? state : @"ok").UTF8String, -1, SQLITE_TRANSIENT);
+      ok = sqlite3_step(stmt) == SQLITE_DONE && sqlite3_changes(self->_db) > 0;
+      sqlite3_finalize(stmt);
+    }
+  });
+  return ok;
+}
+
 - (BOOL)setSourceEnabled:(NSString *)sourceId enabled:(BOOL)enabled
 {
   if (!sourceId.length) return NO;
