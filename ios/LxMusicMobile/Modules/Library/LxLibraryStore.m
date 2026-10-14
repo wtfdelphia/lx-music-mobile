@@ -571,6 +571,22 @@ static NSString * const kTrackColumns =
   return excluded;
 }
 
+- (NSInteger)countTracksForSourceId:(NSString *)sourceId
+{
+  if (!sourceId.length) return 0;
+  __block NSInteger count = 0;
+  dispatch_sync(_ioQueue, ^{
+    if (![self _openOnQueue]) return;
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(self->_db, "SELECT COUNT(*) FROM track WHERE source_id = ?1", -1, &stmt, NULL) == SQLITE_OK) {
+      sqlite3_bind_text(stmt, 1, sourceId.UTF8String, -1, SQLITE_TRANSIENT);
+      if (sqlite3_step(stmt) == SQLITE_ROW) count = sqlite3_column_int64(stmt, 0);
+      sqlite3_finalize(stmt);
+    }
+  });
+  return count;
+}
+
 - (NSArray<NSString *> *)listItemKeysForSourceId:(NSString *)sourceId
 {
   if (!sourceId.length) return @[];

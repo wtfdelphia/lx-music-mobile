@@ -77,3 +77,12 @@ export const deleteSource = async(sourceId: string): Promise<boolean> => {
 export const setSourceEnabled = async(source: LibrarySource, enabled: boolean): Promise<boolean> => {
   return native.saveSource({ ...source, enabled }).catch(() => false)
 }
+
+/**
+ * 重命名来源显示名（F1「编辑」；定位符与授权均不变）
+ */
+export const renameSource = async(source: LibrarySource, name: string): Promise<boolean> => {
+  const trimmed = name.trim()
+  if (!trimmed || trimmed === source.name) return false
+  return native.saveSource({ ...source, name: trimmed }).catch(() => false)
+}

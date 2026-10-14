@@ -6,14 +6,14 @@
  * - 喜欢 / 加入列表映射到 LX 列表
  */
 import * as native from './native'
-import { parseLocator } from './locator'
 import { getDownloadList } from '@/store/download/action'
 import { removeTasks } from '@/core/download'
 import { addListMusics } from '@/core/list'
 import { LIST_IDS } from '@/config/constant'
-import { getListMusics } from '@/utils/listManage'
+import { getListMusics, userLists } from '@/utils/listManage'
 import settingState from '@/store/setting/state'
 import { toMusicInfo } from './toMusicInfo'
+import { parseLocator } from './locator'
 import type { NativeTrackRow } from './types'
 
 /**
@@ -35,6 +35,44 @@ export const removeFromLibrary = async(rows: NativeTrackRow[]): Promise<number> 
  */
 export const restoreRemoved = async(sourceId: string): Promise<boolean> => {
   return native.restoreExcluded(sourceId).catch(() => false)
+}
+
+/**
+ * 统计某来源的歌曲在全部列表（默认 / 喜欢 / 自建）中的引用数。
+ * 删除来源前的提示用（§9）：引用中的曲目删除后将无法播放
+ */
+export const countListRefsForSource = async(sourceId: string): Promise<number> => {
+  const listIds = [LIST_IDS.DEFAULT, LIST_IDS.LOVE, ...userLists.map(l => l.id)]
+  let count = 0
+  for (const listId of listIds) {
+    const list = await getListMusics(listId).catch(() => [] as LX.Music.MusicInfo[])
+    for (const mi of list) {
+      if (mi.source === 'local' && mi.id.startsWith(`lxlib://${sourceId}/`)) count++
+    }
+  }
+  return count
+}
+
+/**
+ * 删除来源（§9）：先统计列表引用，删除后可选从列表中移除引用曲目
+ */
+export const deleteLibrarySource = async(sourceId: string, removeFromLists: boolean): Promise<boolean> => {
+  const ok = await native.deleteSource(sourceId).catch(() => false)
+  if (!ok) return false
+  if (removeFromLists) {
+    const listIds = [LIST_IDS.DEFAULT, LIST_IDS.LOVE, ...userLists.map(l => l.id)]
+    for (const listId of listIds) {
+      const list = await getListMusics(listId).catch(() => [] as LX.Music.MusicInfo[])
+      const refIds = list
+        .filter(mi => mi.source === 'local' && mi.id.startsWith(`lxlib://${sourceId}/`))
+        .map(mi => mi.id)
+      if (refIds.length) {
+        const { removeListMusics } = await import('@/core/list')
+        await removeListMusics(listId, refIds)
+      }
+    }
+  }
+  return true
 }
 
 /**

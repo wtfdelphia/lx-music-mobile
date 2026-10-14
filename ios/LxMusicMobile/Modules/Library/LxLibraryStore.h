@@ -29,6 +29,8 @@
 - (BOOL)restoreExcluded:(NSString *)sourceId;
 - (NSArray<NSString *> *)listExcludedItemKeysForSourceId:(NSString *)sourceId;
 - (BOOL)isExcluded:(NSString *)sourceId itemKey:(NSString *)itemKey;
+// 来源曲目数（来源管理列表显示用）
+- (NSInteger)countTracksForSourceId:(NSString *)sourceId;
 // 来源配置与类型（授权懒加载用，F1）
 - (NSDictionary * _Nullable)configForSourceId:(NSString *)sourceId;
 // 扫描结束时间 / 报告落库（低危项修复）

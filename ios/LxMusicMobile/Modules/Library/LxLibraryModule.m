@@ -428,6 +428,14 @@ RCT_EXPORT_METHOD(deleteSourceFile:(NSString *)locator
   });
 }
 
+// 来源曲目数（来源管理列表，§14.4）
+RCT_EXPORT_METHOD(countTracksForSourceId:(NSString *)sourceId
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  resolve(@([[LxLibraryStore shared] countTracksForSourceId:LxStr(sourceId)]));
+}
+
 // 全量 itemKey（自动关联差量对账用，避免 query limit 截断，S3）
 RCT_EXPORT_METHOD(listItemKeysForSourceId:(NSString *)sourceId
                   resolver:(RCTPromiseResolveBlock)resolve

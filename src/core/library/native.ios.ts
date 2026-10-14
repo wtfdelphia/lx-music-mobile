@@ -46,6 +46,8 @@ export const query = async(spec: LibraryQuerySpec): Promise<LibraryQueryResult> 
 export const upsertTracks = async(sourceId: string, rows: Array<Record<string, unknown>>): Promise<boolean> => call<boolean>('upsertTracks', sourceId, rows)
 export const finishSync = async(sourceId: string): Promise<number> => call<number>('finishSync', sourceId)
 export const getTrack = async(locator: string): Promise<NativeTrackRow | null> => call<NativeTrackRow | null>('getTrack', locator)
+/** 来源曲目数（来源管理列表，§14.4） */
+export const countTracks = async(sourceId: string): Promise<number> => call<number>('countTracksForSourceId', sourceId)
 /** 全量 itemKey（自动关联差量对账，避免 query limit 截断，S3） */
 export const listItemKeys = async(sourceId: string): Promise<string[]> => call<string[]>('listItemKeysForSourceId', sourceId)
 // 排除表（§16）：从曲库移除不删文件，重扫 / 对账跳过

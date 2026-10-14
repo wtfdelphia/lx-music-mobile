@@ -28,6 +28,7 @@ export const query = async(_spec: LibraryQuerySpec): Promise<LibraryQueryResult>
 export const upsertTracks = async(_sourceId: string, _rows: Array<Record<string, unknown>>): Promise<boolean> => notSupported()
 export const finishSync = async(_sourceId: string): Promise<number> => notSupported()
 export const getTrack = async(_locator: string): Promise<NativeTrackRow | null> => notSupported()
+export const countTracks = async(_sourceId: string): Promise<number> => notSupported()
 export const listItemKeys = async(_sourceId: string): Promise<string[]> => notSupported()
 export const excludeTrack = async(_sourceId: string, _itemKey: string): Promise<boolean> => notSupported()
 export const restoreExcluded = async(_sourceId: string): Promise<boolean> => notSupported()

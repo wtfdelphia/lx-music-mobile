@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { View, FlatList, TouchableOpacity } from 'react-native'
+import { View, FlatList, TouchableOpacity, Image } from 'react-native'
+import { Icon } from '@/components/common/Icon'
 
 import List, { type ListType } from './List'
 import ListMenu, { type ListMenuType } from './ListMenu'
@@ -11,6 +12,7 @@ import MusicAddModal, { type MusicAddModalType } from '@/components/MusicAddModa
 import Modal, { type ModalType } from '@/components/common/Modal'
 import SourceManageModal, { type SourceManageModalType } from './SourceManageModal'
 import { queryTracks, queryAlbums, queryArtists, queryAlbumTracks, queryArtistTracks } from '@/core/library/query'
+import * as native from '@/core/library/native'
 import { setRows, setTabId, setFilterSourceId } from '@/store/library/action'
 import { useLibrarySources } from '@/store/library/hook'
 import DorpDownMenu from '@/components/common/DorpDownMenu'
@@ -56,6 +58,12 @@ export default () => {
   // 专辑 / 艺人下钻状态：P1 先在列内下钻，详情屏（3.3）接入后迁移
   const [drill, setDrill] = useState<{ type: 'album' | 'artist', key: string, title: string } | null>(null)
   const [filterSourceId, setFilterSourceIdState] = useState<string | null>(null)
+  // 曲目排序（F5「支持排序」）：标题 / 艺人 / 专辑循环切换
+  const [trackSort, setTrackSort] = useState<'title' | 'artist' | 'album'>('title')
+  // 添加文件夹时是否包含子文件夹（§14.4，默认递归）
+  const [addFolderRecursive, setAddFolderRecursive] = useState(true)
+  // 下钻封面（§14.3 详情头）：下钻时记录聚合行的封面缓存名
+  const [drillArtworkUrl, setDrillArtworkUrl] = useState<string | null>(null)
   // 「喜欢」集合：曲目行显示红心用
   const [loveSet, setLoveSet] = useState<Set<string>>(new Set())
   // 歌词搜索候选弹窗
@@ -94,18 +102,18 @@ export default () => {
           ? await queryArtists(spec)
           : tabId === 'recent'
             ? await queryTracks({ ...spec, sort: 'recent' })
-            : await queryTracks(spec)
+            : await queryTracks({ ...spec, sort: trackSort })
       next = result
     }
     if (seq !== loadSeq.current) return // 过期结果丢弃
     setRows(next.rows, next.total)
-  }, [tabId, drill, filterSourceId])
+  }, [tabId, drill, filterSourceId, trackSort])
 
-  // Tab / 下钻 / 来源筛选 / 来源列表变化时重新加载
+  // Tab / 下钻 / 来源筛选 / 排序 / 来源列表变化时重新加载
   useEffect(() => {
     void loadRows(keyword)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tabId, drill, filterSourceId, sources])
+  }, [tabId, drill, filterSourceId, trackSort, sources])
 
   // 首次进入拉取来源与曲目
   useEffect(() => {
@@ -143,12 +151,20 @@ export default () => {
     // 一律从 state.rows 现查，避免 memo 挡住闭包更新
     if (tabId === 'albums') {
       const row = currentRows.find(r => r.locator === locator)
-      if (row) setDrill({ type: 'album', key: row.itemKey, title: row.title })
+      if (row) {
+        setDrill({ type: 'album', key: row.itemKey, title: row.title })
+        setDrillArtworkUrl(null)
+        if (row.artwork) void native.artworkUrlForName(row.artwork).then(url => { setDrillArtworkUrl(url || null) })
+      }
       return
     }
     if (tabId === 'artists') {
       const row = currentRows.find(r => r.locator === locator)
-      if (row) setDrill({ type: 'artist', key: row.itemKey, title: row.title })
+      if (row) {
+        setDrill({ type: 'artist', key: row.itemKey, title: row.title })
+        setDrillArtworkUrl(null)
+        if (row.artwork) void native.artworkUrlForName(row.artwork).then(url => { setDrillArtworkUrl(url || null) })
+      }
       return
     }
     // tracks / 最近播放：曲目视图，按定位符在最新列表现查，
@@ -361,10 +377,14 @@ export default () => {
 
   const handleOpenAlbum = useCallback((row: NativeTrackRow) => {
     setDrill({ type: 'album', key: row.itemKey, title: row.title })
+    setDrillArtworkUrl(null)
+    if (row.artwork) void native.artworkUrlForName(row.artwork).then(url => { setDrillArtworkUrl(url || null) })
   }, [])
 
   const handleOpenArtist = useCallback((row: NativeTrackRow) => {
     setDrill({ type: 'artist', key: row.itemKey, title: row.title })
+    setDrillArtworkUrl(null)
+    if (row.artwork) void native.artworkUrlForName(row.artwork).then(url => { setDrillArtworkUrl(url || null) })
   }, [])
 
   // 下钻视图的「播放全部 / 添加到列表」（§14.3）：
@@ -396,7 +416,7 @@ export default () => {
     void (async() => {
       let result
       try {
-        result = await pickLocalFolder()
+        result = await pickLocalFolder({ recursive: addFolderRecursive })
       } catch {
         toast(t('library_add_folder_failed'), 'long')
         return
@@ -410,7 +430,7 @@ export default () => {
         toast(t('library_add_folder_failed'), 'long')
       }
     })()
-  }, [t])
+  }, [t, addFolderRecursive])
 
   const hasSource = useMemo(() => sources.length > 0, [sources])
 
@@ -432,9 +452,12 @@ export default () => {
           {drill
             ? (
                 <View style={styles.drillBar}>
-                  <Button style={styles.backBtn} onPress={() => { setDrill(null) }}>
+                  <Button style={styles.backBtn} onPress={() => { setDrill(null); setDrillArtworkUrl(null) }}>
                     <Text size={13} color={theme['c-primary-font']}>{t('back')}</Text>
                   </Button>
+                  {drillArtworkUrl
+                    ? <Image source={{ uri: drillArtworkUrl }} style={styles.drillArtwork} />
+                    : <View style={styles.drillArtworkPlaceholder} />}
                   <Text style={styles.drillTitle} numberOfLines={1}>{drill.title}</Text>
                   <Button style={styles.backBtn} onPress={handleDrillPlayAll}>
                     <Text size={13} color={theme['c-primary-font']}>{t('play')}</Text>
@@ -446,6 +469,18 @@ export default () => {
               )
             : (
                 <View style={styles.searchInputWrap}>
+                  {(tabId === 'tracks' || tabId === 'recent')
+                    ? (
+                        <Button
+                          style={styles.sortBtn}
+                          onPress={() => { setTrackSort(trackSort === 'title' ? 'artist' : trackSort === 'artist' ? 'album' : 'title') }}
+                        >
+                          <Text size={12} color={theme['c-font']}>
+                            {t(trackSort === 'title' ? 'library_sort_title' : trackSort === 'artist' ? 'library_sort_artist' : 'library_sort_album')}
+                          </Text>
+                        </Button>
+                      )
+                    : null}
                   <DorpDownMenu
                     menus={sourceMenus}
                     onPress={handleSourceChange}
@@ -476,6 +511,10 @@ export default () => {
           <Button style={styles.addBtn} onPress={handleScanAll}>
             <Text size={13} color={theme['c-font']}>{t('library_scan_all')}</Text>
           </Button>
+          <TouchableOpacity style={styles.recursiveToggle} onPress={() => { setAddFolderRecursive(!addFolderRecursive) }}>
+            <Icon name={addFolderRecursive ? 'checkbox-marked' : 'checkbox-blank-outline'} size={14} color={theme['c-font-label']} />
+            <Text size={11} color={theme['c-font-label']}>{t('library_add_folder_recursive_tip')}</Text>
+          </TouchableOpacity>
           <Button style={styles.addBtn} onPress={handleAddFolder}>
             <Text size={13} color={theme['c-primary-font']}>{t('library_add_folder')}</Text>
           </Button>
@@ -615,6 +654,14 @@ const styles = createStyle({
     alignItems: 'center',
     marginRight: 8,
   },
+  sortBtn: {
+    flexGrow: 0,
+    flexShrink: 0,
+    paddingLeft: 4,
+    paddingRight: 6,
+    paddingTop: 7,
+    paddingBottom: 7,
+  },
   sourceBtn: {
     flexGrow: 0,
     flexShrink: 1,
@@ -641,8 +688,30 @@ const styles = createStyle({
     paddingBottom: 4,
     marginRight: 6,
   },
+  drillArtwork: {
+    width: 30,
+    height: 30,
+    borderRadius: 3,
+    marginRight: 6,
+  },
+  drillArtworkPlaceholder: {
+    width: 30,
+    height: 30,
+    borderRadius: 3,
+    marginRight: 6,
+    backgroundColor: 'rgba(128,128,128,0.15)',
+  },
   drillTitle: {
     flex: 1,
+  },
+  recursiveToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingLeft: 4,
+    paddingRight: 4,
+    paddingTop: 8,
+    paddingBottom: 8,
+    marginRight: 4,
   },
   addBtn: {
     paddingLeft: 8,
