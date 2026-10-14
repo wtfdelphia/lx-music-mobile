@@ -160,8 +160,14 @@ const reconcile = async(): Promise<void> => {
   }
   // S4：下载来源不调 finishSync。删除只走 toRemove + deleteTrack；
   // upsert 只写增量行，finishSync 的 seen 语义会把存量行误删再补回，
-  // 导致曲目数在轮次之间翻转
-  void changed
+  // 导致曲目数在轮次之间翻转。
+  // 有变更时刷新来源列表并发行更新事件，让来源管理 / 曲库页
+  // 数量即时反映（此前 void changed 什么都不做）
+  if (changed) {
+    const { refreshSources } = await import('./sync')
+    void refreshSources()
+    global.app_event.libraryRowsUpdated()
+  }
 }
 
 /**

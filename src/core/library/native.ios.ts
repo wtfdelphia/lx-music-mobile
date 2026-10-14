@@ -26,6 +26,8 @@ export const ping = async(): Promise<boolean> => call<boolean>('ping')
 // ---- 来源 ----
 export const getSources = async(): Promise<LibrarySource[]> => call<LibrarySource[]>('getSources')
 export const saveSource = async(source: LibrarySource): Promise<boolean> => call<boolean>('saveSource', source)
+export const renameSourceNative = async(sourceId: string, name: string): Promise<boolean> => call<boolean>('renameSource', sourceId, name)
+export const setSourceEnabledNative = async(sourceId: string, enabled: boolean): Promise<boolean> => call<boolean>('setSourceEnabled', sourceId, enabled)
 export const deleteSource = async(id: string): Promise<boolean> => call<boolean>('deleteSource', id)
 export interface PickFolderResult {
   bookmark: string | null

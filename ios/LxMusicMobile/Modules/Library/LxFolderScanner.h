@@ -25,8 +25,8 @@
 @property (nonatomic, weak) id<LxFolderScannerDelegate> delegate;
 @property (nonatomic, assign, readonly) BOOL scanning;
 
-// 扫描。sourceURL 为来源根，recursive 是否递归
-- (void)scanSourceId:(NSString *)sourceId rootURL:(NSURL *)sourceURL recursive:(BOOL)recursive;
+// 扫描。返回 NO 表示扫描器忙（E_SCAN_BUSY）。recursive 是否递归
+- (BOOL)scanSourceId:(NSString *)sourceId rootURL:(NSURL *)sourceURL recursive:(BOOL)recursive;
 - (void)cancel;
 
 @end

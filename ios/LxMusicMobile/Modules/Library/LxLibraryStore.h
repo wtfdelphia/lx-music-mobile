@@ -39,6 +39,9 @@
 - (NSDictionary * _Nullable)configForSourceId:(NSString *)sourceId;
 // 扫描结束时间 / 报告落库（低危项修复）
 - (BOOL)updateScanState:(NSString *)sourceId lastScanAt:(long long)at report:(NSString * _Nullable)report;
+// 单字段更新：避免整行 saveSource 覆盖并发写入的扫描状态（真机反馈：重命名无效）
+- (BOOL)renameSource:(NSString *)sourceId name:(NSString *)name;
+- (BOOL)setSourceEnabled:(NSString *)sourceId enabled:(BOOL)enabled;
 - (BOOL)setOffline:(NSString *)locator relPath:(NSString * _Nullable)relPath;
 - (BOOL)bumpPlay:(NSString *)locator;
 

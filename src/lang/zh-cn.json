@@ -672,9 +672,13 @@
   "library_sort_title": "按标题",
   "library_sort_artist": "按艺人",
   "library_sort_album": "按专辑",
-  "library_add_folder_recursive_tip": "包含子文件夹",
   "library_type_local": "本地",
   "library_unknown_album": "未知专辑",
   "library_unknown_artist": "未知艺人",
-  "library_delete_skipped_suffix": "首为外部文件夹来源，已跳过"
+  "library_delete_skipped_suffix": "首为外部文件夹来源，已跳过",
+  "library_add_folder_recursive_confirm": "是否包含所选文件夹内的子文件夹？",
+  "library_add_folder_recursive_yes": "包含子文件夹",
+  "library_add_folder_recursive_no": "仅当前层",
+  "library_scanning_tip": "正在扫描…",
+  "library_scan_done_tip": "扫描完成：新增 {a} / 更新 {b} / 移除 {c}"
 }

@@ -72,17 +72,19 @@ export const deleteSource = async(sourceId: string): Promise<boolean> => {
 }
 
 /**
- * 启用 / 停用来源（编辑 enabled 字段）
+ * 启用 / 停用来源。走单字段更新，不用整行 saveSource——
+ * 后者会用内存旧快照覆盖并发写入的扫描状态
  */
 export const setSourceEnabled = async(source: LibrarySource, enabled: boolean): Promise<boolean> => {
-  return native.saveSource({ ...source, enabled }).catch(() => false)
+  return native.setSourceEnabledNative(source.id, enabled).catch(() => false)
 }
 
 /**
- * 重命名来源显示名（F1「编辑」；定位符与授权均不变）
+ * 重命名来源显示名（F1「编辑」；定位符与授权均不变）。
+ * 同样走单字段更新（真机实证整行重写会覆盖扫描报告等字段）
  */
 export const renameSource = async(source: LibrarySource, name: string): Promise<boolean> => {
   const trimmed = name.trim()
   if (!trimmed || trimmed === source.name) return false
-  return native.saveSource({ ...source, name: trimmed }).catch(() => false)
+  return native.renameSourceNative(source.id, trimmed).catch(() => false)
 }

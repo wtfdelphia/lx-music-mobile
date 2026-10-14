@@ -15,7 +15,7 @@ import SourceManageModal, { type SourceManageModalType } from './SourceManageMod
 import { queryTracks, queryAlbums, queryArtists, queryAlbumTracks, queryArtistTracks } from '@/core/library/query'
 import * as native from '@/core/library/native'
 import { setRows, setTabId, setFilterSourceId } from '@/store/library/action'
-import { useLibrarySources, useLibraryRows } from '@/store/library/hook'
+import { useLibrarySources, useLibraryRows, useScanProgress } from '@/store/library/hook'
 import DorpDownMenu from '@/components/common/DorpDownMenu'
 import state from '@/store/library/state'
 import { pickLocalFolder } from '@/core/library/sources/local'
@@ -59,8 +59,6 @@ export default () => {
   const [filterSourceId, setFilterSourceIdState] = useState<string | null>(null)
   // 曲目排序（F5「支持排序」）：标题 / 艺人 / 专辑循环切换
   const [trackSort, setTrackSort] = useState<'title' | 'artist' | 'album'>('title')
-  // 添加文件夹时是否包含子文件夹（§14.4，默认递归）
-  const [addFolderRecursive, setAddFolderRecursive] = useState(true)
   // 下钻封面（§14.3 详情头）：下钻时记录聚合行的封面缓存名
   const [drillArtworkUrl, setDrillArtworkUrl] = useState<string | null>(null)
   // 「喜欢」集合：曲目行显示红心用
@@ -128,9 +126,19 @@ export default () => {
   }, [tabId, drill, filterSourceId, trackSort, sources])
 
   // H4：扫描完成后按当前视图状态重载（编排层不再覆盖式刷新）；
-  // M6：最近播放 Tab 上监听切歌，播放后列表即时反映
+  // M6：最近播放 Tab 上监听切歌，播放后列表即时反映；
+  // 扫描结果 toast（真机反馈：扫描全部「像没用」——没有完成提示）
   useEffect(() => {
-    const handleScanDone = () => { void loadRows(keyword) }
+    const handleScanDone = (sourceId: string) => {
+      void loadRows(keyword)
+      const report = state.scanReports[sourceId]
+      if (report) {
+        toast(t('library_scan_done_tip')
+          .replace('{a}', String(report.imported))
+          .replace('{b}', String(report.updated))
+          .replace('{c}', String(report.removed)), 'long')
+      }
+    }
     const handlePlayChanged = () => {
       if (state.tabId === 'recent' || tabId === 'recent') void loadRows(keyword)
     }
@@ -259,6 +267,25 @@ export default () => {
     return ids
   }, [sources])
 
+  // 排序下拉：标题 / 艺人 / 专辑，当前项高亮（F5）
+  const sortMenus = useMemo(() => ([
+    { action: 'title', label: t('library_sort_title') },
+    { action: 'artist', label: t('library_sort_artist') },
+    { action: 'album', label: t('library_sort_album') },
+  ]), [t])
+  const handleSortChange = useCallback(({ action }: { action: string }) => {
+    if (action === 'title' || action === 'artist' || action === 'album') setTrackSort(action)
+  }, [])
+
+
+  // 扫描反馈（真机反馈：主页面看不到扫描进行中 / 结果）
+  const scanProgress = useScanProgress()
+  const scanningSourceIds = useMemo(
+    () => Object.values(scanProgress).filter(p => p),
+    [scanProgress],
+  )
+  const isScanning = scanningSourceIds.length > 0
+
   const sourceMenus = useMemo(() => {
     const items: Array<{ action: string, label: string, disabled?: boolean }> = [
       { action: 'all', label: t('library_all_sources') },
@@ -266,9 +293,8 @@ export default () => {
     for (const source of sources) {
       items.push({ action: `src:${source.id}`, label: sourceLabel(source) })
     }
-    items.push({ action: 'rescan', label: t('library_rescan_source'), disabled: !filterSourceId })
     return items
-  }, [sources, sourceLabel, t, filterSourceId])
+  }, [sources, sourceLabel, t])
 
   // 「喜欢」集合初始化：来源 / 行变化时刷新
   useEffect(() => {
@@ -462,17 +488,28 @@ export default () => {
   const handleAddFolder = useCallback(() => {
     // 顺序关键：必须等来源列表刷新进 store 后才能发起扫描，
     // `startSourceScan` 从 store 查来源，并发执行时新来源还不在，
-    // 会直接 return false 导致「来源落库但永不扫描」
+    // 会直接 return false 导致「来源落库但永不扫描」。
+    // 递归选择改为选完文件夹后弹确认（此前工具行常驻开关，
+    // 挤占布局且用户未必理解其作用）
     void (async() => {
       let result
       try {
-        result = await pickLocalFolder({ recursive: addFolderRecursive })
+        result = await pickLocalFolder()
       } catch {
         toast(t('library_add_folder_failed'), 'long')
         return
       }
       if (!result) return
+      const includeSub = await confirmDialog({
+        message: t('library_add_folder_recursive_confirm'),
+        confirmButtonText: t('library_add_folder_recursive_yes'),
+        cancelButtonText: t('library_add_folder_recursive_no'),
+      }).catch(() => true)
       try {
+        // recursive 写入来源 config（扫描从 config 读取）
+        const cfg = JSON.parse(result.source.config) as Record<string, unknown>
+        cfg.recursive = includeSub
+        await native.saveSource({ ...result.source, config: JSON.stringify(cfg) })
         await refreshSources()
         const started = await startSourceScan(result.source.id)
         if (!started) toast(t('library_scan_busy'), 'short')
@@ -480,7 +517,39 @@ export default () => {
         toast(t('library_add_folder_failed'), 'long')
       }
     })()
-  }, [t, addFolderRecursive])
+  }, [t])
+
+  // ⋮ 菜单（§14.2）：添加文件夹 / 扫描全部 / 重扫当前来源 / 来源管理
+  const moreMenus = useMemo(() => {
+    const items: Array<{ action: string, label: string, disabled?: boolean }> = [
+      { action: 'addFolder', label: t('library_add_folder') },
+      { action: 'scanAll', label: t('library_scan_all') },
+      { action: 'rescanCurrent', label: t('library_rescan_source'), disabled: !filterSourceId },
+      { action: 'sourceManage', label: t('library_source_manage') },
+    ]
+    return items
+  }, [t, filterSourceId])
+
+  const handleMoreMenuPress = useCallback(({ action }: { action: string }) => {
+    switch (action) {
+      case 'addFolder':
+        handleAddFolder()
+        break
+      case 'scanAll':
+        handleScanAll()
+        break
+      case 'rescanCurrent':
+        if (state.filterSourceId) {
+          void startSourceScan(state.filterSourceId).then(started => {
+            if (!started) toast(t('library_scan_busy'), 'short')
+          })
+        }
+        break
+      case 'sourceManage':
+        sourceManageRef.current?.show()
+        break
+    }
+  }, [handleAddFolder, handleScanAll, t])
 
   const hasSource = useMemo(() => sources.length > 0, [sources])
 
@@ -513,36 +582,42 @@ export default () => {
                     <Text size={13} color={theme['c-primary-font']}>{t('play')}</Text>
                   </Button>
                   <Button style={styles.backBtn} onPress={handleDrillAddToList}>
-                    <Text size={13} color={theme['c-primary-font']}>{t('library_add_to_list')}</Text>
+                    <Text size={13} color={theme['c-font']}>{t('library_add_to_list')}</Text>
                   </Button>
                 </View>
               )
             : (
                 <View style={styles.searchInputWrap}>
+                  {/* 第二行：[排序▾] [来源▾] [搜索框] [⋮]（真机反馈布局重排） */}
                   {(tabId === 'tracks' || tabId === 'recent')
                     ? (
-                        <Button
-                          style={styles.sortBtn}
-                          onPress={() => { setTrackSort(trackSort === 'title' ? 'artist' : trackSort === 'artist' ? 'album' : 'title') }}
+                        <DorpDownMenu
+                          menus={sortMenus}
+                          onPress={handleSortChange}
+                          activeId={trackSort}
+                          btnStyle={styles.dropBtn}
+                          menuWidth={120}
+                          fontSize={13}
                         >
-                          <Text size={12} color={theme['c-font']}>
-                            {t(trackSort === 'title' ? 'library_sort_title' : trackSort === 'artist' ? 'library_sort_artist' : 'library_sort_album')}
+                          <Text size={12} color={theme['c-font']} numberOfLines={1}>
+                            {t(trackSort === 'title' ? 'library_sort_title' : trackSort === 'artist' ? 'library_sort_artist' : 'library_sort_album')} ▾
                           </Text>
-                        </Button>
+                        </DorpDownMenu>
                       )
                     : null}
                   <DorpDownMenu
                     menus={sourceMenus}
                     onPress={handleSourceChange}
                     activeId={filterSourceId ? `src:${filterSourceId}` : 'all'}
-                    btnStyle={styles.sourceBtn}
+                    btnStyle={styles.dropBtn}
+                    menuWidth={180}
                     fontSize={13}
                   >
                     <Text size={13} color={theme['c-font']} numberOfLines={1}>
                       {(() => {
                         const cur = filterSourceId ? sources.find(s => s.id === filterSourceId) : undefined
                         return cur ? sourceLabel(cur) : t('library_all_sources')
-                      })()}
+                      })()} ▾
                     </Text>
                   </DorpDownMenu>
                   <Input
@@ -553,23 +628,30 @@ export default () => {
                     onClearText={() => { handleKeywordChange('') }}
                     style={styles.input}
                   />
+                  {/* ⋮ 菜单：添加文件夹 / 扫描全部 / 重扫当前 / 来源管理（§14.2） */}
+                  <DorpDownMenu
+                    menus={moreMenus}
+                    onPress={handleMoreMenuPress}
+                    btnStyle={styles.moreBtn}
+                    menuWidth={160}
+                    fontSize={13}
+                  >
+                    <Icon name="dots-vertical" size={16} color={theme['c-font']} />
+                  </DorpDownMenu>
                 </View>
               )}
-          <Button style={styles.addBtn} onPress={() => { sourceManageRef.current?.show() }}>
-            <Text size={13} color={theme['c-font']}>{t('library_source_manage')}</Text>
-          </Button>
-          <Button style={styles.addBtn} onPress={handleScanAll}>
-            <Text size={13} color={theme['c-font']}>{t('library_scan_all')}</Text>
-          </Button>
-          <TouchableOpacity style={styles.recursiveToggle} onPress={() => { setAddFolderRecursive(!addFolderRecursive) }}>
-            <Icon name={addFolderRecursive ? 'checkbox-marked' : 'checkbox-blank-outline'} size={14} color={theme['c-font-label']} />
-            <Text size={11} color={theme['c-font-label']}>{t('library_add_folder_recursive_tip')}</Text>
-          </TouchableOpacity>
-          <Button style={styles.addBtn} onPress={handleAddFolder}>
-            <Text size={13} color={theme['c-primary-font']}>{t('library_add_folder')}</Text>
-          </Button>
         </View>
       </View>
+      {/* 扫描进度提示（真机反馈：扫描时主页面没有任何可见变化） */}
+      {isScanning
+        ? (
+            <View style={styles.scanBar}>
+              <Text size={11} color={theme['c-primary-font']}>
+                {t('library_scanning_tip')} {scanningSourceIds.map(p => p?.scanned ?? 0).reduce((a, b) => a + b, 0)}
+              </Text>
+            </View>
+          )
+        : null}
       {multiSelect
         ? (
             <View style={styles.multiBar}>
@@ -696,39 +778,43 @@ const styles = createStyle({
     textAlign: 'center',
   },
   searchBar: {
-    height: 38,
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: 'column',
     paddingLeft: 10,
     paddingRight: 10,
     paddingBottom: 6,
   },
   searchInputWrap: {
-    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    marginRight: 8,
+    height: 38,
+    gap: 6,
   },
-  sortBtn: {
-    flexGrow: 0,
-    flexShrink: 0,
-    paddingLeft: 4,
-    paddingRight: 6,
-    paddingTop: 7,
-    paddingBottom: 7,
-  },
-  sourceBtn: {
+  dropBtn: {
     flexGrow: 0,
     flexShrink: 1,
-    maxWidth: 110,
     paddingLeft: 6,
     paddingRight: 6,
     paddingTop: 7,
     paddingBottom: 7,
-    marginRight: 6,
+  },
+  moreBtn: {
+    flexGrow: 0,
+    flexShrink: 0,
+    paddingLeft: 6,
+    paddingRight: 6,
+    paddingTop: 7,
+    paddingBottom: 7,
   },
   input: {
     flex: 1,
+    minWidth: 0,
+  },
+  scanBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingLeft: 10,
+    paddingRight: 10,
+    paddingBottom: 4,
   },
   drillBar: {
     flex: 1,
@@ -759,15 +845,7 @@ const styles = createStyle({
   drillTitle: {
     flex: 1,
   },
-  recursiveToggle: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingLeft: 4,
-    paddingRight: 4,
-    paddingTop: 8,
-    paddingBottom: 8,
-    marginRight: 4,
-  },
+
   addBtn: {
     paddingLeft: 8,
     paddingRight: 8,

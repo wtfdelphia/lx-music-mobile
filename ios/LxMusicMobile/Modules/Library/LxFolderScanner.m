@@ -30,15 +30,18 @@ static NSSet *LxSupportedExtensions(void)
 
 - (void)cancel { _cancelled = YES; }
 
-- (void)scanSourceId:(NSString *)sourceId rootURL:(NSURL *)sourceURL recursive:(BOOL)recursive
+- (BOOL)scanSourceId:(NSString *)sourceId rootURL:(NSURL *)sourceURL recursive:(BOOL)recursive
 {
-  if (_scanning) return;
+  // 忙时返回 NO：模块层据此 reject E_SCAN_BUSY，不再静默吞掉
+  // 让 JS 白等一个永远不会来的完成事件（真机反馈「扫描全部没有用」）
+  if (_scanning) return NO;
   _scanning = YES;
   _cancelled = NO;
 
   dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
     [self _scanOnBackground:sourceId rootURL:sourceURL recursive:recursive];
   });
+  return YES;
 }
 
 - (void)_scanOnBackground:(NSString *)sourceId rootURL:(NSURL *)sourceURL recursive:(BOOL)recursive
@@ -52,22 +55,35 @@ static NSSet *LxSupportedExtensions(void)
   NSFileManager *fm = NSFileManager.defaultManager;
   NSDirectoryEnumerator *enumerator = nil;
 
+  // 递归开关（§5.3 / §14.4「包含子文件夹」）：此前参数被传入却从未使用，
+  // 枚举器永远递归。不递归时加 SkipsSubdirectoryDescendants
+  NSDirectoryEnumerationOptions enumOptions =
+    NSDirectoryEnumerationSkipsHiddenFiles | NSDirectoryEnumerationSkipsPackageDescendants;
+  if (!recursive) enumOptions |= NSDirectoryEnumerationSkipsSubdirectoryDescendants;
+
   // 尝试用 NSFileCoordinator 包一次协调读取拿一致视图；失败回退普通枚举（§5.3）
   NSFileCoordinator *coordinator = [[NSFileCoordinator alloc] initWithFilePresenter:nil];
   __block NSDirectoryEnumerator *coordEnumerator = nil;
   NSError *coordError = nil;
+  // 协调枚举也带 errorHandler：此前传 nil，不可读目录永远记不到
+  // 报告（删除保护依赖这个清单）
   [coordinator coordinateReadingItemAtURL:sourceURL options:0 error:&coordError byAccessor:^(NSURL *coordinatedURL) {
     coordEnumerator = [fm enumeratorAtURL:coordinatedURL
                includingPropertiesForKeys:@[NSURLIsDirectoryKey, NSURLIsSymbolicLinkKey, NSURLFileSizeKey, NSURLContentModificationDateKey, NSURLIsPackageKey]
-                                  options:NSDirectoryEnumerationSkipsHiddenFiles | NSDirectoryEnumerationSkipsPackageDescendants
-                             errorHandler:nil];
+                                  options:enumOptions
+                             errorHandler:^BOOL(NSURL *url, NSError *err) {
+      @synchronized (unreadableDirs) {
+        if (url && unreadableDirs.count < 200) [unreadableDirs addObject:url.path ?: @""];
+      }
+      return YES;
+    }];
   }];
   if (coordEnumerator) {
     enumerator = coordEnumerator;
   } else {
     enumerator = [fm enumeratorAtURL:sourceURL
          includingPropertiesForKeys:@[NSURLIsDirectoryKey, NSURLIsSymbolicLinkKey, NSURLFileSizeKey, NSURLContentModificationDateKey, NSURLIsPackageKey]
-                            options:NSDirectoryEnumerationSkipsHiddenFiles | NSDirectoryEnumerationSkipsPackageDescendants
+                            options:enumOptions
                        errorHandler:^BOOL(NSURL *url, NSError *error) {
       // 读不到的目录：记录后继续（删除保护）
       @synchronized (unreadableDirs) {

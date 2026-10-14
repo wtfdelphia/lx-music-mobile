@@ -1,4 +1,4 @@
-import { forwardRef, useImperativeHandle, useRef, useState, useEffect } from 'react'
+import { forwardRef, useImperativeHandle, useRef, useState, useEffect, useMemo } from 'react'
 import { View, FlatList, TouchableOpacity } from 'react-native'
 
 import ConfirmAlert, { type ConfirmAlertType } from '@/components/common/ConfirmAlert'
@@ -13,7 +13,7 @@ import { startSourceScan, cancelSourceScan, refreshSources } from '@/core/librar
 import { setSourceEnabled, relinkSource, renameSource } from '@/core/library/sources/local'
 import { restoreRemoved, countListRefsForSource, deleteLibrarySource } from '@/core/library/actions'
 import * as native from '@/core/library/native'
-import type { LibrarySource } from '@/core/library/types'
+import type { LibrarySource, LibraryScanReport } from '@/core/library/types'
 
 export interface SourceManageModalType {
   show: () => void
@@ -102,11 +102,62 @@ const SourceItem = ({ source, isScanning, scanned, trackCount, onScan, onCancelS
   )
 }
 
+/**
+ * 重命名独立弹窗：此前渲染在来源管理 ConfirmAlert 的 ScrollView
+ * 末尾，来源多时被顶出屏幕外，点「编辑」像没反应（真机反馈）。
+ * 独立成嵌套 Modal 后永远可见
+ */
+const RenameModal = ({ initialName, onConfirm, onCancel }: {
+  initialName: string
+  onConfirm: (name: string) => void
+  onCancel: () => void
+}) => {
+  const t = useI18n()
+  const dialogRef = useRef<ConfirmAlertType>(null)
+  const [name, setName] = useState(initialName)
+  useEffect(() => {
+    dialogRef.current?.setVisible(true)
+  }, [])
+  return (
+    <ConfirmAlert
+      ref={dialogRef}
+      title={t('library_source_edit')}
+      confirmText={t('dialog_confirm')}
+      cancelText={t('dialog_cancel')}
+      onConfirm={() => { onConfirm(name) }}
+      onCancel={onCancel}
+    >
+      <View style={styles.renameBox}>
+        <Input
+          value={name}
+          onChangeText={setName}
+          style={styles.renameInput}
+        />
+      </View>
+    </ConfirmAlert>
+  )
+}
+
 /** 扫描报告子面板（§14.4） */
-const ScanReportView = ({ sourceId }: { sourceId: string }) => {
+const ScanReportView = ({ source }: { source: LibrarySource }) => {
   const t = useI18n()
   const theme = useTheme()
-  const report = useScanReport(sourceId)
+  // 本次会话的扫描报告（实时事件写入）；没有则回读来源行里持久化的
+  // lastScanReport（上次扫描落库，跨会话可见）——此前只读内存，
+  // 打开来源管理时本会话没扫过就永远「暂无扫描报告」（真机反馈）
+  const liveReport = useScanReport(source.id)
+  const report = useMemo(() => {
+    if (liveReport) return liveReport
+    if (!source.lastScanReport) return null
+    try {
+      const parsed = JSON.parse(source.lastScanReport) as LibraryScanReport
+      // 持久化摘要字段齐全才用，缺明细结构则视为无报告
+      if (parsed?.unsupported && parsed.failed) return parsed
+      return null
+    } catch {
+      return null
+    }
+  }, [liveReport, source.lastScanReport])
   if (!report) return <Text size={12} color={theme['c-font-label']} style={styles.reportEmpty}>{t('library_report_empty')}</Text>
 
   return (
@@ -138,9 +189,17 @@ export default forwardRef<SourceManageModalType, {}>((_props, ref) => {
   const sources = useLibrarySources()
   const scanProgress = useScanProgress()
   const [trackCounts, setTrackCounts] = useState<Record<string, number>>({})
+  const [countsTick, setCountsTick] = useState(0)
   const [expandedReportId, setExpandedReportId] = useState<string | null>(null)
   const [renameTarget, setRenameTarget] = useState<LibrarySource | null>(null)
-  const [renameValue, setRenameValue] = useState('')
+
+  // 扫描完成直接驱动计数刷新：此前只依赖 sources 数组引用变化，
+  // 扫描事件链路一旦有延迟，数量就停在旧值（真机反馈）
+  useEffect(() => {
+    const handleScanDone = () => { setCountsTick(v => v + 1) }
+    global.app_event.on('libraryScanDone', handleScanDone)
+    return () => { global.app_event.off('libraryScanDone', handleScanDone) }
+  }, [])
 
   useImperativeHandle(ref, () => ({
     show() {
@@ -154,7 +213,7 @@ export default forwardRef<SourceManageModalType, {}>((_props, ref) => {
     },
   }))
 
-  // 曲目数：来源列表变化时刷新
+  // 曲目数：来源列表变化或扫描完成时刷新
   useEffect(() => {
     if (!sources.length) return
     void (async() => {
@@ -164,7 +223,7 @@ export default forwardRef<SourceManageModalType, {}>((_props, ref) => {
       }
       setTrackCounts(counts)
     })()
-  }, [sources])
+  }, [sources, countsTick])
 
   const handleScan = (source: LibrarySource) => {
     void startSourceScan(source.id).then(started => {
@@ -178,7 +237,8 @@ export default forwardRef<SourceManageModalType, {}>((_props, ref) => {
 
   const handleToggleEnabled = async(source: LibrarySource) => {
     await setSourceEnabled(source, !source.enabled)
-    void refreshSources()
+    await refreshSources()
+    setCountsTick(v => v + 1)
   }
 
   const handleRelink = (source: LibrarySource) => {
@@ -192,19 +252,20 @@ export default forwardRef<SourceManageModalType, {}>((_props, ref) => {
   }
 
   const handleRenameOpen = (source: LibrarySource) => {
-    setRenameValue(source.name)
     setRenameTarget(source)
   }
 
-  const handleRenameConfirm = async() => {
+  const handleRenameConfirm = async(name: string) => {
     if (!renameTarget) return
-    const ok = await renameSource(renameTarget, renameValue)
+    setRenameTarget(null)
+    const ok = await renameSource(renameTarget, name)
     if (ok) {
       await refreshSources()
+      setCountsTick(v => v + 1)
       toast(t('library_source_renamed'), 'short')
+    } else {
+      toast(t('list_add_tip_exists'), 'short')
     }
-    setRenameTarget(null)
-    setRenameValue('')
   }
 
   const handleDelete = async(source: LibrarySource) => {
@@ -227,7 +288,8 @@ export default forwardRef<SourceManageModalType, {}>((_props, ref) => {
       })
     }
     await deleteLibrarySource(source.id, removeFromLists)
-    void refreshSources()
+    await refreshSources()
+    setCountsTick(v => v + 1)
   }
 
   const renderItem = ({ item }: { item: LibrarySource }) => {
@@ -254,7 +316,7 @@ export default forwardRef<SourceManageModalType, {}>((_props, ref) => {
             {expandedReportId === item.id ? '▲' : '▼'} {t('library_scan_report')}
           </Text>
         </TouchableOpacity>
-        {expandedReportId === item.id ? <ScanReportView sourceId={item.id} /> : null}
+        {expandedReportId === item.id ? <ScanReportView source={item} /> : null}
       </View>
     )
   }
@@ -262,6 +324,7 @@ export default forwardRef<SourceManageModalType, {}>((_props, ref) => {
   return (
     visible
       ? (
+        <>
           <ConfirmAlert ref={alertRef} showConfirm={false} closeBtn>
             <View style={styles.content}>
               <Text size={15} style={styles.title}>{t('library_source_manage')}</Text>
@@ -272,28 +335,18 @@ export default forwardRef<SourceManageModalType, {}>((_props, ref) => {
                 style={styles.list}
               />
             </View>
-            {/* 重命名弹窗 */}
-            {renameTarget
-              ? (
-                  <View style={styles.renameBox}>
-                    <Text size={13} style={styles.renameTitle}>{t('library_source_edit')}</Text>
-                    <Input
-                      value={renameValue}
-                      onChangeText={setRenameValue}
-                      style={styles.renameInput}
-                    />
-                    <View style={styles.renameBtns}>
-                      <Button style={styles.actionBtn} onPress={() => { setRenameTarget(null) }}>
-                        <Text size={12} color={theme['c-font']}>{t('dialog_cancel')}</Text>
-                      </Button>
-                      <Button style={styles.actionBtn} onPress={() => { void handleRenameConfirm() }}>
-                        <Text size={12} color={theme['c-primary-font']}>{t('dialog_confirm')}</Text>
-                      </Button>
-                    </View>
-                  </View>
-                )
-              : null}
           </ConfirmAlert>
+          {renameTarget
+            ? (
+                <RenameModal
+                  key={renameTarget.id}
+                  initialName={renameTarget.name}
+                  onConfirm={(name) => { void handleRenameConfirm(name) }}
+                  onCancel={() => { setRenameTarget(null) }}
+                />
+              )
+            : null}
+        </>
         )
       : null
   )

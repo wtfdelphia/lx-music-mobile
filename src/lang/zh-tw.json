@@ -672,9 +672,13 @@
   "library_sort_title": "按標題",
   "library_sort_artist": "按藝人",
   "library_sort_album": "按專輯",
-  "library_add_folder_recursive_tip": "包含子資料夾",
   "library_type_local": "本地",
   "library_unknown_album": "未知專輯",
   "library_unknown_artist": "未知藝人",
-  "library_delete_skipped_suffix": "首為外部資料夾來源，已跳過"
+  "library_delete_skipped_suffix": "首為外部資料夾來源，已跳過",
+  "library_add_folder_recursive_confirm": "是否包含所選資料夾內的子資料夾？",
+  "library_add_folder_recursive_yes": "包含子資料夾",
+  "library_add_folder_recursive_no": "僅當前層",
+  "library_scanning_tip": "正在掃描…",
+  "library_scan_done_tip": "掃描完成：新增 {a} / 更新 {b} / 移除 {c}"
 }

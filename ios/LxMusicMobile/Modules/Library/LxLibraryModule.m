@@ -87,6 +87,23 @@ RCT_EXPORT_METHOD(saveSource:(NSDictionary *)source
   resolve(@(ok));
 }
 
+// 单字段更新：整行 saveSource 会用旧快照覆盖扫描状态（重命名无效根因）
+RCT_EXPORT_METHOD(renameSource:(NSString *)sourceId name:(NSString *)name
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  BOOL ok = [[LxLibraryStore shared] renameSource:LxStr(sourceId) name:LxStr(name)];
+  resolve(@(ok));
+}
+
+RCT_EXPORT_METHOD(setSourceEnabled:(NSString *)sourceId enabled:(BOOL)enabled
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  BOOL ok = [[LxLibraryStore shared] setSourceEnabled:LxStr(sourceId) enabled:enabled];
+  resolve(@(ok));
+}
+
 RCT_EXPORT_METHOD(deleteSource:(NSString *)sourceId
                   resolver:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
@@ -234,7 +251,11 @@ RCT_EXPORT_METHOD(startScan:(NSString *)sourceId options:(NSDictionary *)options
     reject(@"E_NOT_FOUND", @"no root url", nil);
     return;
   }
-  [self.scanner scanSourceId:sourceId rootURL:rootURL recursive:recursive];
+  // 忙时显式拒绝，不让 JS 白等完成事件
+  if (![self.scanner scanSourceId:sourceId rootURL:rootURL recursive:recursive]) {
+    reject(@"E_SCAN_BUSY", @"scanner is busy", nil);
+    return;
+  }
   resolve(@(YES));
 }
 

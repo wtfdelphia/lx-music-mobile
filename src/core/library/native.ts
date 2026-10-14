@@ -12,6 +12,8 @@ const notSupported = async(): Promise<never> => {
 export const ping = async(): Promise<boolean> => notSupported()
 export const getSources = async(): Promise<LibrarySource[]> => notSupported()
 export const saveSource = async(_source: LibrarySource): Promise<boolean> => notSupported()
+export const renameSourceNative = async(_sourceId: string, _name: string): Promise<boolean> => notSupported()
+export const setSourceEnabledNative = async(_sourceId: string, _enabled: boolean): Promise<boolean> => notSupported()
 export const deleteSource = async(_id: string): Promise<boolean> => notSupported()
 export interface PickFolderResult {
   bookmark: string | null

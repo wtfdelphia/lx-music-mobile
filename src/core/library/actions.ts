@@ -14,19 +14,50 @@ import { getListMusics, userLists } from '@/utils/listManage'
 import settingState from '@/store/setting/state'
 import { toMusicInfo } from './toMusicInfo'
 import { parseLocator } from './locator'
-import { playNext } from '@/core/player/player'
+import { playNext, stop } from '@/core/player/player'
 import playerState from '@/store/player/state'
+import { getList } from '@/core/player/playInfo'
 import type { NativeTrackRow } from './types'
 
 /**
- * M11：被删除 / 移除的曲目若正在播放，先切下一首，
- * 避免播放器拿着失效定位符反复报错
+ * M11：被删除 / 移除的曲目若正在播放。此前用 playNext(true) 会遵循
+ * 播放模式（单曲循环重播 / 列表末尾原地不动），文件已删导致反复
+ * 失败并回落在线换源。现改为：列表里还有别的歌则强制切下一首
+ *（isAutoToggle=false 不遵循循环），否则停止播放
  */
 const skipIfPlaying = async(rows: NativeTrackRow[]): Promise<void> => {
   const cur = playerState.playMusicInfo.musicInfo
   if (!cur || !('id' in cur)) return
   const curId = String(cur.id)
-  if (rows.some(r => r.locator === curId)) await playNext(true).catch(() => {})
+  if (!rows.some(r => r.locator === curId)) return
+  const listId = playerState.playMusicInfo.listId
+  if (listId) {
+    const list = getList(listId)
+    const remain = list.filter(mi => !rows.some(r => r.locator === mi.id))
+    if (remain.length) {
+      await playNext(false).catch(() => {})
+      return
+    }
+  }
+  await stop().catch(() => {})
+}
+
+/**
+ * 从所有列表（默认 / 喜欢 / 自建）中移除指定定位符的曲目。
+ * 真机反馈：删除文件后曲目信息仍留在列表里，播放时定位符解析
+ * 失败回落在线换源，出现「歌还在列表、自动找新音源播放」。
+ * 文件已删（或已排除）的引用必然无法播放，随删除一并清理
+ */
+const removeLocatorsFromAllLists = async(rows: NativeTrackRow[]): Promise<void> => {
+  const idSet = new Set(rows.map(r => r.locator))
+  // TEMP 也清：删除后临时列表里的引用同样会触发换源
+  const listIds = [LIST_IDS.DEFAULT, LIST_IDS.LOVE, LIST_IDS.TEMP, ...userLists.map(l => l.id)]
+  const { removeListMusics } = await import('@/core/list')
+  for (const listId of listIds) {
+    const list = await getListMusics(listId).catch(() => [] as LX.Music.MusicInfo[])
+    const refIds = list.filter(mi => idSet.has(mi.id)).map(mi => mi.id)
+    if (refIds.length) await removeListMusics(listId, refIds)
+  }
 }
 
 /**
@@ -41,6 +72,7 @@ export const removeFromLibrary = async(rows: NativeTrackRow[]): Promise<number> 
     const ok = await native.excludeTrack(parsed.sourceId, parsed.itemKey).catch(() => false)
     if (ok) removed++
   }
+  if (removed > 0) await removeLocatorsFromAllLists(rows)
   return removed
 }
 
@@ -136,6 +168,7 @@ export const deleteFiles = async(rows: NativeTrackRow[]): Promise<number> => {
     }
   }
   if (skipped > 0 && removed === 0) throw new Error('E_READONLY')
+  if (removed > 0) await removeLocatorsFromAllLists(rows)
   return removed
 }
 

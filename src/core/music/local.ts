@@ -16,6 +16,7 @@ import { getLocalFilePath } from '@/utils/music'
 import { readLyric, readPic } from '@/utils/localMediaMetadata'
 import { stat } from '@/utils/fs'
 import { isLibraryLocator } from '@/core/library/locator'
+import settingState from '@/store/setting/state'
 import { resolveLyric, resolvePicUrl } from '@/core/library/resolver'
 
 const getOtherSourceByLocal = async<T>(musicInfo: LX.Music.MusicInfoLocal, handler: (infos: LX.Music.MusicInfoOnline[]) => Promise<T>) => {
@@ -78,6 +79,13 @@ export const getMusicUrl = async({ musicInfo, isRefresh, allowToggleSource = tru
     const path = await getLocalFilePath(musicInfo)
     // console.log(path)
     if (path) return path
+  }
+
+  // onlineFallback 门控（§8.3）：曲库定位符且用户关闭在线回落时，
+  // 本地取不到直接抛错，不再按歌名找在线源。仅对定位符生效，
+  // 普通本地歌曲行为不变
+  if (isLibraryLocator(musicInfo.meta.filePath) && !settingState.setting['library.onlineFallback']) {
+    throw new Error('library online fallback disabled')
   }
 
   try {
@@ -203,12 +211,16 @@ export const getLyricInfo = async({ musicInfo, isRefresh, skipFileLyric, onToggl
   isRefresh: boolean
   onToggleSource?: (musicInfo?: LX.Music.MusicInfoOnline) => void
 }): Promise<LX.Player.LyricInfo> => {
-  // M10：手选歌词（手动搜索应用）写在 _edited 通道，无论刷新与否
-  // 都优先于文件内歌词与同名 .lrc，否则会被内嵌歌词盖住。
-  // getCachedLyricInfo 读 _edited 与普通缓存，靠 lyric != rawlrc 判别编辑态
-  const cachedInfo = await getCachedLyricInfo(musicInfo)
-  if (cachedInfo?.rawlrcInfo.lyric && cachedInfo.lyric != cachedInfo.rawlrcInfo.lyric) {
-    return buildLyricInfo(cachedInfo)
+  // M10：手选歌词（手动搜索应用）写在 _edited 通道，优先于文件内
+  // 歌词与同名 .lrc，否则会被内嵌歌词盖住。
+  // 仅对曲库定位符生效：普通本地歌曲 / Android 不走 _edited 通道，
+  // 保持原有「文件歌词优先」行为不变（AGENTS.md 零行为变化）
+  const isLibrary = isLibraryLocator(musicInfo.meta.filePath)
+  if (isLibrary) {
+    const cachedInfo = await getCachedLyricInfo(musicInfo)
+    if (cachedInfo?.rawlrcInfo.lyric && cachedInfo.lyric != cachedInfo.rawlrcInfo.lyric) {
+      return buildLyricInfo(cachedInfo)
+    }
   }
 
   if (!isRefresh && !skipFileLyric) {
@@ -216,6 +228,7 @@ export const getLyricInfo = async({ musicInfo, isRefresh, skipFileLyric, onToggl
     const rawlrcInfo = await getMusicFileLyric(musicInfo.meta.filePath)
     if (rawlrcInfo) return buildLyricInfo(rawlrcInfo)
 
+    const cachedInfo = await getCachedLyricInfo(musicInfo)
     if (cachedInfo?.lyric) return buildLyricInfo(cachedInfo)
   }
 
