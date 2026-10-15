@@ -132,6 +132,15 @@ RCT_EXPORT_METHOD(pickFolder:(RCTPromiseResolveBlock)resolve
   dispatch_async(dispatch_get_main_queue(), ^{
     // 同一时刻只允许一个选择器：上一个挂起中的选择按取消处理
     [self cancelPendingPickerPicks];
+    // 上一拍选择器仍存活时先清场，避免新选择器叠在旧选择器上
+    //（旧选择器会成为无人消费的孤儿）。退场中的层级由呈现管线的
+    // 重试循环自然等待稳定
+    UIViewController *prev = self.folderPicker;
+    if (prev.presentingViewController != nil && !prev.isBeingDismissed) {
+      self.folderPicker = nil;
+      self.pendingPicker = nil;
+      [prev dismissViewControllerAnimated:NO completion:nil];
+    }
     self.pendingPickResolve = resolve;
     self.pendingPickReject = reject;
     NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:kLxPickPresentBudget];
@@ -167,15 +176,18 @@ RCT_EXPORT_METHOD(pickFolder:(RCTPromiseResolveBlock)resolve
   self.folderPicker = picker;
   self.pendingPicker = picker;
   __weak typeof(self) weakSelf = self;
+  __block BOOL completionFired = NO;
   [top presentViewController:picker animated:YES completion:^{
+    completionFired = YES;
     // completion 不等于存活：被并发退场吞掉时 completion 照样回调，
     // VC 随后被收走。延迟校验存活，不存活则重试
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
       __strong typeof(weakSelf) self = weakSelf;
       if (!self || self.pendingPicker != picker) return;
       BOOL alive = picker.presentingViewController != nil && picker.view.window != nil;
-      if (alive) { self.pendingPicker = nil; return; }
       self.pendingPicker = nil;
+      if (alive) return;
+      // 不存活：只重试，不强拆
       self.folderPicker = nil;
       if ([deadline timeIntervalSinceNow] <= 0) {
         [self failPendingPickerPicks];
@@ -185,10 +197,15 @@ RCT_EXPORT_METHOD(pickFolder:(RCTPromiseResolveBlock)resolve
     });
   }];
   // completion 看门狗：目标 VC 不在窗口层级时 UIKit 根本不回调
-  // completion，没有看门狗重试链会停在这里，成为另一处静默挂起
+  // completion，没有看门狗重试链会停在这里，成为另一处静默挂起。
+  // 只处理 completion 从未回调的情形：completion 已回调（选择器正常
+  // 呈现）时绝不强拆——真机实证（审核反馈）：完成回调晚于 0.8s 到达
+  // 时，旧代码会把呈现中的选择器强制关掉再重弹，反复拆
+  // DocumentProvider 远程选择器触发崩溃（UtilsModule 注释记载过
+  // 同类 DOCWeakProxy 问题）
   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
     __strong typeof(weakSelf) self = weakSelf;
-    if (!self || self.pendingPicker != picker) return;
+    if (!self || completionFired || self.pendingPicker != picker) return;
     if (picker.presentingViewController != nil) [picker dismissViewControllerAnimated:NO completion:nil];
     self.pendingPicker = nil;
     self.folderPicker = nil;
