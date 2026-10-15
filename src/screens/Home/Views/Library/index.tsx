@@ -421,6 +421,13 @@ export default () => {
     [selectedLocators],
   )
 
+  // 选中项是否存在可删文件的曲目（外部文件夹来源只读）。
+  // 全为外部来源时多选栏隐藏「删除文件」，不再等点击后才提示
+  const hasDeletableSelected = useMemo(
+    () => selectedRows.some(r => !externalSourceIds.has(r.sourceId)),
+    [selectedRows, externalSourceIds],
+  )
+
   const handleBatchPlay = useCallback(() => {
     if (!selectedRows.length) return
     void handlePlay(selectedRows, 0)
@@ -524,8 +531,15 @@ export default () => {
       try {
         result = await pickLocalFolder()
       } catch (err) {
-        // 审核第 14 条：同一目录已添加时明确提示，与失败区分
-        toast(t(err instanceof Error && err.message === 'E_DUPLICATE_FOLDER' ? 'library_folder_already_added' : 'library_add_folder_failed'), 'long')
+        // 审核第 14 条：同一目录已添加 / 与已有来源目录重叠时
+        // 明确提示，与失败区分
+        const reason = err instanceof Error ? err.message : ''
+        const key = reason === 'E_DUPLICATE_FOLDER'
+          ? 'library_folder_already_added'
+          : reason === 'E_OVERLAP_FOLDER'
+            ? 'library_folder_overlap'
+            : 'library_add_folder_failed'
+        toast(t(key), 'long')
         return
       }
       if (!result) return
@@ -706,9 +720,13 @@ export default () => {
               <Button style={styles.multiBtn} onPress={() => { void handleBatchRemove() }}>
                 <Text size={13} color={theme['c-primary-font']}>{t('library_remove')}</Text>
               </Button>
-              <Button style={styles.multiBtn} onPress={() => { void handleBatchDeleteFiles() }}>
-                <Text size={13} color="#f24a4a">{t('library_delete_file')}</Text>
-              </Button>
+              {hasDeletableSelected
+                ? (
+                    <Button style={styles.multiBtn} onPress={() => { void handleBatchDeleteFiles() }}>
+                      <Text size={13} color="#f24a4a">{t('library_delete_file')}</Text>
+                    </Button>
+                  )
+                : null}
               <Button style={styles.multiBtn} onPress={() => { listRef.current?.exitMultiSelect() }}>
                 <Text size={13} color={theme['c-font']}>{t('back')}</Text>
               </Button>

@@ -492,6 +492,11 @@ RCT_EXPORT_METHOD(cancelScan:(NSString *)sourceId
   NSInteger scanned = LxNum(report[@"scanned"]) ? [LxNum(report[@"scanned"]) integerValue] : 0;
   NSArray<NSString *> *existingKeys = [[LxLibraryStore shared] listItemKeysForSourceId:sourceId];
   NSMutableSet<NSString *> *existingKeySet = [NSMutableSet setWithArray:existingKeys];
+  // 排除表在计数前剔除（真机反馈：移除后扫描报「新增 1」）。
+  // 此前 Store 的 upsert 跳过排除行，但模块层计数已完成，
+  // 行没入库报告却记了导入
+  NSArray<NSString *> *excludedKeys = [[LxLibraryStore shared] listExcludedItemKeysForSourceId:sourceId];
+  NSSet<NSString *> *excludedSet = [NSSet setWithArray:excludedKeys];
   NSInteger imported = 0;
   NSInteger updated = 0;
   if (rows.count) {
@@ -499,6 +504,7 @@ RCT_EXPORT_METHOD(cancelScan:(NSString *)sourceId
     for (NSDictionary *row in rows) {
       NSString *itemKey = LxStr(row[@"item_key"]);
       if (!itemKey.length) continue;
+      if ([excludedSet containsObject:itemKey]) continue;
       NSMutableDictionary *full = [row mutableCopy];
       full[@"locator"] = [self locatorForSourceId:sourceId itemKey:itemKey];
       [batch addObject:full];
@@ -559,13 +565,21 @@ RCT_EXPORT_METHOD(cancelScan:(NSString *)sourceId
             imported:(NSInteger *)imported updated:(NSInteger *)updated
 {
   NSInteger batchNew = 0;
+  NSInteger batchSkipped = 0;
   for (NSDictionary *row in batch) {
     NSString *itemKey = LxStr(row[@"item_key"]);
-    if (itemKey.length && ![keySet containsObject:itemKey]) batchNew++;
+    if (!itemKey.length) continue;
+    if ([keySet containsObject:itemKey]) {
+      // 超时降级行：Store 只对已存在的行打 seen、不实际更新，
+      // 不计入 updated（审核结论补充项）
+      if (LxBool(row[@"timeout"])) batchSkipped++;
+      continue;
+    }
+    batchNew++;
   }
   if ([[LxLibraryStore shared] upsertTracks:sourceId rows:batch]) {
     *imported += batchNew;
-    *updated += (NSInteger)batch.count - batchNew;
+    *updated += (NSInteger)batch.count - batchNew - batchSkipped;
     for (NSDictionary *row in batch) {
       NSString *itemKey = LxStr(row[@"item_key"]);
       if (itemKey.length) [keySet addObject:itemKey];

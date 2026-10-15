@@ -54,11 +54,17 @@ export default forwardRef<ListMenuType, ListMenuProps>(({
   const selectInfoRef = useRef<SelectInfo>(initSelectInfo)
   const [visible, setVisible] = useState(false)
   const [loved, setLoved] = useState(false)
+  // 行来源是否为外部只读文件夹（决定「删除文件」显隐）。真机反馈该
+  // 选项时有时无：此前用 useMemo 在渲染时读 ref——菜单关闭后
+  // visible 不复位，再次打开可能沿用任意一次父级重渲染时刻的残留值。
+  // 改为与 loved 一样在 show() 时落 state，每次打开都确定
+  const [rowExternal, setRowExternal] = useState(false)
 
   useImperativeHandle(ref, () => ({
     show(row, rows, index, position) {
       selectInfoRef.current = { row, rows, index }
       setLoved(isLoved(row.locator))
+      setRowExternal(row.sourceId ? isExternalSource(row.sourceId) : false)
       if (visible) menuRef.current?.show(position)
       else {
         setVisible(true)
@@ -68,12 +74,6 @@ export default forwardRef<ListMenuType, ListMenuProps>(({
       }
     },
   }))
-
-  const rowExternal = useMemo(() => {
-    const row = selectInfoRef.current.row
-    return row?.sourceId ? isExternalSource(row.sourceId) : false
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, isExternalSource])
 
   const menus = useMemo(() => {
     const items = [

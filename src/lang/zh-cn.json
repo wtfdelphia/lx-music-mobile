@@ -613,6 +613,8 @@
   "metadata_edit_modal_close": "关闭",
   "library_add_folder_failed": "添加文件夹失败",
   "library_folder_already_added": "该文件夹已添加",
+  "library_folder_overlap": "该目录与已添加的来源目录重叠",
+  "library_download_folder_hint": "该目录是下载目录，其中的歌曲已会自动进入「下载」来源，添加后可能出现重复曲目",
   "library_scan_busy": "该来源正在扫描中",
   "library_source_disabled": "来源已停用",
   "library_no_scannable_source": "没有可扫描的文件夹来源，请先添加文件夹",

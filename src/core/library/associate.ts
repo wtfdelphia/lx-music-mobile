@@ -37,7 +37,10 @@ let throttling = false
 let ensurePromise: Promise<void> | null = null
 
 /** 确保「下载」虚拟来源存在（首次关联时创建）。
- * H5：来源可能被删除（旧版本允许），缓存的 Promise 不能永久挡重建 */
+ * H5：来源可能被删除（旧版本允许）。单飞只在执行期间共享，
+ * 完成后立即清除——下次对账重新核实存在性，被删后能自动重建。
+ * 此前 Promise 永久缓存，来源一旦删除就永远不再创建，
+ * 下载曲目再也回不到曲库（真机反馈第 4 条） */
 const ensureDownloadSource = async(): Promise<void> => {
   if (ensurePromise) return ensurePromise
   const run = async(): Promise<void> => {
@@ -55,10 +58,9 @@ const ensureDownloadSource = async(): Promise<void> => {
       createdAt: Date.now(),
     })
   }
-  ensurePromise = run().catch((err: unknown) => {
-    // 失败后重置，下次对账重试（否则一次失败永久不再创建）
+  ensurePromise = run().finally(() => {
+    // 成功或失败都清缓存：失败下轮重试；成功下轮重新核实存在性
     ensurePromise = null
-    throw err
   })
   return ensurePromise
 }

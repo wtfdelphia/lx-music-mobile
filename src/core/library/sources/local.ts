@@ -4,6 +4,7 @@
  */
 import * as native from '../native'
 import { buildLocator, buildItemKey } from '../locator'
+import { toast } from '@/utils/tools'
 import type { LibrarySource } from '../types'
 
 /**
@@ -31,14 +32,33 @@ export const pickLocalFolder = async(options: { recursive?: boolean } = {}): Pro
   const picked = await native.pickFolder()
   if (!picked) return null
 
-  // 去重：比对已有来源的根路径。命中时抛可识别错误，与用户取消
-  // （返回 null）区分，UI 据此提示「已添加」（审核第 14 条）
+  // 去重与重叠拦截（审核第 14 条）：与已有本地来源的根目录比对。
+  // 同一目录重复添加抛 E_DUPLICATE_FOLDER；目录互相包含（子目录
+  // 已被覆盖 / 父目录会重复覆盖）抛 E_OVERLAP_FOLDER。两者都与
+  // 用户取消（返回 null）区分，UI 据此提示。
+  // 「下载」虚拟来源的根是 Documents 全目录且无 relPath，
+  // rootPathForSourceId 返回 nil，不参与这里的路径比对；
+  // 选中 Download/ 的重复曲目风险由上面的提示覆盖（§11.6
+  // 明确不做硬拦截）
   if (picked.resolvedPath) {
     const sources = await native.getSources().catch(() => [] as LibrarySource[])
+    const pickedPath = picked.resolvedPath
     for (const existing of sources) {
+      if (existing.type !== 'local') continue
       const existingRoot = await native.rootPathForSourceId(existing.id).catch(() => null)
-      if (existingRoot && existingRoot === picked.resolvedPath) throw new Error('E_DUPLICATE_FOLDER')
+      if (!existingRoot) continue
+      if (existingRoot === pickedPath) throw new Error('E_DUPLICATE_FOLDER')
+      const containsExisting = pickedPath.startsWith(existingRoot + '/')
+      const containedByExisting = existingRoot.startsWith(pickedPath + '/')
+      if (containsExisting || containedByExisting) throw new Error('E_OVERLAP_FOLDER')
     }
+  }
+
+  // §11.6：选中 Download/ 目录时提示会与下载来源产生重复曲目
+  // （定位符不同，去重不覆盖跨来源），一行提示不做硬拦截
+  const rel = picked.relPath ?? ''
+  if (rel === 'Download' || rel.startsWith('Download/')) {
+    toast(global.i18n.t('library_download_folder_hint'), 'long')
   }
 
   const sourceId = uuid4Hex()

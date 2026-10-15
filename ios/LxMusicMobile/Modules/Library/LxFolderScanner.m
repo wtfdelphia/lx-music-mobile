@@ -21,6 +21,19 @@ static NSSet *LxSupportedExtensions(void)
   return exts;
 }
 
+// 伴随文件：歌词 / 封面 / 播放列表 / 说明文件等。曲库正常消费
+//（readLyric 按同名 .lrc 读取）或与音乐无关，静默跳过，不计入
+//「不支持的格式」（真机反馈：报告里 .lrc 被算成不支持）
+static NSSet *LxSilentExtensions(void)
+{
+  static NSSet *exts = nil;
+  static dispatch_once_t onceToken;
+  dispatch_once(&onceToken, ^{
+    exts = [NSSet setWithArray:@[@"lrc", @"krc", @"qrc", @"txt", @"cue", @"jpg", @"jpeg", @"png", @"webp", @"gif", @"bmp", @"nfo", @"log", @"m3u", @"m3u8", @"pls", @"sfv", @"db", @"ini", @"tmp"]];
+  });
+  return exts;
+}
+
 // 不可读目录 → 相对来源根的路径前缀（finishSync 删除保护豁免键）。
 // 不在根下的路径原样返回（前缀匹配不上即不豁免，安全侧倾）
 static NSString *LxRelPath(NSString *path, NSString *rootPath)
@@ -149,6 +162,7 @@ static NSString *LxRelPath(NSString *path, NSString *rootPath)
     if ([isDir boolValue] || [isPackage boolValue]) continue;
 
     NSString *ext = url.pathExtension.lowercaseString;
+    if ([LxSilentExtensions() containsObject:ext]) continue;
     if (![LxSupportedExtensions() containsObject:ext]) {
       @synchronized (unsupported) {
         if (unsupported.count < 200) [unsupported addObject:name];

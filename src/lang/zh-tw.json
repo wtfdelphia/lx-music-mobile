@@ -613,6 +613,8 @@
   "metadata_edit_modal_close": "關閉",
   "library_add_folder_failed": "新增資料夾失敗",
   "library_folder_already_added": "該資料夾已新增",
+  "library_folder_overlap": "該目錄與已新增的來源目錄重疊",
+  "library_download_folder_hint": "該目錄是下載目錄，其中的歌曲已會自動進入「下載」來源，新增後可能出現重複曲目",
   "library_scan_busy": "該來源正在掃描中",
   "library_source_disabled": "來源已停用",
   "library_no_scannable_source": "沒有可掃描的資料夾來源，請先新增資料夾",
