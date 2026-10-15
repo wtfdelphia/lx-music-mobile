@@ -35,6 +35,13 @@ export const setRows = (rows: NativeTrackRow[], total: number): void => {
   global.app_event.libraryRowsUpdated()
 }
 
+/** 分页追加（审核第 2 条）：视图不变时追加下一页，触发同样的更新事件 */
+export const appendRows = (rows: NativeTrackRow[], total: number): void => {
+  state.rows = [...state.rows, ...rows]
+  state.rowsTotal = total
+  global.app_event.libraryRowsUpdated()
+}
+
 export const setTabId = (tabId: InitState['tabId']): void => {
   state.tabId = tabId
   global.app_event.libraryRowsUpdated()

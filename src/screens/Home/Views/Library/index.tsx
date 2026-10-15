@@ -14,7 +14,7 @@ import Modal, { type ModalType } from '@/components/common/Modal'
 import SourceManageModal, { type SourceManageModalType } from './SourceManageModal'
 import { queryTracks, queryAlbums, queryArtists, queryAlbumTracks, queryArtistTracks } from '@/core/library/query'
 import * as native from '@/core/library/native'
-import { setRows, setTabId, setFilterSourceId } from '@/store/library/action'
+import { setRows, appendRows, setTabId, setFilterSourceId } from '@/store/library/action'
 import { useLibrarySources, useLibraryRows, useScanProgress } from '@/store/library/hook'
 import DorpDownMenu from '@/components/common/DorpDownMenu'
 import state from '@/store/library/state'
@@ -76,38 +76,52 @@ export default () => {
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   // 请求序号守卫：慢的旧请求不得覆盖新结果
   const loadSeq = useRef(0)
+  // 分页（审核第 2 条）：原生单页上限 200，滚动到底加载下一页；
+  // 「播放全部」也只应覆盖已加载行，超出的在滚动后自然可见
+  const PAGE_SIZE = 200
+
+  // 取一页数据。offset 由调用方给（首页 0，加载更多用当前行数）
+  const fetchRows = useCallback(async(kw: string, offset: number): Promise<{ rows: NativeTrackRow[], total: number }> => {
+    // 下钻沿用当前来源筛选，不取聚合行的 MIN(source_id)（N3 修复）
+    const filterIds = filterSourceId ? [filterSourceId] : []
+    if (drill) {
+      return drill.type === 'album'
+        ? await queryAlbumTracks(filterIds, drill.key, offset, PAGE_SIZE)
+        : await queryArtistTracks(filterIds, drill.key, offset, PAGE_SIZE)
+    }
+    const spec = {
+      sourceIds: filterSourceId ? [filterSourceId] : undefined,
+      keyword: kw || undefined,
+      offset,
+      limit: PAGE_SIZE,
+    }
+    // Tab 分流：各 Tab 各查各的视图（此前都查 tracks，切 Tab 无效果）；
+    // 最近播放按最后播放时间倒序
+    return tabId === 'albums'
+      ? await queryAlbums(spec)
+      : tabId === 'artists'
+        ? await queryArtists(spec)
+        : tabId === 'recent'
+          ? await queryTracks({ ...spec, sort: 'recent' })
+          : await queryTracks({ ...spec, sort: trackSort })
+  }, [tabId, drill, filterSourceId, trackSort])
 
   const loadRows = useCallback(async(kw: string) => {
     const seq = ++loadSeq.current
-    // 下钻沿用当前来源筛选，不取聚合行的 MIN(source_id)（N3 修复）
-    const filterIds = filterSourceId ? [filterSourceId] : []
-    let next: { rows: NativeTrackRow[], total: number }
-    if (drill) {
-      const trackRows = drill.type === 'album'
-        ? await queryAlbumTracks(filterIds, drill.key, 0, 200)
-        : await queryArtistTracks(filterIds, drill.key, 0, 200)
-      next = { rows: trackRows, total: trackRows.length }
-    } else {
-      const spec = {
-        sourceIds: filterSourceId ? [filterSourceId] : undefined,
-        keyword: kw || undefined,
-        offset: 0,
-        limit: 200,
-      }
-      // Tab 分流：各 Tab 各查各的视图（此前都查 tracks，切 Tab 无效果）；
-      // 最近播放按最后播放时间倒序
-      const result = tabId === 'albums'
-        ? await queryAlbums(spec)
-        : tabId === 'artists'
-          ? await queryArtists(spec)
-          : tabId === 'recent'
-            ? await queryTracks({ ...spec, sort: 'recent' })
-            : await queryTracks({ ...spec, sort: trackSort })
-      next = result
-    }
+    const next = await fetchRows(kw, 0)
     if (seq !== loadSeq.current) return // 过期结果丢弃
     setRows(next.rows, next.total)
-  }, [tabId, drill, filterSourceId, trackSort])
+  }, [fetchRows])
+
+  // 滚动到底加载下一页；视图已整体替换（序号变化）时丢弃
+  const loadMoreRows = useCallback(async(kw: string) => {
+    const seq = loadSeq.current
+    const offset = state.rows.length
+    if (offset >= state.rowsTotal) return // 已加载完
+    const next = await fetchRows(kw, offset)
+    if (seq !== loadSeq.current || !next.rows.length) return
+    appendRows(next.rows, next.total)
+  }, [fetchRows])
 
   // M8：当前筛选的来源被删除后，下拉显示「全部来源」但列表为空——
   // 筛选值残留所致。来源列表变化时若筛选值已不存在则重置。
@@ -509,8 +523,9 @@ export default () => {
       let result
       try {
         result = await pickLocalFolder()
-      } catch {
-        toast(t('library_add_folder_failed'), 'long')
+      } catch (err) {
+        // 审核第 14 条：同一目录已添加时明确提示，与失败区分
+        toast(t(err instanceof Error && err.message === 'E_DUPLICATE_FOLDER' ? 'library_folder_already_added' : 'library_add_folder_failed'), 'long')
         return
       }
       if (!result) return
@@ -530,7 +545,7 @@ export default () => {
         await native.saveSource({ ...result.source, config: JSON.stringify(cfg) })
         await refreshSources()
         await startSourceScan(result.source.id, (reason) => {
-          toast(`${result.source.name}: ${reason}`, 'short')
+          toast(scanFailTip(result.source.name, reason), 'short')
         })
       } catch {
         toast(t('library_add_folder_failed'), 'long')
@@ -708,20 +723,22 @@ export default () => {
                   onPlay={handlePlayRow}
                   onShowMenu={handleShowMenu}
                   onMultiSelectModeChange={handleMultiSelectModeChange}
+                  onLoadMore={() => { void loadMoreRows(keyword) }}
                   isTrackView
                   loveSet={loveSet}
                 />
               )
             : tabId === 'albums'
-              ? <AlbumGrid rows={rows} onOpenAlbum={handleOpenAlbum} />
+              ? <AlbumGrid rows={rows} onOpenAlbum={handleOpenAlbum} onLoadMore={() => { void loadMoreRows(keyword) }} />
               : tabId === 'artists'
-                ? <ArtistList rows={rows} onOpenArtist={handleOpenArtist} />
+                ? <ArtistList rows={rows} onOpenArtist={handleOpenArtist} onLoadMore={() => { void loadMoreRows(keyword) }} />
                 : (
                     <List
                       ref={listRef}
                       onPlay={handlePlayRow}
                       onShowMenu={handleShowMenu}
                       onMultiSelectModeChange={handleMultiSelectModeChange}
+                      onLoadMore={() => { void loadMoreRows(keyword) }}
                       isTrackView
                       loveSet={loveSet}
                     />

@@ -416,6 +416,9 @@ static NSString * const kTrackColumns =
   if (sqlite3_prepare_v2(_db, sql, -1, &stmt, NULL) != SQLITE_OK) return NO;
   long long now = (long long)([[NSDate date] timeIntervalSince1970] * 1000);
   BOOL ok = YES;
+  // 超时降级行的 seen 更新（审核第 6 条）
+  sqlite3_stmt *seenStmt = NULL;
+  sqlite3_prepare_v2(_db, "UPDATE track SET seen = 1 WHERE locator = ?1", -1, &seenStmt, NULL);
   for (NSDictionary *row in rows) {
     // 所有桥值经 LxStr / LxNum 清洗：JS null 到达时是 NSNull，
     // 直接发消息会崩（S1 根因）
@@ -424,6 +427,15 @@ static NSString * const kTrackColumns =
     if (!locator.length || !itemKey.length) continue;
     // 排除表：已移除的曲目重扫不入库（§16）
     if ([self _isExcludedOnQueue:sourceId itemKey:itemKey]) continue;
+    // 元数据探测超时：行里只有文件名降级值。已存在的行只打 seen，
+    // 不让降级值覆盖已有标签；不存在的行照常入库（审核第 6 条）
+    if (LxBool(row[@"timeout"])) {
+      sqlite3_reset(seenStmt);
+      sqlite3_clear_bindings(seenStmt);
+      sqlite3_bind_text(seenStmt, 1, locator.UTF8String, -1, SQLITE_TRANSIENT);
+      sqlite3_step(seenStmt);
+      if (sqlite3_changes(_db) > 0) continue; // 已存在，跳过覆盖
+    }
     NSString *title = LxStr(row[@"title"]) ?: itemKey;
     NSString *artist = LxStr(row[@"artist"]);
     NSString *album = LxStr(row[@"album"]);
@@ -465,6 +477,7 @@ static NSString * const kTrackColumns =
       break;
     }
   }
+  sqlite3_finalize(seenStmt);
   sqlite3_finalize(stmt);
   return ok;
 }
@@ -477,17 +490,32 @@ static NSString * const kTrackColumns =
 
 - (NSInteger)finishSync:(NSString *)sourceId
 {
+  return [self finishSync:sourceId protectedPrefixes:nil];
+}
+
+// 删除保护（§5.3）：不可读子目录下的曲目不参与清理。前缀是相对
+// 来源根的路径；匹配 `prefix/…` 的行豁免。此前注释声称有保护、
+// 代码没有，外部盘拔出 / File Provider 离线时整个来源会被清空
+- (NSInteger)finishSync:(NSString *)sourceId protectedPrefixes:(NSArray<NSString *> *)prefixes
+{
   if (!sourceId.length) return 0;
   __block NSInteger removed = 0;
   dispatch_sync(_ioQueue, ^{
     if (![self _openOnQueue]) return;
     sqlite3_exec(self->_db, "BEGIN IMMEDIATE;", NULL, NULL, NULL);
-    // 删除保护：子目录读取失败时该子目录下的曲目不被清理（§5.3），
-    // 由扫描侧传入 unreadable 前缀；这里按 seen 标记执行
+    NSMutableString *sql = [NSMutableString stringWithString:@"DELETE FROM track WHERE source_id = ?1 AND seen = 0"];
+    NSMutableArray<NSString *> *prefixParams = [NSMutableArray array];
+    for (NSString *prefix in prefixes) {
+      if (![prefix isKindOfClass:[NSString class]] || !prefix.length) continue;
+      [prefixParams addObject:prefix];
+      [sql appendFormat:@" AND item_key NOT LIKE (?%lu || '/%%')", (unsigned long)(prefixParams.count + 1)];
+    }
     sqlite3_stmt *stmt = NULL;
-    const char *sql = "DELETE FROM track WHERE source_id = ?1 AND seen = 0";
-    if (sqlite3_prepare_v2(self->_db, sql, -1, &stmt, NULL) == SQLITE_OK) {
+    if (sqlite3_prepare_v2(self->_db, sql.UTF8String, -1, &stmt, NULL) == SQLITE_OK) {
       sqlite3_bind_text(stmt, 1, sourceId.UTF8String, -1, SQLITE_TRANSIENT);
+      for (NSUInteger i = 0; i < prefixParams.count; i++) {
+        sqlite3_bind_text(stmt, (int)(i + 2), prefixParams[i].UTF8String, -1, SQLITE_TRANSIENT);
+      }
       if (sqlite3_step(stmt) == SQLITE_DONE) removed = sqlite3_changes(self->_db);
       sqlite3_finalize(stmt);
     }
@@ -737,6 +765,23 @@ static NSString * const kTrackColumns =
   return ok;
 }
 
+- (BOOL)setSourceState:(NSString *)sourceId state:(NSString *)state
+{
+  if (!sourceId.length || !state.length) return NO;
+  __block BOOL ok = NO;
+  dispatch_sync(_ioQueue, ^{
+    if (![self _openOnQueue]) return;
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(self->_db, "UPDATE source SET state = ?2 WHERE id = ?1", -1, &stmt, NULL) == SQLITE_OK) {
+      sqlite3_bind_text(stmt, 1, sourceId.UTF8String, -1, SQLITE_TRANSIENT);
+      sqlite3_bind_text(stmt, 2, state.UTF8String, -1, SQLITE_TRANSIENT);
+      ok = sqlite3_step(stmt) == SQLITE_DONE && sqlite3_changes(self->_db) > 0;
+      sqlite3_finalize(stmt);
+    }
+  });
+  return ok;
+}
+
 - (BOOL)setSourceEnabled:(NSString *)sourceId enabled:(BOOL)enabled
 {
   if (!sourceId.length) return NO;
@@ -855,8 +900,11 @@ static NSString * const kTrackColumns =
     NSString *esc = LxEscapeLike(keyword);
     [sql appendFormat:@" AND (t.title LIKE '%%%@%%' ESCAPE '\\' OR t.artist LIKE '%%%@%%' ESCAPE '\\' OR t.album LIKE '%%%@%%' ESCAPE '\\')", esc, esc, esc];
   } else {
-    // FTS 前缀查询：rowid join
-    NSString *ftsTerm = [NSString stringWithFormat:@"%@*", keyword];
+    // FTS 前缀查询：rowid join。关键词整体加双引号：裸拼接时
+    // Jay-Z / Don't / AC/DC 这类含标点关键词会触发 FTS5 语法错误，
+    // 查询直接失败（审核第 8 条，Python FTS5 实测复现）
+    NSString *escaped = [keyword stringByReplacingOccurrencesOfString:@"\"" withString:@"\"\""];
+    NSString *ftsTerm = [NSString stringWithFormat:@"\"%@\"*", escaped];
     [sql appendFormat:@" AND t.rowid IN (SELECT rowid FROM track_fts WHERE track_fts MATCH ?%lu)", (unsigned long)(bindings.count + 1)];
     [bindings addObject:ftsTerm];
   }

@@ -214,11 +214,15 @@ export const getLyricInfo = async({ musicInfo, isRefresh, skipFileLyric, onToggl
   // M10：手选歌词（手动搜索应用）写在 _edited 通道，优先于文件内
   // 歌词与同名 .lrc，否则会被内嵌歌词盖住。
   // 仅对曲库定位符生效：普通本地歌曲 / Android 不走 _edited 通道，
-  // 保持原有「文件歌词优先」行为不变（AGENTS.md 零行为变化）
+  // 保持原有「文件歌词优先」行为不变（AGENTS.md 零行为变化）。
+  // 审核第 4 条：getPlayerLyric 合并后 `lyric` 取 _edited 通道、
+  // `rawlrcInfo` 取普通缓存。旧条件依赖 rawlrcInfo.lyric 非空，
+  // 而曲库曲目从不写普通缓存，条件永远不命中。改判「编辑值与
+  // 原始值不同」：有手选歌词时二者必然不同
   const isLibrary = isLibraryLocator(musicInfo.meta.filePath)
   if (isLibrary) {
     const cachedInfo = await getCachedLyricInfo(musicInfo)
-    if (cachedInfo?.rawlrcInfo.lyric && cachedInfo.lyric != cachedInfo.rawlrcInfo.lyric) {
+    if (cachedInfo?.lyric && cachedInfo.lyric !== cachedInfo.rawlrcInfo?.lyric) {
       return buildLyricInfo(cachedInfo)
     }
   }

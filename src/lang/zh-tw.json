@@ -612,6 +612,7 @@
   "metadata_edit_modal_readonly_title": "標籤資訊（唯讀）",
   "metadata_edit_modal_close": "關閉",
   "library_add_folder_failed": "新增資料夾失敗",
+  "library_folder_already_added": "該資料夾已新增",
   "library_scan_busy": "該來源正在掃描中",
   "library_source_disabled": "來源已停用",
   "library_no_scannable_source": "沒有可掃描的資料夾來源，請先新增資料夾",

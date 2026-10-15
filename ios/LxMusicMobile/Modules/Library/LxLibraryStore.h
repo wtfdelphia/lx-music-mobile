@@ -20,6 +20,8 @@
 - (BOOL)upsertTracks:(NSString *)sourceId rows:(NSArray<NSDictionary *> *)rows;
 // 删除本次同步未见、且不在保护列表里的曲目
 - (NSInteger)finishSync:(NSString *)sourceId;
+// 带不可读前缀保护（§5.3）：前缀下的行豁免清理
+- (NSInteger)finishSync:(NSString *)sourceId protectedPrefixes:(NSArray<NSString *> * _Nullable)prefixes;
 - (NSDictionary * _Nullable)getTrack:(NSString *)locator;
 - (BOOL)deleteTrack:(NSString *)locator;
 // 全量 itemKey（自动关联差量对账用，避免 limit 200 截断）
@@ -43,6 +45,8 @@
 - (BOOL)renameSource:(NSString *)sourceId name:(NSString *)name;
 // 重新授权：只替换 config 中的 bookmark / relPath，不改变定位符（§5.2）
 - (BOOL)setSourceConfig:(NSString *)sourceId config:(NSString *)config state:(NSString * _Nullable)state;
+// 来源状态更新（ok / needs_reauth / unreachable）
+- (BOOL)setSourceState:(NSString *)sourceId state:(NSString *)state;
 - (BOOL)setSourceEnabled:(NSString *)sourceId enabled:(BOOL)enabled;
 - (BOOL)setOffline:(NSString *)locator relPath:(NSString * _Nullable)relPath;
 - (BOOL)bumpPlay:(NSString *)locator;

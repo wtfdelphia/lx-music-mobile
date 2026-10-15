@@ -31,7 +31,9 @@ export const resolvePicUrl = async(locator: string): Promise<string | null> => {
   try {
     const row = await native.getTrack(locator)
     if (!row) return null
-    if (row.sourceType !== 'local') return null // P2：远程封面加认证参数
+    // 本地与「下载」来源的封面都在沙箱内走缓存（审核第 16 条：
+    // 此前 download 直接返回 null）；远程来源封面在 P2 加认证参数
+    if (row.sourceType !== 'local' && row.sourceType !== 'download') return null
     const path = await native.artworkPath(locator)
     return path ? `file://${path}` : null
   } catch {

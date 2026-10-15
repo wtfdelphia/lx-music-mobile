@@ -19,6 +19,8 @@ const GAP = scaleSizeW(20)
 export interface AlbumGridProps {
   rows: NativeTrackRow[]
   onOpenAlbum: (row: NativeTrackRow) => void
+  /** 分页：滚动到底加载下一页（审核第 2 条） */
+  onLoadMore?: () => void
 }
 
 /** 专辑 / 艺人聚合行 → 封面 file:// URL（artwork 字段存的是缓存文件名） */
@@ -69,7 +71,7 @@ const Card = memo(({ item, width, onPress, unknownLabel }: {
   return prevProps.item.locator === nextProps.item.locator && prevProps.width === nextProps.width
 })
 
-export default ({ rows, onOpenAlbum }: AlbumGridProps) => {
+export default ({ rows, onOpenAlbum, onLoadMore }: AlbumGridProps) => {
   const t = useI18n()
   // 列数跟随窗口宽度（对齐歌单广场网格的排数逻辑）
   const windowSize = useWindowSize()
@@ -91,6 +93,8 @@ export default ({ rows, onOpenAlbum }: AlbumGridProps) => {
       keyExtractor={item => item.locator}
       renderItem={renderItem}
       initialNumToRender={12}
+      onEndReachedThreshold={0.4}
+      onEndReached={onLoadMore}
     />
   )
 }

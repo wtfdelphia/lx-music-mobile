@@ -19,6 +19,7 @@ export interface PickFolderResult {
   bookmark: string | null
   label: string
   relPath: string | null
+  resolvedPath: string | null
 }
 export const pickFolder = async(): Promise<PickFolderResult | null> => notSupported()
 export const relink = async(_sourceId: string): Promise<boolean | null> => notSupported()
@@ -52,6 +53,8 @@ export const closeAndDropLibrary = async(): Promise<boolean> => notSupported()
 export const artworkCacheSize = async(): Promise<number> => notSupported()
 export const clearArtworkCache = async(): Promise<boolean> => notSupported()
 export const readLyric = async(_locator: string): Promise<ReadLyricResult | null> => notSupported()
+export const enrichDownloadTracks = async(_itemKeys: string[]): Promise<number> => notSupported()
+export const rootPathForSourceId = async(_sourceId: string): Promise<string | null> => notSupported()
 export const setSecret = async(_sourceId: string, _secret: string): Promise<void> => notSupported()
 export const getSecret = async(_sourceId: string): Promise<string | null> => notSupported()
 export const deleteSecret = async(_sourceId: string): Promise<void> => notSupported()

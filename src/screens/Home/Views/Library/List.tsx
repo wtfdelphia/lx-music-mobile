@@ -16,6 +16,8 @@ export interface ListProps {
   onShowMenu: (locator: string, position: Position) => void
   /** 多选模式进入 / 退出回调，外层控制批量操作栏 */
   onMultiSelectModeChange: (active: boolean, selectedLocators: string[]) => void
+  /** 分页：滚动到底加载下一页（审核第 2 条） */
+  onLoadMore?: () => void
   /** 行是否为曲目（专辑 / 艺人聚合行不显示序号 / 时长 / 菜单） */
   isTrackView: boolean
   /** 喜欢集合（红心显示） */
@@ -42,7 +44,7 @@ const toRowItem = (row: NativeTrackRow, loveSet: Set<string>): LibraryRowItem =>
   loved: loveSet.has(row.locator),
 })
 
-export default forwardRef<ListType, ListProps>(({ onPlay, onShowMenu, onMultiSelectModeChange, isTrackView, loveSet }, ref) => {
+export default forwardRef<ListType, ListProps>(({ onPlay, onShowMenu, onMultiSelectModeChange, isTrackView, loveSet, onLoadMore }, ref) => {
   const { rows } = useLibraryRows()
   // 点击语义：只回传定位符，播放目标由外层按最新列表（state.rows）
   // 现查。ListItem 的 memo 比较函数不含回调引用，靠闭包传 index 会
@@ -154,6 +156,8 @@ export default forwardRef<ListType, ListProps>(({ onPlay, onShowMenu, onMultiSel
       renderItem={renderItem}
       keyExtractor={item => item.locator}
       getItemLayout={(_data, index) => ({ length: ITEM_HEIGHT, offset: ITEM_HEIGHT * index, index })}
+      onEndReachedThreshold={0.4}
+      onEndReached={onLoadMore}
     />
   )
 })

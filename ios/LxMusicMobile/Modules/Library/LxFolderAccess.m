@@ -23,6 +23,22 @@ typedef NS_ENUM(NSInteger, LxLibraryErrorCode) {
 @property (nonatomic, strong) NSURL *url;             // 解析后的根目录
 @property (nonatomic, assign) BOOL accessing;         // 是否已 startAccess
 @property (nonatomic, assign) NSInteger refCount;
+// stale bookmark 重新生成后回写 source.config（与 JS 侧 config JSON 结构对齐）
+- (void)persistBookmark:(NSData *)bookmark forSourceId:(NSString *)sourceId
+{
+  if (!bookmark.length || !sourceId.length) return;
+  NSDictionary *meta = [[LxLibraryStore shared] configForSourceId:sourceId];
+  NSString *configJSON = LxStr(meta[@"config"]);
+  if (!configJSON.length) return;
+  NSDictionary *parsed = [NSJSONSerialization JSONObjectWithData:[configJSON dataUsingEncoding:NSUTF8StringEncoding] options:0 error:nil];
+  if (![parsed isKindOfClass:[NSDictionary class]]) return;
+  NSMutableDictionary *config = [parsed mutableCopy];
+  config[@"bookmark"] = [bookmark base64EncodedStringWithOptions:0];
+  NSData *data = [NSJSONSerialization dataWithJSONObject:config options:0 error:nil];
+  NSString *newJSON = data ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : nil;
+  if (newJSON) [[LxLibraryStore shared] setSourceConfig:sourceId config:newJSON state:nil];
+}
+
 @end
 
 @implementation LxGrant
@@ -150,13 +166,16 @@ typedef NS_ENUM(NSInteger, LxLibraryErrorCode) {
     return NO;
   }
   if (isStale) {
-    // 重新生成并回写由模块层处理（写回 source.config）；
-    // 这里先用旧 URL 继续，能访问就不打断播放
+    // 重新生成并回写（审核第 10 条）：此前只更新内存，注释声称的
+    // 「模块层回写」不存在，下次冷启动仍解析旧 bookmark 数据
     NSData *newBookmark = [url bookmarkDataWithOptions:0
                         includingResourceValuesForKeys:nil
                                          relativeToURL:nil
                                                  error:nil];
-    if (newBookmark) grant.bookmark = newBookmark;
+    if (newBookmark) {
+      grant.bookmark = newBookmark;
+      [self persistBookmark:newBookmark forSourceId:sourceId];
+    }
   }
   if (![url startAccessingSecurityScopedResource]) {
     // 容错：部分场景（容器内路径被误存为 bookmark、系统已隐式持有

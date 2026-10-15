@@ -612,6 +612,7 @@
   "metadata_edit_modal_readonly_title": "Tag Info (read-only)",
   "metadata_edit_modal_close": "Close",
   "library_add_folder_failed": "Failed to add folder",
+  "library_folder_already_added": "This folder is already added",
   "library_scan_busy": "This source is scanning",
   "library_source_disabled": "Source is disabled",
   "library_no_scannable_source": "No folder sources to scan, add a folder first",

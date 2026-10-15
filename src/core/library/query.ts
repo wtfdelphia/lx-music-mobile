@@ -3,7 +3,7 @@
  * 防抖与分页游标由调用方（UI hook）持有
  */
 import * as native from './native'
-import type { LibraryQuerySpec, LibraryQueryResult, NativeTrackRow } from './types'
+import type { LibraryQuerySpec, LibraryQueryResult } from './types'
 
 /** limit 上限 200，与原生层强制一致（design §5.1） */
 export const QUERY_LIMIT_MAX = 200
@@ -41,27 +41,25 @@ export const queryArtists = async(spec: Omit<LibraryQuerySpec, 'kind'>): Promise
  * 专辑曲目下钻。`sourceIds` 传当前来源筛选；无筛选传空数组，
  * 跨来源聚合同一专辑（原生侧空数组即不过滤）
  */
-export const queryAlbumTracks = async(sourceIds: string[], albumKey: string, offset: number, limit: number): Promise<NativeTrackRow[]> => {
+export const queryAlbumTracks = async(sourceIds: string[], albumKey: string, offset: number, limit: number): Promise<LibraryQueryResult> => {
   try {
-    const result = await native.query({
+    return await native.query({
       kind: 'albumTracks', sourceIds: sourceIds.length ? sourceIds : undefined, albumKey, offset, limit: clampLimit(limit),
     })
-    return result.rows
   } catch {
-    return []
+    return { rows: [], total: 0 }
   }
 }
 
 /**
  * 艺人曲目下钻，sourceIds 语义同 `queryAlbumTracks`
  */
-export const queryArtistTracks = async(sourceIds: string[], artistKey: string, offset: number, limit: number): Promise<NativeTrackRow[]> => {
+export const queryArtistTracks = async(sourceIds: string[], artistKey: string, offset: number, limit: number): Promise<LibraryQueryResult> => {
   try {
-    const result = await native.query({
+    return await native.query({
       kind: 'artistTracks', sourceIds: sourceIds.length ? sourceIds : undefined, artistKey, offset, limit: clampLimit(limit),
     })
-    return result.rows
   } catch {
-    return []
+    return { rows: [], total: 0 }
   }
 }

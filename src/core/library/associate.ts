@@ -152,6 +152,11 @@ const reconcile = async(): Promise<void> => {
     if (rows.length) {
       await native.upsertTracks(DOWNLOAD_SOURCE_ID, rows).catch(() => {})
       changed = true
+      // 审核第 16 条：关联行只有歌名降级值（时长 0、无封面）。
+      // 异步读实际文件补元数据，不阻塞对账；失败下轮补
+      void native.enrichDownloadTracks(rows.map(r => String(r.item_key))).then(n => {
+        if (n > 0) global.app_event.libraryRowsUpdated()
+      }).catch(() => {})
     }
   }
   for (const key of toRemoveKeys) {

@@ -252,14 +252,24 @@ RCT_EXPORT_METHOD(pickFolder:(RCTPromiseResolveBlock)resolve
 
   NSDictionary *fragment = [self configFragmentForPickedURL:url];
   NSString *label = url.lastPathComponent ?: @"";
+  NSString *pickedResolvedPath = [url URLByResolvingSymlinksInPath].path ?: url.path;
 
   // relink：只替换授权，不改变定位符（§5.2）。成功 / 失败回 bool，
   // 取消在 cancelPendingPickerPicks 里回 NSNull
   NSString *relinkSourceId = self.pendingRelinkSourceId;
   if (relinkSourceId.length) {
     RCTPromiseResolveBlock resolve = self.pendingRelinkResolve;
+    RCTPromiseRejectBlock reject = self.pendingRelinkReject;
     [self clearPendingPickerState];
     if (!fragment) { if (resolve) resolve(@(NO)); return; }
+    // 校验选中的目录与原授权是同一目录（审核第 15 条）：选错目录
+    // 会在下次扫描时清空原曲目并重建，歌单引用全部断开。
+    // 原路径无法解析（来源已坏）时放行，允许换目录救回
+    NSString *oldPath = [self rootPathForSourceIdNoAccess:relinkSourceId];
+    if (oldPath.length && ![oldPath isEqualToString:pickedResolvedPath]) {
+      if (reject) reject(@"E_WRONG_DIR", @"selected folder differs from the original", nil);
+      return;
+    }
     NSDictionary *meta = [[LxLibraryStore shared] configForSourceId:relinkSourceId];
     NSString *oldConfigJSON = LxStr(meta[@"config"]);
     NSMutableDictionary *config = [NSMutableDictionary dictionary];
@@ -282,12 +292,14 @@ RCT_EXPORT_METHOD(pickFolder:(RCTPromiseResolveBlock)resolve
     return;
   }
 
-  // pickFolder：回传来源创建素材
+  // pickFolder：回传来源创建素材。resolvedPath 供 JS 侧去重比对
+  //（审核第 14 条：同一目录此前可重复添加）
   RCTPromiseResolveBlock resolve = self.pendingPickResolve;
   [self clearPendingPickerState];
   if (!fragment || !resolve) return;
   NSMutableDictionary *result = [fragment mutableCopy];
   result[@"label"] = label;
+  result[@"resolvedPath"] = pickedResolvedPath;
   resolve(result);
 }
 
@@ -388,6 +400,8 @@ RCT_EXPORT_METHOD(startScan:(NSString *)sourceId options:(NSDictionary *)options
     // 先 acquire
     NSError *error = nil;
     if (![[LxFolderAccess shared] acquire:sourceId error:&error]) {
+      // 授权失效落到来源状态（审核第 11 条：此前 state 永远是 ok）
+      [[LxLibraryStore shared] setSourceState:LxStr(sourceId) state:@"needs_reauth"];
       reject(@"E_REAUTH", error.localizedDescription ?: @"acquire failed", error);
       return;
     }
@@ -409,6 +423,12 @@ RCT_EXPORT_METHOD(cancelScan:(NSString *)sourceId
                   resolver:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 {
+  // 校验当前扫描来源：此前忽略 sourceId，超时兜底取消可能误杀
+  // 另一个来源的扫描（低危项）
+  if (!LxStr(sourceId).length || !self.scanner.scanning || ![LxStr(sourceId) isEqualToString:self.scanner.currentSourceId]) {
+    resolve(@(NO));
+    return;
+  }
   [self.scanner cancel];
   resolve(@(YES));
 }
@@ -449,9 +469,14 @@ RCT_EXPORT_METHOD(cancelScan:(NSString *)sourceId
 - (void)_finishScanWork:(NSString *)sourceId rows:(NSArray<NSDictionary *> *)rows report:(NSDictionary *)report
 {
   // 入库（F3 修复）：补定位符后分批 upsert（每批 ≤500，§5.1），
-  // 正常完成的扫描才做 finishSync 清理；取消的扫描不清理（§5.3）
+  // 正常完成的扫描才做 finishSync 清理；取消的扫描不清理（§5.3）。
+  // 计数精确化（审核第 5 条）：imported 只数新行，重写行进 updated
   BOOL cancelled = LxBool(report[@"cancelled"]);
+  NSInteger scanned = LxNum(report[@"scanned"]) ? [LxNum(report[@"scanned"]) integerValue] : 0;
+  NSArray<NSString *> *existingKeys = [[LxLibraryStore shared] listItemKeysForSourceId:sourceId];
+  NSMutableSet<NSString *> *existingKeySet = [NSMutableSet setWithArray:existingKeys];
   NSInteger imported = 0;
+  NSInteger updated = 0;
   if (rows.count) {
     NSMutableArray *batch = [NSMutableArray array];
     for (NSDictionary *row in rows) {
@@ -461,30 +486,132 @@ RCT_EXPORT_METHOD(cancelScan:(NSString *)sourceId
       full[@"locator"] = [self locatorForSourceId:sourceId itemKey:itemKey];
       [batch addObject:full];
       if (batch.count >= 500) {
-        if ([[LxLibraryStore shared] upsertTracks:sourceId rows:batch]) imported += batch.count;
+        [self _upsertBatch:batch sourceId:sourceId existingKeySet:existingKeySet imported:&imported updated:&updated];
         [batch removeAllObjects];
       }
     }
     if (batch.count) {
-      if ([[LxLibraryStore shared] upsertTracks:sourceId rows:batch]) imported += batch.count;
+      [self _upsertBatch:batch sourceId:sourceId existingKeySet:existingKeySet imported:&imported updated:&updated];
     }
   }
+  // 删除保护（审核第 1 条）：
+  // 1) 枚举为空但库里有曲目——外部盘拔出 / iCloud 或 File Provider
+  //    离线 / 授权失效的典型特征，跳过清理，不让一次失败扫描清空来源
+  // 2) 不可读子目录前缀下的行豁免清理（此前注释有、代码没有）
+  NSInteger removed = 0;
   if (!cancelled) {
-    [[LxLibraryStore shared] finishSync:sourceId];
+    id unreadableDirsObj = report[@"unreadableDirs"];
+  NSArray *unreadable = [unreadableDirsObj isKindOfClass:[NSDictionary class]] ? LxArr(unreadableDirsObj[@"items"]) : nil;
+    BOOL hasExistingTracks = existingKeySet.count > 0;
+    if (hasExistingTracks && (scanned == 0 || (imported == 0 && updated == 0))) {
+      // 全空扫描、或扫到文件却零入库（协调枚举返回不同前缀 /
+      // 全部探测失败）：一行不删，等下一次正常扫描再清理
+    } else {
+      removed = [[LxLibraryStore shared] finishSync:sourceId protectedPrefixes:unreadable];
+    }
   }
-  // 扫描状态落库（低危修复）：last_scan_at / 报告摘要 / state
+  // 扫描状态落库：last_scan_at / 报告摘要；状态按授权可达性回写
+  //（审核第 11 条：此前 state 永远停在 ok）
   long long now = (long long)([[NSDate date] timeIntervalSince1970] * 1000);
   NSMutableDictionary *summary = [report mutableCopy] ?: [NSMutableDictionary dictionary];
   summary[@"imported"] = @(imported);
+  summary[@"updated"] = @(updated);
+  summary[@"removed"] = @(removed);
   NSData *reportData = [NSJSONSerialization dataWithJSONObject:summary options:0 error:nil];
   NSString *reportJSON = reportData ? [[NSString alloc] initWithData:reportData encoding:NSUTF8StringEncoding] : nil;
   [[LxLibraryStore shared] updateScanState:sourceId lastScanAt:now report:reportJSON];
+  // 授权已失效但扫描仍走完（沙箱来源文件被移动等）：标需要重新授权
+  NSError *acqError = nil;
+  if (![[LxFolderAccess shared] acquire:sourceId error:&acqError]) {
+    [[LxLibraryStore shared] setSourceState:sourceId state:@"needs_reauth"];
+    [[LxFolderAccess shared] release:sourceId];
+  } else {
+    [[LxFolderAccess shared] release:sourceId];
+  }
   dispatch_async(dispatch_get_main_queue(), ^{
     self.lastProgressEmit = nil;
     if (self->_hasListeners) {
       [self sendEventWithName:kScanDoneEvent body:@{ @"sourceId": sourceId, @"report": summary }];
     }
   });
+}
+
+// 分批 upsert 并分流计数
+- (void)_upsertBatch:(NSArray<NSDictionary *> *)batch sourceId:(NSString *)sourceId
+      existingKeySet:(NSMutableSet<NSString *> *)keySet
+            imported:(NSInteger *)imported updated:(NSInteger *)updated
+{
+  NSInteger batchNew = 0;
+  for (NSDictionary *row in batch) {
+    NSString *itemKey = LxStr(row[@"item_key"]);
+    if (itemKey.length && ![keySet containsObject:itemKey]) batchNew++;
+  }
+  if ([[LxLibraryStore shared] upsertTracks:sourceId rows:batch]) {
+    *imported += batchNew;
+    *updated += (NSInteger)batch.count - batchNew;
+    for (NSDictionary *row in batch) {
+      NSString *itemKey = LxStr(row[@"item_key"]);
+      if (itemKey.length) [keySet addObject:itemKey];
+    }
+  }
+}
+
+// relink 校验用：从存储的 config 还原来源根目录路径，不实际获取授权。
+// 沙箱来源 = Documents/relPath；bookmark 来源解析 bookmark 取路径。
+// 失败返回 nil（放行换目录）
+- (NSString *)rootPathForSourceIdNoAccess:(NSString *)sourceId
+{
+  NSDictionary *meta = [[LxLibraryStore shared] configForSourceId:sourceId];
+  NSString *configJSON = LxStr(meta[@"config"]);
+  if (!configJSON.length) return nil;
+  NSDictionary *config = [NSJSONSerialization JSONObjectWithData:[configJSON dataUsingEncoding:NSUTF8StringEncoding] options:0 error:nil];
+  if (![config isKindOfClass:[NSDictionary class]]) return nil;
+  NSString *documents = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
+  NSString *documentsResolved = [[NSURL fileURLWithPath:documents] URLByResolvingSymlinksInPath].path;
+  NSString *relPath = LxStr(config[@"relPath"]);
+  BOOL hasRelPath = [config[@"relPath"] isKindOfClass:[NSString class]];
+  if (hasRelPath) {
+    return relPath.length
+      ? [[documentsResolved stringByAppendingPathComponent:relPath] stringByStandardizingPath]
+      : documentsResolved;
+  }
+  NSString *bookmarkBase64 = LxStr(config[@"bookmark"]);
+  if (!bookmarkBase64.length) return nil;
+  NSData *bookmark = [[NSData alloc] initWithBase64EncodedString:bookmarkBase64 options:0];
+  BOOL isStale = NO;
+  NSURL *url = [NSURL URLByResolvingBookmarkData:bookmark
+                                         options:NSURLBookmarkResolutionWithoutImplicitStartAccessing | NSURLBookmarkResolutionWithoutUI
+                                   relativeToURL:nil
+                             bookmarkDataIsStale:&isStale
+                                           error:nil];
+  return url ? ([url URLByResolvingSymlinksInPath].path ?: url.path) : nil;
+}
+
+// 定位符解析（与 JS 侧 parseLocator 对齐）：非法输入返回 nil。
+// 「从曲库移除」后曲目行已删，播放 / 歌词解析靠它还原来源与路径
+- (NSDictionary *)parseLocator:(NSString *)locator
+{
+  NSString *prefix = @"lxlib://";
+  if (![LxStr(locator) hasPrefix:prefix]) return nil;
+  NSString *body = [locator substringFromIndex:prefix.length];
+  NSRange slash = [body rangeOfString:@"/"];
+  if (slash.location == NSNotFound) return nil;
+  NSString *sourceId = [body substringToIndex:slash.location];
+  NSString *encodedKey = [body substringFromIndex:slash.location + 1];
+  if (sourceId.length != 32 || !encodedKey.length) return nil;
+  NSCharacterSet *hexSet = [NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdef"];
+  if ([[sourceId stringByTrimmingCharactersInSet:hexSet] length] > 0) return nil;
+  NSMutableArray<NSString *> *decoded = [NSMutableArray array];
+  for (NSString *seg in [encodedKey componentsSeparatedByString:@"/"]) {
+    if (!seg.length) return nil;
+    NSString *val = [seg stringByRemovingPercentEncoding];
+    if (!val.length) return nil;
+    for (NSString *sub in [val componentsSeparatedByString:@"/"]) {
+      if (!sub.length || [sub isEqualToString:@"."] || [sub isEqualToString:@".."]) return nil;
+    }
+    [decoded addObject:val];
+  }
+  return @{ @"sourceId": sourceId, @"itemKey": [decoded componentsJoinedByString:@"/"] };
 }
 
 // 定位符构造（§4）：lxlib://<sourceId>/<itemKey>，逐段百分号编码，
@@ -499,6 +626,58 @@ RCT_EXPORT_METHOD(cancelScan:(NSString *)sourceId
     [encoded addObject:enc ?: @""];
   }
   return [NSString stringWithFormat:@"lxlib://%@/%@", sourceId, [encoded componentsJoinedByString:@"/"]];
+}
+
+#pragma mark - 下载来源元数据补全（审核第 16 条）
+
+// 关联入库时行里只有歌名降级值（duration 0、无封面）。下载文件在
+// Documents 沙箱内，这里读真实元数据后重写行（§11.5）
+RCT_EXPORT_METHOD(enrichDownloadTracks:(NSArray *)itemKeys
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSArray *keys = LxArr(itemKeys);
+  if (!keys.count) { resolve(@0); return; }
+  NSString *sourceId = @"d0000000000000000000000000000001";
+  dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+    NSURL *docs = [[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask] firstObject];
+    NSString *rootPath = docs.standardizedURL.path;
+    NSMutableArray *rows = [NSMutableArray array];
+    for (NSString *key in keys) {
+      NSString *itemKey = LxStr(key);
+      if (!itemKey.length) continue;
+      NSURL *fileURL = [docs URLByAppendingPathComponent:itemKey];
+      if (![NSFileManager.defaultManager fileExistsAtPath:fileURL.path]) continue;
+      NSDictionary *probe = [[LxMediaProbe shared] probeFile:fileURL];
+      if (!probe.count) continue;
+      NSDictionary *row = [self.scanner rowFromProbe:probe fileURL:fileURL rootPath:rootPath sourceId:sourceId];
+      if (row) [rows addObject:row];
+    }
+    NSInteger enriched = 0;
+    for (NSUInteger i = 0; i < rows.count; i += 200) {
+      NSArray *batch = [rows subarrayWithRange:NSMakeRange(i, MIN(200, rows.count - i))];
+      NSMutableArray *full = [NSMutableArray array];
+      for (NSDictionary *row in batch) {
+        NSString *itemKey = LxStr(row[@"item_key"]);
+        if (!itemKey.length) continue;
+        NSMutableDictionary *m = [row mutableCopy];
+        m[@"locator"] = [self locatorForSourceId:sourceId itemKey:itemKey];
+        [full addObject:m];
+      }
+      if (full.count && [[LxLibraryStore shared] upsertTracks:sourceId rows:full]) enriched += full.count;
+    }
+    resolve(@(enriched));
+  });
+}
+
+// relink 去重 / 添加文件夹去重（审核第 14 条）：来源根目录路径，
+// 不获取授权；取不到回 NSNull
+RCT_EXPORT_METHOD(rootPathForSourceId:(NSString *)sourceId
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSString *path = [self rootPathForSourceIdNoAccess:LxStr(sourceId)];
+  resolve(path ?: [NSNull null]);
 }
 
 #pragma mark - 查询与写入（转发 Store）
@@ -574,13 +753,16 @@ RCT_EXPORT_METHOD(deleteSourceFile:(NSString *)locator
   NSString *itemKey = LxStr(track[@"itemKey"]);
   NSString *sourceType = LxStr(track[@"sourceType"]);
 
-  if (![[LxFolderAccess shared] isSandboxSource:sourceId]) {
-    reject(@"E_READONLY", @"external folders are read-only", nil);
-    return;
-  }
+  // 先 acquire 再判沙箱（审核第 3 条）：冷启动后授权表为空，
+  // isSandboxSource 直接返回 NO，沙箱来源的删除会误报只读
   NSError *error = nil;
   if (![[LxFolderAccess shared] acquire:sourceId error:&error]) {
     reject(@"E_REAUTH", error.localizedDescription ?: @"acquire failed", error);
+    return;
+  }
+  if (![[LxFolderAccess shared] isSandboxSource:sourceId]) {
+    [[LxFolderAccess shared] release:sourceId];
+    reject(@"E_READONLY", @"external folders are read-only", nil);
     return;
   }
   NSURL *fileURL = [[LxFolderAccess shared] resolveSourceId:sourceId relativePath:itemKey];
@@ -670,18 +852,30 @@ RCT_EXPORT_METHOD(resolvePlayFileUrl:(NSString *)locator
                   rejecter:(RCTPromiseRejectBlock)reject)
 {
   NSDictionary *track = [[LxLibraryStore shared] getTrack:locator];
-  if (!track) { resolve(@""); return; }
-  NSString *sourceId = track[@"sourceId"];
-  NSString *itemKey = track[@"itemKey"];
-  NSString *sourceType = track[@"sourceType"];
+  NSString *sourceId = nil;
+  NSString *itemKey = nil;
+  NSString *sourceType = nil;
+  if (track) {
+    sourceId = track[@"sourceId"];
+    itemKey = track[@"itemKey"];
+    sourceType = track[@"sourceType"];
+  } else {
+    // 曲库行不存在（「从曲库移除」后行已删但文件还在，审核第 12 条）：
+    // 直接从定位符结构解析来源与相对路径，文件可播就继续播，
+    // 歌单引用不因移除操作失效
+    NSDictionary *parsed = [self parseLocator:locator];
+    if (!parsed) { resolve(@""); return; }
+    sourceId = parsed[@"sourceId"];
+    itemKey = parsed[@"itemKey"];
+  }
 
   // 远程来源（P2 串流）：P1 只处理本地；离线文件优先
-  NSString *offlinePath = track[@"offlinePath"];
+  NSString *offlinePath = track ? track[@"offlinePath"] : nil;
   if ([offlinePath isKindOfClass:[NSString class]] && offlinePath.length) {
     NSString *documents = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
     NSString *absPath = [documents stringByAppendingPathComponent:offlinePath];
     if ([NSFileManager.defaultManager fileExistsAtPath:absPath]) {
-      resolve([NSString stringWithFormat:@"file://%@", absPath]);
+      resolve(LxFileUrl(absPath));
       return;
     }
   }
@@ -703,7 +897,7 @@ RCT_EXPORT_METHOD(resolvePlayFileUrl:(NSString *)locator
     resolve(@"");
     return;
   }
-  resolve([NSString stringWithFormat:@"file://%@", fileURL.path]);
+  resolve(LxFileUrl(fileURL.path));
 }
 
 // 封面缓存文件名 → file:// URL（聚合行封面展示，§14.2 专辑网格）
@@ -754,9 +948,18 @@ RCT_EXPORT_METHOD(readLyric:(NSString *)locator
                   rejecter:(RCTPromiseRejectBlock)reject)
 {
   NSDictionary *track = [[LxLibraryStore shared] getTrack:locator];
-  if (!track) { resolve([NSNull null]); return; }
-  NSString *sourceId = track[@"sourceId"];
-  NSString *itemKey = track[@"itemKey"];
+  NSString *sourceId = nil;
+  NSString *itemKey = nil;
+  if (track) {
+    sourceId = track[@"sourceId"];
+    itemKey = track[@"itemKey"];
+  } else {
+    // 移除后的曲目：从定位符直接解析（同 resolvePlayFileUrl）
+    NSDictionary *parsed = [self parseLocator:locator];
+    if (!parsed) { resolve([NSNull null]); return; }
+    sourceId = parsed[@"sourceId"];
+    itemKey = parsed[@"itemKey"];
+  }
 
   NSError *error = nil;
   if (![[LxFolderAccess shared] acquire:sourceId error:&error]) { resolve([NSNull null]); return; }

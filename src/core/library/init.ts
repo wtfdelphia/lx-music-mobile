@@ -5,11 +5,10 @@
  * 原生封装一律 reject，此处用平台门控直接跳过
  */
 import { Platform } from 'react-native'
-import { refreshSources, startSourceScan } from './sync'
+import { refreshSources, scanAllSources } from './sync'
 import { setInited } from '@/store/library/action'
 import { initAssociate } from './associate'
 import { subscribePlayTracking } from './playTracker'
-import state from '@/store/library/state'
 import settingState from '@/store/setting/state'
 import { log } from '@/utils/log'
 
@@ -17,10 +16,10 @@ import { log } from '@/utils/log'
 const SCAN_ON_LAUNCH_DELAY_MS = 10_000
 
 const scanOnLaunch = () => {
+  // 审核第 7 条：此前并发循环 startSourceScan，原生扫描器只有一个，
+  // 第二个来源起全部静默 busy，实际只扫到第一个。改走顺序编排
   setTimeout(() => {
-    for (const source of state.sources) {
-      if (source.enabled && source.type === 'local') void startSourceScan(source.id)
-    }
+    void scanAllSources()
   }, SCAN_ON_LAUNCH_DELAY_MS)
 }
 

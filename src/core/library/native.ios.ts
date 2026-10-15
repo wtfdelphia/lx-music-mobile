@@ -33,6 +33,8 @@ export interface PickFolderResult {
   bookmark: string | null
   label: string
   relPath: string | null
+  /** 解析符号链接后的绝对路径，同一目录去重比对用 */
+  resolvedPath: string | null
 }
 export const pickFolder = async(): Promise<PickFolderResult | null> => call<PickFolderResult | null>('pickFolder')
 /** 重新授权：重新选中目录后替换授权。用户取消返回 null，失败 false（§5.2） */
@@ -81,6 +83,10 @@ export const closeAndDropLibrary = async(): Promise<boolean> => call<boolean>('c
 export const artworkCacheSize = async(): Promise<number> => call<number>('artworkCacheSize')
 export const clearArtworkCache = async(): Promise<boolean> => call<boolean>('clearArtworkCache')
 export const readLyric = async(locator: string): Promise<ReadLyricResult | null> => call<ReadLyricResult | null>('readLyric', locator)
+/** 下载来源元数据补全：读实际文件重写时长 / 封面等（审核第 16 条） */
+export const enrichDownloadTracks = async(itemKeys: string[]): Promise<number> => call<number>('enrichDownloadTracks', itemKeys)
+/** 来源根目录路径（不获取授权），添加文件夹去重与重授权校验用 */
+export const rootPathForSourceId = async(sourceId: string): Promise<string | null> => call<string | null>('rootPathForSourceId', sourceId)
 
 // ---- Keychain（P2 使用，P1 先落接口，§5.7）----
 export const setSecret = async(sourceId: string, secret: string): Promise<void> => { await call('setSecret', sourceId, secret) }

@@ -24,11 +24,23 @@ export interface LocalFolderPickResult {
 
 /**
  * 弹出系统文件夹选择器并创建本地来源。
- * 用户取消（原生返回 null）时返回 null，不建来源
+ * 用户取消（原生返回 null）时返回 null，不建来源。
+ * 审核第 14 条：同一目录（解析符号链接后路径相同）不重复添加
  */
 export const pickLocalFolder = async(options: { recursive?: boolean } = {}): Promise<LocalFolderPickResult | null> => {
   const picked = await native.pickFolder()
   if (!picked) return null
+
+  // 去重：比对已有来源的根路径。命中时抛可识别错误，与用户取消
+  // （返回 null）区分，UI 据此提示「已添加」（审核第 14 条）
+  if (picked.resolvedPath) {
+    const sources = await native.getSources().catch(() => [] as LibrarySource[])
+    for (const existing of sources) {
+      const existingRoot = await native.rootPathForSourceId(existing.id).catch(() => null)
+      if (existingRoot && existingRoot === picked.resolvedPath) throw new Error('E_DUPLICATE_FOLDER')
+    }
+  }
+
   const sourceId = uuid4Hex()
   const config = {
     bookmark: picked.bookmark,

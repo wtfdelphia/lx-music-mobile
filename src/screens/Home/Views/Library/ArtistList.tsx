@@ -10,6 +10,8 @@ import type { NativeTrackRow } from '@/core/library/types'
 export interface ArtistListProps {
   rows: NativeTrackRow[]
   onOpenArtist: (row: NativeTrackRow) => void
+  /** 分页：滚动到底加载下一页（审核第 2 条） */
+  onLoadMore?: () => void
 }
 
 interface ArtistSection {
@@ -40,7 +42,7 @@ const groupByLetter = (rows: NativeTrackRow[]): ArtistSection[] => {
   return letters.map(letter => ({ letter, data: map.get(letter)! }))
 }
 
-export default ({ rows, onOpenArtist }: ArtistListProps) => {
+export default ({ rows, onOpenArtist, onLoadMore }: ArtistListProps) => {
   const theme = useTheme()
   const t = useI18n()
   const listRef = useRef<FlatList>(null)
@@ -80,6 +82,8 @@ export default ({ rows, onOpenArtist }: ArtistListProps) => {
       keyExtractor={(item) => ('letter' in item ? `letter-${String(item.letter)}` : item.locator)}
       renderItem={renderItem}
       initialNumToRender={30}
+      onEndReachedThreshold={0.4}
+      onEndReached={onLoadMore}
     />
   )
 }

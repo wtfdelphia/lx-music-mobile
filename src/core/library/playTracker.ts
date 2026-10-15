@@ -7,18 +7,36 @@
  */
 import * as native from './native'
 import { isLibraryLocator } from './locator'
+import playerState from '@/store/player/state'
 
 let subscribed = false
+/** 候选曲目：切换时记录，真正开始播放才计数（低危项） */
+let pendingId: string | null = null
 
 export const subscribePlayTracking = (): void => {
   if (subscribed) return
   subscribed = true
+  // 冷启动恢复上次曲目也会触发 playMusicInfoChanged，此时 isPlay 为
+  // false。若直接计数，恢复一次就多算一次播放。改为记录候选，
+  // 等真正开始播放（playStateChanged(true)）再落计数；
+  // 播放中切歌（isPlay 已为 true）则立即计数
   global.state_event.on('playMusicInfoChanged', (playMusicInfo) => {
     const mi = playMusicInfo.musicInfo
-    if (!mi) return
-    // PlayMusic 可能是下载任务项（无 `id` 语义为定位符），收窄后判断
-    const id = 'id' in mi ? String(mi.id) : ''
-    if (!isLibraryLocator(id)) return
-    void native.bumpPlay(id).catch(() => {})
+    const id = mi && 'id' in mi ? String(mi.id) : ''
+    if (!isLibraryLocator(id)) {
+      pendingId = null
+      return
+    }
+    pendingId = id
+    if (playerState.isPlay) {
+      void native.bumpPlay(id).catch(() => {})
+      pendingId = null
+    }
+  })
+  global.state_event.on('playStateChanged', (isPlay: boolean) => {
+    if (isPlay && pendingId) {
+      void native.bumpPlay(pendingId).catch(() => {})
+      pendingId = null
+    }
   })
 }

@@ -13,7 +13,6 @@ import { LIST_IDS } from '@/config/constant'
 import { getListMusics, userLists } from '@/utils/listManage'
 import settingState from '@/store/setting/state'
 import { toMusicInfo } from './toMusicInfo'
-import { parseLocator } from './locator'
 import { playNext, stop } from '@/core/player/player'
 import playerState from '@/store/player/state'
 import { getList } from '@/core/player/playInfo'
@@ -61,18 +60,20 @@ const removeLocatorsFromAllLists = async(rows: NativeTrackRow[]): Promise<void> 
 }
 
 /**
- * 从曲库移除（不删文件）。返回成功移除的数量
+ * 从曲库移除（不删文件）。返回成功移除的数量。
+ * 审核第 9 条：用行里的原生 itemKey 而不是 parseLocator 归一后的值——
+ * 后者做 NFC 规范化，磁盘原样 NFD 文件名匹配不上，排除失效。
+ * 审核第 12 条：移除是可逆操作（排除表 + 恢复入口），不清歌单引用；
+ * 文件还在，定位符仍可解析播放（原生侧已支持无行解析）
  */
 export const removeFromLibrary = async(rows: NativeTrackRow[]): Promise<number> => {
   await skipIfPlaying(rows)
   let removed = 0
   for (const row of rows) {
-    const parsed = parseLocator(row.locator)
-    if (!parsed) continue
-    const ok = await native.excludeTrack(parsed.sourceId, parsed.itemKey).catch(() => false)
+    if (!row.sourceId || !row.itemKey) continue
+    const ok = await native.excludeTrack(row.sourceId, row.itemKey).catch(() => false)
     if (ok) removed++
   }
-  if (removed > 0) await removeLocatorsFromAllLists(rows)
   return removed
 }
 
@@ -142,6 +143,10 @@ export const deleteLibrarySource = async(sourceId: string, removeFromLists: bool
 export const deleteFiles = async(rows: NativeTrackRow[]): Promise<number> => {
   await skipIfPlaying(rows)
   let removed = 0
+  // 审核第 13 条：只把实际删除成功的曲目清出歌单。此前只要有一首
+  // 删成功就把传入的全部行清掉，失败的行（外部只读 / 文件缺失）
+  // 歌单引用一并丢失
+  const removedRows: NativeTrackRow[] = []
   const downloadRows = rows.filter(r => r.sourceType === 'download')
   const otherRows = rows.filter(r => r.sourceType !== 'download')
 
@@ -153,6 +158,7 @@ export const deleteFiles = async(rows: NativeTrackRow[]): Promise<number> => {
     const tasks = getDownloadList().filter(t => keyToLocator.has(t.metadata.filePath))
     if (tasks.length) await removeTasks(tasks, true)
     removed += tasks.length
+    removedRows.push(...downloadRows)
   }
 
   // 其余来源：原生分级处理（外部来源在此被拒绝）。
@@ -161,14 +167,16 @@ export const deleteFiles = async(rows: NativeTrackRow[]): Promise<number> => {
   for (const row of otherRows) {
     try {
       const result = await native.deleteSourceFile(row.locator)
-      if (result.removedAudio) removed++
-      else skipped++
+      if (result.removedAudio) {
+        removed++
+        removedRows.push(row)
+      } else skipped++
     } catch {
       skipped++
     }
   }
   if (skipped > 0 && removed === 0) throw new Error('E_READONLY')
-  if (removed > 0) await removeLocatorsFromAllLists(rows)
+  if (removedRows.length) await removeLocatorsFromAllLists(removedRows)
   return removed
 }
 

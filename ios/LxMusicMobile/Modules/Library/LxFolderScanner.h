@@ -24,9 +24,15 @@
 
 @property (nonatomic, weak) id<LxFolderScannerDelegate> delegate;
 @property (nonatomic, assign, readonly) BOOL scanning;
+/** 当前正在扫描的来源 id（cancelScan 按来源校验用） */
+@property (nonatomic, copy, readonly) NSString * _Nullable currentSourceId;
 
 // 扫描。返回 NO 表示扫描器忙（E_SCAN_BUSY）。recursive 是否递归
 - (BOOL)scanSourceId:(NSString *)sourceId rootURL:(NSURL *)sourceURL recursive:(BOOL)recursive;
 - (void)cancel;
+
+// 探测结果 → 曲目行（下载来源关联补元数据复用，审核第 16 条）
+- (NSDictionary * _Nullable)rowFromProbe:(NSDictionary *)probe fileURL:(NSURL *)fileURL
+                                rootPath:(NSString *)rootPath sourceId:(NSString *)sourceId;
 
 @end

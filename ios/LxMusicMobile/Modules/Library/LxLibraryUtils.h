@@ -19,3 +19,21 @@ static inline BOOL LxBool(id _Nullable value) {
 static inline long long LxLong(id _Nullable value) {
   return [LxNum(value) longLongValue];
 }
+
+static inline NSArray * _Nullable LxArr(id _Nullable value) {
+  return [value isKindOfClass:[NSArray class]] ? (NSArray *)value : nil;
+}
+
+// 本地路径 → file:// URL：逐段百分号编码。此前 `file://%@` 直接拼
+// 裸路径，文件名含 #、?、空格或已带 %XX 时 URL 解析错误、播放失败
+//（低危项）。与 NSURL fileURLWithPath + absoluteString 等价但免分配
+static inline NSString * _Nonnull LxFileUrl(NSString * _Nonnull path) {
+  NSMutableCharacterSet *allowed = [NSMutableCharacterSet alphanumericCharacterSet];
+  [allowed addCharactersInString:@"-._~:@/?&=+$,"];
+  NSMutableArray<NSString *> *segs = [NSMutableArray array];
+  for (NSString *seg in [path componentsSeparatedByString:@"/"]) {
+    NSString *enc = [seg stringByAddingPercentEncodingWithAllowedCharacters:allowed];
+    [segs addObject:enc ?: @""];
+  }
+  return [@"file://" stringByAppendingString:[segs componentsJoinedByString:@"/"]];
+}
