@@ -6,6 +6,30 @@ Project versioning adheres to [Semantic Versioning](http://semver.org/).
 Commit convention is based on [Conventional Commits](http://conventionalcommits.org).
 Change log format is based on [Keep a Changelog](http://keepachangelog.com/).
 
+## [1.9.2.1](https://github.com/wtfdelphia/lx-music-mobile/compare/v1.9.1.2...v1.9.2.1) - 2026-11-23
+
+本版本新增 iOS 本地曲库，并同步上游 v1.9.2。Android 行为变化仅来自上游同步。
+
+### 新增（仅 iOS）
+
+- 本地曲库：添加文件夹授权（书签，重签后不失效）、扫描入库、
+  元数据与封面读取、歌曲 / 专辑 / 艺人 / 最近播放四个浏览页、
+  来源管理、多选批量操作、排除表与文件删除分级、歌词手动搜索、
+  下载完成曲目自动关联
+- 旧版本导入的绝对路径本地歌曲，重签后自动重新定位继续播放
+
+### 变更（同步上游 v1.9.2）
+
+- 修复 kg 歌单无法打开的问题
+- 音频卸载默认关闭（Android）；此前开启过的用户在设置迁移时
+  强制关闭（设置版本升至 2.1）
+- 升级 track-player 播放依赖（Android）
+
+### 其他
+
+- iOS 包为未签名 IPA，需 AltStore / SideStore 重签安装；
+  从上游版本更新需先卸载（签名不同）
+
 ## [1.9.1.2](https://github.com/wtfdelphia/lx-music-mobile/compare/v1.9.1.1...v1.9.1.2) - 2026-10-12
 
 本版本为 iOS 新增歌曲下载功能，Android 行为无变化。
