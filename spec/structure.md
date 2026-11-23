@@ -24,11 +24,11 @@
 
 | 目录 | 文件数 | 职责 | 放什么 / 不放什么 |
 |---|---|---|---|
-| `screens/` | 222 | 页面与视图 | 按页面分组（`Home` / `PlayDetail` / `SonglistDetail` / `Comment`）。只做展示与交互编排，业务动作调 `core/`，不直接改 `store/` |
-| `utils/` | 133 | 工具与外部适配 | 见下节细分 |
-| `components/` | 72 | 跨页面复用 UI | `common/` 为基础组件；专用弹窗（`MusicAddModal` 等）按功能建子目录。不含业务逻辑 |
-| `core/` | 54 | 业务动作层 | `init/`（启动流程）、`music/`、`player/`、`search/`、`download/`（下载队列、引擎绑定、对账）。页面调用的入口都在这里 |
-| `store/` | 47 | 状态与持久化 | 按领域分子目录（含 `download/`），各领域自治。跨领域通知走 `event/` |
+| `screens/` | 255 | 页面与视图 | 按页面分组（`Home` / `PlayDetail` / `SonglistDetail` / `Comment`），iOS 曲库视图在 `Home/Views/Library/`。只做展示与交互编排，业务动作调 `core/`，不直接改 `store/` |
+| `utils/` | 134 | 工具与外部适配 | 见下节细分 |
+| `components/` | 74 | 跨页面复用 UI | `common/` 为基础组件；专用弹窗（`MusicAddModal` 等）按功能建子目录。不含业务逻辑 |
+| `core/` | 80 | 业务动作层 | `init/`（启动流程）、`music/`、`player/`、`search/`、`download/`（下载队列、引擎绑定、对账）、`library/`（iOS 本地曲库：来源、同步、查询、解析、自动关联）。页面调用的入口都在这里 |
+| `store/` | 53 | 状态与持久化 | 按领域分子目录（含 `download/`、iOS `library/`），各领域自治。跨领域通知走 `event/` |
 | `plugins/` | 27 | 独立子系统 | `player/`（播放引擎适配）、`sync/`（同步协议）。相对独立、可整体替换的模块 |
 | `types/` | 16 | 全局类型声明 | 仅类型，无运行时代码 |
 | `navigation/` | 13 | 导航注册与配置 | react-native-navigation 的页面注册、栈定义 |
@@ -70,6 +70,7 @@
 | `CacheModule.{h,m}` | `cache/` | `cache.ts` |
 | `GzipModule.{h,m}` | （合并在其他模块） | — |
 | （无，iOS 桩化） | `lyric/` | `lyricDesktop.ts` / `lyricDesktop.ios.ts` |
+| `Library/`（iOS 专属：`LxLibraryModule` 与 Store / FolderAccess / FolderScanner / MediaProbe / ArtworkCache / CredentialStore） | （无，iOS 专属） | `core/library/native.ios.ts`（Android 下 `native.ts` 调用即 reject） |
 
 新增原生模块时三处都要动：原生实现、模块注册（Android `*Package.java`，iOS `RCT_EXPORT_MODULE`）、JS 桥接文件。
 

@@ -61,6 +61,9 @@
 | `src/utils/statusbarHeight.ios.ts` | iOS 无 `StatusBar.currentHeight`，经 `StatusBarManager.getHeight` 读真实高度（任务 9.2） |
 | `src/utils/toast.android.ts` / `toast.ios.tsx` | Android 用原生 Toast，iOS 需自绘 |
 | `src/utils/version.ios.js` | 更新检查改道应用内（无 App Store 通道） |
+| `src/core/download/engine.ios.ts` | iOS 下载引擎绑定（NSURLSession 后台会话），Android 走既有 Java 实现 |
+| `src/core/library/native.ios.ts` | iOS 本地曲库原生桥接（`LxLibraryModule`）；Android 下 `native.ts` 调用即 reject |
+| `src/utils/music.ios.ts` | iOS 播放地址解析含定位符 `lxlib://` 分支与旧绝对路径 rebase |
 
 业务代码不散落 `Platform.OS` 分支。**注意**：Metro 原生支持该解析，但 TypeScript 需要 `moduleSuffixes` 才能同样解析——当前 `tsconfig.json` **未配置**，这是 `tsc --noEmit` 部分报错的来源之一（详情与实验结论见 `AGENTS.md` 验证矩阵）。
 

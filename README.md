@@ -98,6 +98,15 @@ GitHub ──► GitHub Actions
   搜索/榜单/播放链路恢复，防回归断言见任务 9.5 / 9.6 / 9.7。该变更已于
   2026-09-09 归档（62 项任务全勾），任务清单见
   `openspec/changes/archive/2026-09-09-add-ios-support/tasks.md`。
+- 本地曲库（P1）已完成并通过真机实证：`nav_library` 导航页（歌曲 / 专辑 /
+  艺人 / 最近播放四 Tab）、来源管理、文件夹扫描入库、定位符
+  `lxlib://` 播放接入、旧绝对路径 rebase、歌词手动搜索、多选批量、
+  排除表与文件删除分级、下载完成曲目自动关联。真机实证 1 / 4 / 6
+  必过项通过（iPhone 17 Pro / iOS 27.2.1 / SideStore），观察项
+  2 / 3 / 5 无执行条件已登记遗留，记录见
+  `openspec/changes/add-ios-local-library/evidence/device-verification-checklist.md`。
+  远程来源（Subsonic / Navidrome / Jellyfin / Emby）与离线下载在 P2 / P3，
+  另行变更。
 
 ## AI 辅助开发工作流（SpecCoding）
 
