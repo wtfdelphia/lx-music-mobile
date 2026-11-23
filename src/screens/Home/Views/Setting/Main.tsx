@@ -12,6 +12,7 @@ import Backup from './settings/Backup'
 import Other from './settings/Other'
 import Version from './settings/Version'
 import About from './settings/About'
+import Library from './settings/Library'
 
 const ALL_SETTING_SCREENS = [
   'basic',
@@ -19,6 +20,7 @@ const ALL_SETTING_SCREENS = [
   'lyric_desktop',
   'search',
   'list',
+  'library',
   'download',
   'sync',
   'backup',
@@ -30,10 +32,10 @@ const ALL_SETTING_SCREENS = [
 export type SettingScreenIds = typeof ALL_SETTING_SCREENS[number]
 
 // 任务 7.1：iOS 无桌面歌词，设置导航整组隐藏；
-// 下载分组仅 iOS（add-ios-download §10.5）
+// 下载分组与本地曲库分组仅 iOS（add-ios-download §10.5、add-ios-local-library §14.6）
 export const SETTING_SCREENS: SettingScreenIds[] = Platform.OS === 'ios'
   ? ALL_SETTING_SCREENS.filter(id => id !== 'lyric_desktop')
-  : ALL_SETTING_SCREENS.filter(id => id !== 'download')
+  : ALL_SETTING_SCREENS.filter(id => id !== 'download' && id !== 'library')
 
 // interface MainProps {
 //   onUpdateActiveId: (id: string) => void
@@ -62,6 +64,7 @@ const Main = forwardRef<MainType, {}>((props, ref) => {
       case 'search': return <Search />
       case 'list': return <List />
       case 'download': return <Download />
+      case 'library': return <Library />
       case 'sync': return <Sync />
       case 'backup': return <Backup />
       case 'other': return <Other />

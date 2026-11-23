@@ -81,6 +81,17 @@ const defaultSetting: LX.AppSetting = {
   'download.allowsCellular': false,
   'download.autoResume': false,
 
+  'library.enable': true,
+  'library.scanOnLaunch': false,
+  'library.streamQualityWifi': 'raw',
+  'library.streamQualityCellular': '192',
+  'library.allowCellularStream': true,
+  'library.downloadQuality': 'raw',
+  'library.onlineFallback': true,
+  'library.scrobble': true,
+  'library.syncStar': false,
+  'library.autoAssociateDownloads': true,
+
   'sync.enable': false,
 
   // 'theme.id': 'blue_plus',

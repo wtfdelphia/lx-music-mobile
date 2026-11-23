@@ -4,6 +4,7 @@ import Search from '../Views/Search'
 import SongList from '../Views/SongList'
 import Mylist from '../Views/Mylist'
 import Leaderboard from '../Views/Leaderboard'
+import Library from '../Views/Library'
 import Download from '../Views/Download'
 import Setting from '../Views/Setting'
 import { NAV_MENUS, type NAV_ID_Type } from '@/config/constant'
@@ -160,6 +161,25 @@ const MylistPage = () => {
 
   return visible ? component : null
 }
+const LibraryPage = () => {
+  const [visible, setVisible] = useState(commonState.navActiveId == 'nav_library')
+  const component = useMemo(() => <Library />, [])
+  useEffect(() => {
+    const handleNavIdUpdate = (id: CommonState['navActiveId']) => {
+      if (id == 'nav_library') {
+        requestAnimationFrame(() => {
+          setVisible(true)
+        })
+      }
+    }
+    global.state_event.on('navActiveIdUpdated', handleNavIdUpdate)
+
+    return () => {
+      global.state_event.off('navActiveIdUpdated', handleNavIdUpdate)
+    }
+  }, [])
+  return visible ? component : null
+}
 const DownloadPage = () => {
   const [visible, setVisible] = useState(commonState.navActiveId == 'nav_download')
   const component = useMemo(() => <Download />, [])
@@ -211,6 +231,7 @@ const pageComponents: Partial<Record<NAV_ID_Type, JSX.Element>> = {
   nav_songlist: <SongListPage />,
   nav_top: <LeaderboardPage />,
   nav_love: <MylistPage />,
+  nav_library: <LibraryPage />,
   nav_download: <DownloadPage />,
   nav_setting: <SettingPage />,
 }

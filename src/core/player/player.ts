@@ -146,6 +146,28 @@ const getMusicPlayUrl = async(musicInfo: LX.Music.MusicInfo | LX.Download.ListIt
   })
 }
 
+/**
+ * 重新加载当前播放曲目的歌词并刷新界面（add-ios-local-library M10：
+ * 手动搜索应用歌词后，正在播放的歌立即生效，无需切歌）。
+ * 仅新增导出，不改变既有调用路径，Android 行为不受影响
+ */
+export const refreshCurrentLyric = (): void => {
+  const musicInfo = playerState.playMusicInfo.musicInfo
+  if (!musicInfo || !('source' in musicInfo) || musicInfo.source !== 'local') return
+  // isRefresh 跳过文件歌词分支，命中 _edited 编辑歌词通道（M10）
+  void getLyricInfo({ musicInfo, isRefresh: true }).then((lyricInfo) => {
+    if (musicInfo.id != playerState.playMusicInfo.musicInfo?.id) return
+    setMusicInfo({
+      lrc: lyricInfo.lyric,
+      tlrc: lyricInfo.tlyric,
+      lxlrc: lyricInfo.lxlyric,
+      rlrc: lyricInfo.rlyric,
+      rawlrc: lyricInfo.rawlrcInfo.lyric,
+    })
+    global.app_event.lyricUpdated()
+  }).catch(() => {})
+}
+
 export const setMusicUrl = (musicInfo: LX.Music.MusicInfo | LX.Download.ListItem, isRefresh?: boolean) => {
   // addLoadTimeout()
   if (!diffCurrentMusicInfo(musicInfo)) return

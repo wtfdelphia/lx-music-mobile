@@ -201,6 +201,29 @@ export class AppEvent extends Event {
   selectSyncMode(mode: LX.Sync.ModeType) {
     this.emit('selectSyncMode', mode)
   }
+
+  /**
+   * 曲库来源 / 曲目更新（add-ios-local-library）
+   */
+  librarySourcesUpdated() {
+    this.emit('librarySourcesUpdated')
+  }
+
+  libraryRowsUpdated() {
+    this.emit('libraryRowsUpdated')
+  }
+
+  libraryScanProgressUpdated() {
+    this.emit('libraryScanProgressUpdated')
+  }
+
+  /**
+   * 扫描完成：页面按当前视图状态自行重载（H4 修复，
+   * 不再由编排层用歌曲列表覆盖当前视图）
+   */
+  libraryScanDone(sourceId: string) {
+    this.emit('libraryScanDone', sourceId)
+  }
 }
 
 

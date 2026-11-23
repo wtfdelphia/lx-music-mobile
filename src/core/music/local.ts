@@ -15,6 +15,9 @@ import {
 import { getLocalFilePath } from '@/utils/music'
 import { readLyric, readPic } from '@/utils/localMediaMetadata'
 import { stat } from '@/utils/fs'
+import { isLibraryLocator } from '@/core/library/locator'
+import settingState from '@/store/setting/state'
+import { resolveLyric, resolvePicUrl } from '@/core/library/resolver'
 
 const getOtherSourceByLocal = async<T>(musicInfo: LX.Music.MusicInfoLocal, handler: (infos: LX.Music.MusicInfoOnline[]) => Promise<T>) => {
   let result: LX.Music.MusicInfoOnline[] = []
@@ -78,6 +81,13 @@ export const getMusicUrl = async({ musicInfo, isRefresh, allowToggleSource = tru
     if (path) return path
   }
 
+  // onlineFallback 门控（§8.3）：曲库定位符且用户关闭在线回落时，
+  // 本地取不到直接抛错，不再按歌名找在线源。仅对定位符生效，
+  // 普通本地歌曲行为不变
+  if (isLibraryLocator(musicInfo.meta.filePath) && !settingState.setting['library.onlineFallback']) {
+    throw new Error('library online fallback disabled')
+  }
+
   try {
     return await getOnlineOtherSourceMusicUrlByLocal(musicInfo, isRefresh).then(({ url, quality, isFromCache }) => {
       if (!isFromCache) void saveMusicUrl(musicInfo, quality, url)
@@ -107,11 +117,15 @@ export const getPicUrl = async({ musicInfo, listId, isRefresh, skipFilePic, onTo
   onToggleSource?: (musicInfo?: LX.Music.MusicInfoOnline) => void
 }): Promise<string> => {
   if (!isRefresh && !skipFilePic) {
-    let pic = await readPic(musicInfo.meta.filePath).catch(() => null)
-    if (pic) {
-      if (pic.startsWith('/')) pic = `file://${pic}`
-      return pic
+    // 曲库定位符走曲库解析器；其余保持原有文件读图逻辑（design §8.4）
+    let pic: string | null
+    if (isLibraryLocator(musicInfo.meta.filePath)) {
+      pic = await resolvePicUrl(musicInfo.meta.filePath)
+    } else {
+      pic = await readPic(musicInfo.meta.filePath).catch(() => null)
+      if (pic && pic.startsWith('/')) pic = `file://${pic}`
     }
+    if (pic) return pic
 
     if (musicInfo.meta.picUrl) return musicInfo.meta.picUrl
   }
@@ -184,7 +198,10 @@ export const parseLyric = (lrc: string): LX.Music.LyricInfo => {
 }
 
 const getMusicFileLyric = async(filePath: string) => {
-  const lyric = await readLyric(filePath).catch(() => null)
+  // 曲库定位符走曲库解析器（内嵌歌词或同名 .lrc），其余读文件（design §8.5）
+  const lyric = isLibraryLocator(filePath)
+    ? await resolveLyric(filePath).catch(() => null)
+    : await readLyric(filePath).catch(() => null)
   if (!lyric) return null
   return parseLyric(lyric)
 }
@@ -194,19 +211,29 @@ export const getLyricInfo = async({ musicInfo, isRefresh, skipFileLyric, onToggl
   isRefresh: boolean
   onToggleSource?: (musicInfo?: LX.Music.MusicInfoOnline) => void
 }): Promise<LX.Player.LyricInfo> => {
-  if (!isRefresh && !skipFileLyric) {
-    // const lyricInfo = await getCachedLyricInfo(musicInfo)
-    // if (lyricInfo?.rawlrcInfo.lyric && lyricInfo.lyric != lyricInfo.rawlrcInfo.lyric) {
-    //   // 存在已编辑歌词
-    //   return buildLyricInfo(lyricInfo)
-    // }
+  // M10：手选歌词（手动搜索应用）写在 _edited 通道，优先于文件内
+  // 歌词与同名 .lrc，否则会被内嵌歌词盖住。
+  // 仅对曲库定位符生效：普通本地歌曲 / Android 不走 _edited 通道，
+  // 保持原有「文件歌词优先」行为不变（AGENTS.md 零行为变化）。
+  // 审核第 4 条：getPlayerLyric 合并后 `lyric` 取 _edited 通道、
+  // `rawlrcInfo` 取普通缓存。旧条件依赖 rawlrcInfo.lyric 非空，
+  // 而曲库曲目从不写普通缓存，条件永远不命中。改判「编辑值与
+  // 原始值不同」：有手选歌词时二者必然不同
+  const isLibrary = isLibraryLocator(musicInfo.meta.filePath)
+  if (isLibrary) {
+    const cachedInfo = await getCachedLyricInfo(musicInfo)
+    if (cachedInfo?.lyric && cachedInfo.lyric !== cachedInfo.rawlrcInfo?.lyric) {
+      return buildLyricInfo(cachedInfo)
+    }
+  }
 
+  if (!isRefresh && !skipFileLyric) {
     // 尝试读取文件内歌词
     const rawlrcInfo = await getMusicFileLyric(musicInfo.meta.filePath)
     if (rawlrcInfo) return buildLyricInfo(rawlrcInfo)
 
-    const lyricInfo = await getCachedLyricInfo(musicInfo)
-    if (lyricInfo?.lyric) return buildLyricInfo(lyricInfo)
+    const cachedInfo = await getCachedLyricInfo(musicInfo)
+    if (cachedInfo?.lyric) return buildLyricInfo(cachedInfo)
   }
 
   try {
