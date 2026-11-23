@@ -189,7 +189,7 @@ const handleComplete = (downloadInfo: LX.Download.ListItem) => {
 const handleEngineError = (downloadInfo: LX.Download.ListItem, event: EngineLiveEvent) => {
   const code = event.data.code ?? 'NETWORK'
   // 回放模式（审计#3）：冷启动回放时任务还是持久化状态，非终态错误
-  //（网络/超时/链接失效等）不应发起重试，只置暂停、保留续传数据
+  // （网络/超时/链接失效等）不应发起重试，只置暂停、保留续传数据
   if (replaying && code !== 'FORCE_QUIT' && code !== 'SYSTEM_CANCELLED' && code !== 'WRITE_FAILED' && code !== 'ORPHAN' && code !== 'NO_SPACE') {
     downloadInfo.status = 'pause'
     downloadInfo.statusText = ''
@@ -477,7 +477,7 @@ export const claimOrphanTasks = async(): Promise<void> => {
   let changed = false
   for (const taskId of ids) {
     const task = getDownloadList().find(t => t.id === taskId)
-    if (!task || !task.metadata.filePath) {
+    if (!task?.metadata.filePath) {
       // 任务已被删除：孤儿文件无人认领，清掉
       void downloadEngine.removeOrphan(taskId).catch(() => {})
       continue

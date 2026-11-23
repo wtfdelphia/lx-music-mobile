@@ -1488,7 +1488,7 @@ const testPlayback = async() => {
     ...musicInfo,
     album: 'lx-ci album',
     pic: `file://${ciPicPath()}`,
-  } as never, true, undefined, true)
+  } as never, true, true)
   const tMeta = Date.now()
   let np: Awaited<ReturnType<typeof utilsNative.getNowPlayingInfo>> = null
   while (Date.now() - tMeta < 15_000) {
@@ -1508,7 +1508,7 @@ const testPlayback = async() => {
   }
   assert(np?.hasArtwork === true, `now playing artwork not set: ${JSON.stringify(np)}`)
   // 5.4：歌词标题通道（updateNowPlayingTitles）iOS 走 patch 后的 metadata 通道
-  await putils.updateNowPlayingTitles(90_000, 'lx-ci lyric line', 'lx-ci song - lx-ci', 'lx-ci album')
+  await putils.updateNowPlayingTitles({ title: 'lx-ci lyric line', artist: 'lx-ci song - lx-ci', album: 'lx-ci album' })
   const tTitle = Date.now()
   let np2: Awaited<ReturnType<typeof utilsNative.getNowPlayingInfo>> = null
   while (Date.now() - tTitle < 15_000) {

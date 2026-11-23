@@ -8,12 +8,14 @@ module.exports = {
     'react-native',
     'react-native-pager-view',
     'react-native-navigation',
+    'react-native-vector-icons',
     'eslint-plugin-react-hooks',
     '@react-native/metro-config',
     '@react-native/babel-preset',
     '@react-native/typescript-config',
     '@react-native-community/slider',
-    '@react-native-async-storage/async-storage'
+    '@react-native-async-storage/async-storage',
+    '@react-native-clipboard/clipboard'
   ],
 
   // target: 'newest',

@@ -178,18 +178,23 @@ export const setPause = async() => TrackPlayer.pause()
 export const setCurrentTime = async(time: number) => TrackPlayer.seekTo(time)
 export const setVolume = async(num: number) => TrackPlayer.setVolume(num)
 export const setPlaybackRate = async(num: number) => TrackPlayer.setRate(num)
-export const updateNowPlayingTitles = async(duration: number, title: string, artist: string, album: string) => {
-  console.log('set playing titles', duration, title, artist, album)
-  // fork 的 iOS 侧未实现 updateNowPlayingTitles（Android 独有，任务 5.4 实锤），
-  // iOS 改走已实现的单参 metadata 通道（绕过 fork wrapper 的两参转发与
-  // 永不 resolve 的原生实现，见 playList.ts 的 updateNowPlayingMetadataIOS），
-  // 歌名/歌手/专辑/时长同样进锁屏 Now Playing 面板。
-  if (isAndroid) return TrackPlayer.updateNowPlayingTitles(duration, title, artist, album)
+export interface NowPlayingTitles {
+  title?: string
+  artist?: string
+  album?: string
+  lyric?: string
+}
+export const updateNowPlayingTitles = async(titles: NowPlayingTitles) => {
+  // console.log('set playing titles', titles)
+  // fork（bfe3393）iOS 侧仍未实现 updateNowPlayingTitles（Android 独有，
+  // 任务 5.4 实锤，新 fork 的 ios/ 与旧版逐字相同），iOS 改走已实现的
+  // 单参 metadata 通道（见 playList.ts 的 updateNowPlayingMetadataIOS），
+  // 歌名/歌手/专辑进锁屏 Now Playing 面板；lyric 字段 iOS 暂不消费
+  if (isAndroid) return TrackPlayer.updateNowPlayingTitles(titles)
   updateNowPlayingMetadataIOS({
-    title,
-    artist,
-    album,
-    duration: duration / 1000,
+    title: titles.title,
+    artist: titles.artist,
+    album: titles.album,
   })
 }
 

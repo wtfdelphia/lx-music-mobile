@@ -5,6 +5,7 @@ on:
     branches:
       - master
       - dev-ios
+      - main
     paths:
       - 'rust/**'
       - 'test/crypto-golden-vectors.json'

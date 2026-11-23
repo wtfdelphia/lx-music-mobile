@@ -6,6 +6,137 @@ Project versioning adheres to [Semantic Versioning](http://semver.org/).
 Commit convention is based on [Conventional Commits](http://conventionalcommits.org).
 Change log format is based on [Keep a Changelog](http://keepachangelog.com/).
 
+## [1.9.1.2](https://github.com/wtfdelphia/lx-music-mobile/compare/v1.9.1.1...v1.9.1.2) - 2026-10-12
+
+本版本为 iOS 新增歌曲下载功能，Android 行为无变化。
+
+### 新增（仅 iOS）
+
+- 歌曲下载：后台会话传输、断点续传、并发调度、音质选择，
+  歌词一并下载保存
+- 下载页：查看、管理下载任务
+- 下载设置分组：下载开关、最大并发数、蜂窝网络下载、
+  自动恢复下载、文件名格式
+- 已下载的歌曲优先播放本地文件
+
+### 修复
+
+- 歌单网格在屏幕旋转后列数冻结、横竖屏切换时尺寸不传播的问题
+- 竖屏首页等页面 `configUpdated` 事件监听清理时误用 `on`
+  导致的监听器泄漏
+
+### 其他
+
+- iOS 应用版本号（系统设置中显示）与发布版本对齐
+
+## [1.9.1.1](https://github.com/wtfdelphia/lx-music-mobile/compare/v1.9.1...v1.9.1.1) - 2026-09-22
+
+本版本是 wtfdelphia fork 的首个自有发布（基于上游 1.9.1，已含上游
+1.9.0 与 1.9.1 的全部变化）。
+
+### 新增
+
+- iOS 支持：本 Release 附带未签名 IPA（`-unsigned.ipa`），需经
+  AltStore / SideStore 等工具自行重签安装
+- 应用内更新检查改为本仓库发布通道
+
+### 注意
+
+- 本仓库 APK 签名与上游不同，从上游版本更新需先卸载再安装
+- Android 安装包为 5 个：`arm64-v8a`、`armeabi-v7a`、`x86_64`、
+  `x86`、`universal`，按设备 ABI 选择，大多数现代手机选
+  `arm64-v8a`
+
+## [1.9.1](https://github.com/lyswhut/lx-music-mobile/compare/v1.9.0...v1.9.1) - 2026-09-19
+
+### 优化
+
+- 优化 tx 推荐歌单列表
+
+### 修复
+
+- 修复打开某些 kg 歌单时歌曲丢失的问题
+
+## [1.9.0](https://github.com/lyswhut/lx-music-mobile/compare/v1.8.4...v1.9.0) - 2026-09-12
+
+### 新增
+
+- 歌曲菜单新增 “清理缓存” 按钮，可用于清理 URL 缓存，当某首歌获取到了错误的歌曲链接时，可以使用该功能清理与其关联的歌曲URL缓存
+
+### 优化
+
+- 优化自动换源歌曲匹配机制
+
+### 修复
+
+- 修复 kg 搜索结果显示问题
+- 修复某些 tx 歌单打开失败的问题 (@ght-000)
+- 修复 mg 图片、歌词获取
+- 修复 tx 歌单翻页问题 (#1107, @jtcai)
+- 修复 tx 歌曲搜索失败的问题（@ikun0014）
+
+## fork 变更（基于上游 v1.9.1）
+
+fork 侧的变更，按时间倒序。
+
+### 2026-09-22 对齐上游 v1.9.1
+
+- 上游重写 `master` 历史后，以 `d295604`（v1.8.4）为嫁接基线合并上游
+  v1.8.4→v1.9.1 的差异
+- 同步上游 tags `v1.9.0`、`v1.9.1` 到 origin
+- 合并 `release` 触发分支修复与 actions Node 24 升级（PR #2、#3）
+
+### 2026-09-10 合并 dev-ios 进 main
+
+- 主干从 `master` 切换到 `main`，iOS 能力由 `main` 承载
+- 对齐上游 v1.8.4，合并解析上游 24 个提交与 `dev-ios` 的 117 个提交
+- 升级 `react-native-track-player` fork：`d4a062f` → `bfe3393`
+- `ios-verify`、`rust` 工作流触发分支加入 `main`
+- 归档 `bootstrap-ai-baseline`（AI 协作基线：OpenSpec 门禁、skills 三份副本、验证矩阵），见 `openspec/changes/archive/2026-09-10-bootstrap-ai-baseline/`
+
+### 2026-09-09 完成 iOS 适配
+
+- iOS 适配完成，不上架 App Store；分发未签名 IPA，经 AltStore / SideStore 重签安装
+- 构建验证由 GitHub Actions macOS Runner 全自动完成；`ios-verify` 工作流含 5 个并行门禁：JS 单测与双端打包、Rust iOS 交叉编译、设备未签名构建、模拟器冒烟（应用内 35 项自测）、Android release 回归
+- Rust 加密核心经桥对齐 Android 黄金基准
+- 修复真机四项缺陷：图标缺失、竖屏宽窄失真、点菜单图标开抽屉即崩、自定义源本地导入无反应
+- 修复 ATS 拦截明文 http 请求，恢复内置源搜索、榜单、播放链路
+- 任务清单见 `openspec/changes/archive/2026-09-09-add-ios-support/tasks.md`
+
+## [1.8.4](https://github.com/lyswhut/lx-music-mobile/compare/v1.8.3...v1.8.4) - 2026-05-01
+
+我们很高兴地宣布新项目 Any Listen 的桌面版已发布，目前已支持列表跟随本地文件自动更新、加载并播放WebDAV上的歌曲等功能，更多功能仍在积极开发中，桌面版与Web版将同步更新。
+对于有播放本地音乐或播放服务器上音乐需求的人可以试试，若遇到任何问题可以发 issue 反馈。
+
+### 修复
+
+- 修复蓝牙歌词显示问题（#1042）
+
+## [1.8.3](https://github.com/lyswhut/lx-music-mobile/compare/v1.8.2...v1.8.3) - 2026-05-01
+
+我们很高兴地宣布新项目 Any Listen 的桌面版已发布，目前已支持列表跟随本地文件自动更新、加载并播放WebDAV上的歌曲等功能，更多功能仍在积极开发中，桌面版与Web版将同步更新。
+对于有播放本地音乐或播放服务器上音乐需求的人可以试试，若遇到任何问题可以发 issue 反馈。
+
+### 新增
+
+- 添加了一个 显示完整蓝牙歌词 的选项，启用后会将完整歌词设置到媒体信息中，在某些场景中可用于显示完整歌词
+
+### 优化
+
+- 优化歌单内歌曲搜索结果排序
+
+### 修复
+
+- 修复可忽略的错误没有正确处理的问题
+- 修复 tx 搜索结果显示异常的问题
+
+## [1.8.2](https://github.com/lyswhut/lx-music-mobile/compare/v1.8.1...v1.8.2) - 2026-03-28
+
+### 修复
+
+- 修复在某些设备上出现切歌崩溃的问题 (#971)
+- 修复tx在偶现搜索失败的问题 (#994, @ikun0014)
+
 ## [1.8.1](https://github.com/lyswhut/lx-music-mobile/compare/v1.8.0...v1.8.1) - 2026-02-16
 
 我们很高兴地宣布新项目 Any Listen 的桌面版已发布，目前已支持列表跟随本地文件自动更新、加载并播放WebDAV上的歌曲等功能，更多功能仍在积极开发中，桌面版与Web版将同步更新。

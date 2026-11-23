@@ -2,7 +2,7 @@ import { AppState } from 'react-native'
 import settingState from '@/store/setting/state'
 import { createDownloadInfo } from './utils'
 import { getDownloadList, addDownloadTasks, initDownloadList, removeDownloadTasks, clearDownloadList } from '@/store/download/action'
-import { bindEngineEvents, checkStartTask, startDownloadTasks, pauseDownloadTask, removeDownloadTaskFiles, handleDisable, rebuildIndex, adoptNativeRunningTasks, finalizeColdStart, alignWithNative, claimOrphanTasks, markInitialized } from './scheduler'
+import { bindEngineEvents, checkStartTask, startDownloadTasks, pauseDownloadTask, removeDownloadTaskFiles, handleDisable, rebuildIndex, finalizeColdStart, alignWithNative, claimOrphanTasks, markInitialized } from './scheduler'
 import { reconcile } from './reconcile'
 import { removeFromIndex } from './downloadIndex'
 import { isDownloadSupported } from './support'
@@ -21,6 +21,9 @@ export { isDownloadSupported }
  * 后台唤醒（AppState 非 active）只对齐状态，不取链接、不发起下载（审计#4）
  */
 export const initDownload = async() => {
+  // Android 无下载引擎（engine.ts 全拒绝），整条初始化链直接跳过，
+  // 避免注册 AppState / configUpdated 监听空转
+  if (!isDownloadSupported()) return
   bindEngineEvents()
   const wantAutoResume = settingState.setting['download.enable'] && settingState.setting['download.autoResume']
   try {

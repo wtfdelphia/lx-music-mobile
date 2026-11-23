@@ -19,7 +19,9 @@
 
 ## 项目上下文
 
-LX Music 移动版（`lx-music-mobile`），基于 React Native 的音乐播放器。iOS 支持已于 2026-09-09 完成并归档（`add-ios-support`，单设备验证通过，多设备覆盖为观察项），代码仍在 `dev-ios` 分支；主干为 `master`，上游开发分支为 `dev`。
+LX Music 移动版（`lx-music-mobile`），基于 React Native 的音乐播放器。iOS 支持已于 2026-09-09 完成并归档（`add-ios-support`，单设备验证通过，多设备覆盖为观察项），2026-09-10 随上游 v1.8.1→v1.8.4 的 24 个提交一起并入 `main`（合并提交 `bf16638`）；`dev-ios` 与上游 `master` 保留。上游开发分支为 `dev`。
+
+分支模型（2026-09-22 起）：`master` 仅镜像上游 `lyswhut/lx-music-mobile` 的 `master`，不承载开发，其 push 不触发发布构建；`main` 手动合并上游并发布版本。发布构建（`release.yml`，5 个签名 APK + 未签名 IPA）只由 `main` 触发，版本号采用「上游版本号 + fork 递增后缀」（如 `1.9.1.1`）。更新检查单源指向本仓库 `main` 分支的 `publish/version.json`（`fork-update-channel`）。2026-09 上游重写 `master` 历史（squash），后续合并上游若报 `unrelated histories`，用 `git replace --graft` 把上游新根嫁接回双方最近共同基线再合并，参考 `docs/update-channel-analysis.md`。
 
 技术栈与版本底线（来源 `package.json`、`.nvmrc`）：
 
@@ -128,9 +130,9 @@ CodeGraph 只用于发现入口、调用链、影响面与候选测试。以下�
 
 | 验证项 | 命令 | 状态 | CI 执行位置 |
 |---|---|---|---|
-| 单元测试 | `npm test` | 绿（1 文件 4 用例） | `ios-verify.yml` js-verify job |
+| 单元测试 | `npm test` | 绿（13 文件 111 用例） | `ios-verify.yml` js-verify job |
 | 代码风格 | `npm run lint` | 绿（退出码 0，登记债已清零） | `build-test.yml`，**仅 PR→`dev` 触发** |
-| 类型检查 | `npx tsc --noEmit` | **红：22 errors**，15 个在 `src/utils/ciSelfTest.ts`，7 个在既有业务文件（2026-11-23 复测，`add-ios-download` 后较 2026-09-10 快照多 1） | **无 CI 覆盖** |
+| 类型检查 | `npx tsc --noEmit` | **红：21 errors**，15 个在 `src/utils/ciSelfTest.ts`，6 个在既有业务文件（2026-11-23 并入 `origin/main` 后复测：`scheduler.ts` 采用 main 侧版本，消除 1 个上游遗留错误） | **无 CI 覆盖** |
 | Rust 加密黄金基准 | `cd rust/lxcore && cargo test --locked` | 绿 | `rust.yml`、`ios-verify.yml` rust-ios-target job |
 | Rust iOS 交叉编译 | `cargo build --locked --release --target aarch64-apple-ios` | 绿 | `ios-verify.yml` rust-ios-target job |
 | Metro 双端打包 | 见 `ios-verify.yml` js-verify job | 绿 | 同上 |
@@ -139,9 +141,9 @@ CodeGraph 只用于发现入口、调用链、影响面与候选测试。以下�
 | Android release 回归 | preload 入包校验 | 绿 | `ios-verify.yml` android-regression job |
 | OpenSpec 一致性 | `openspec validate --all` | 绿 | 无 CI 覆盖，本地必跑 |
 
-既有 lint 债已于 2026-09-10 清零（`Main.tsx:33` 2 个 `array-bracket-spacing`、`userApi.ts:85` 的 `no-unsafe-argument`、`common.ts:74` 的 `no-multiple-empty-lines`，均为无行为变化的风格修复），`npm run lint` 退出码 0。历史背景：前两处由 `dev-ios` 分支自身的提交引入（`fecd1a7`、`78611eb`），根因是 `build-test.yml` 只在 PR→`dev` 触发，`dev-ios` 的 push 从不跑 lint。**在 `dev-ios` 上改代码后请本地跑 `npm run lint`，不要依赖 CI 兜底。**
+既有 lint 债已于 2026-09-10 清零（`Main.tsx:33` 2 个 `array-bracket-spacing`、`userApi.ts:85` 的 `no-unsafe-argument`、`common.ts:74` 的 `no-multiple-empty-lines`，均为无行为变化的风格修复），`npm run lint` 退出码 0。历史背景：前两处由 `dev-ios` 分支自身的提交引入（`fecd1a7`、`78611eb`），根因是 `build-test.yml` 只在 PR→`dev` 触发，`dev-ios` 的 push 从不跑 lint。**在 `main` / `dev-ios` 上改代码后请本地跑 `npm run lint`，不要依赖 CI 兜底。**
 
-类型检查现状：`tsc --noEmit` 未进 CI 是因为当前红，加了会立即阻断 `dev-ios`。2026-09-10 复测：在 `tsconfig.json` 加 `moduleSuffixes: [".ios", ".android", ".native", ""]` 可消除平台扩展解析类错误（`tools.ts` 的 `./toast`），但会新暴露 4 个此前被掩盖的错误（`src/core/common.ts` 2 个、`ChoosePath/index.tsx` 1 个、`OpenStorageModal.tsx` 1 个），错误总数 21→23。修复应另立 change。
+类型检查现状：`tsc --noEmit` 未进 CI 是因为当前红，加了会立即阻断 `main`。2026-09-10 复测：在 `tsconfig.json` 加 `moduleSuffixes: [".ios", ".android", ".native", ""]` 可消除平台扩展解析类错误（`tools.ts` 的 `./toast`），但会新暴露 4 个此前被掩盖的错误（`src/core/common.ts` 2 个、`ChoosePath/index.tsx` 1 个、`OpenStorageModal.tsx` 1 个），错误总数 21→23。修复应另立 change。
 
 ## 高风险检查
 
@@ -155,7 +157,7 @@ CodeGraph 只用于发现入口、调用链、影响面与候选测试。以下�
 | 数据同步 | 协议兼容性（旧客户端连新服务、反之）；加密握手路径 |
 | 发布配置 | Bundle ID、版本号与 `versionCode` 一致性、字体入包、`UIAppFonts`、arm64 |
 | CI 工作流 | 改触发条件前确认不会让现有门禁静默失效 |
-| Android 行为 | `dev-ios` 分支的非目标是「任何 Android 行为变更」；触碰即停下确认 |
+| Android 行为 | 不引入任何 Android 行为变更（iOS 适配并入 `main` 后仍是硬约束）；触碰即停下确认 |
 
 ## 安全边界
 
