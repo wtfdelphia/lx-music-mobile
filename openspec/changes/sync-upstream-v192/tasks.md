@@ -22,5 +22,6 @@
 - [x] 3.2 `publish/version.json` 新增 `1.9.2.1` 条目，
       `publish/changeLog.md` 与 `CHANGELOG.md` 补段落
 - [x] 3.3 `chore(release): 发布 v1.9.2.1` 提交，经用户确认后推送
-- [ ] 3.4 `release.yml` 触发，5 APK + 1 IPA 发布成功，
-      打 `v1.9.2.1` tag
+- [x] 3.4 `release.yml` 触发，5 APK + 1 IPA 发布成功，
+      打 `v1.9.2.1` tag（Android job 首跑 Gradle daemon 崩溃，
+      重跑失败 job 后通过；根因为 runner 内存，非代码问题）
